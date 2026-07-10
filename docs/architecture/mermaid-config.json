@@ -1,0 +1,23 @@
+{
+  "theme": "neutral",
+  "securityLevel": "strict",
+  "fontFamily": "Arial, sans-serif",
+  "flowchart": {
+    "defaultRenderer": "dagre",
+    "htmlLabels": false,
+    "curve": "linear",
+    "useMaxWidth": false
+  },
+  "sequence": {
+    "useMaxWidth": false,
+    "wrap": true,
+    "diagramMarginX": 24,
+    "diagramMarginY": 24
+  },
+  "themeVariables": {
+    "background": "#ffffff",
+    "fontFamily": "Arial, sans-serif",
+    "primaryTextColor": "#17202a",
+    "lineColor": "#455a64"
+  }
+}
