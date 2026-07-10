@@ -120,6 +120,7 @@ Every modeled element receives a stable identifier with a family prefix:
 - `CMP-*` for components;
 - `CH-*` for execution channels;
 - `PHASE-*` for delivery phases;
+- `STATE-*` for lifecycle states;
 - `FLOW-*` for relationships; and
 - `Q-*` for unresolved questions.
 
