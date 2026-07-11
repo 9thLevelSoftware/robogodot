@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -350,7 +351,13 @@ export function validateTraceability(markdown) {
   const occurrences = [];
   for (const line of lines) {
     const match = line.match(/^\|\s*`((?:ACT|SYS|CNT|CMP|CH|PHASE|STATE|FLOW)-[A-Z0-9-]+)`\s*\|/);
-    if (match) occurrences.push(match[1]);
+    if (match) {
+      const cells = line.split("|").slice(1, -1).map((cell) => cell.trim());
+      if (cells.length !== 9 || cells.some((cell) => cell.length === 0)) {
+        throw new Error(`${match[1]} traceability row must contain exactly 9 nonempty cells`);
+      }
+      occurrences.push(match[1]);
+    }
   }
   const duplicates = [...new Set(occurrences.filter((id, index) => occurrences.indexOf(id) !== index))].sort();
   if (duplicates.length) throw new Error(`Duplicate traceability IDs: ${duplicates.join(", ")}`);
@@ -648,6 +655,26 @@ export function mergeManifestEntries(existing, next) {
     .sort((left, right) => left.output.localeCompare(right.output));
 }
 
+function sha256(content) {
+  return createHash("sha256").update(content).digest("hex").toUpperCase();
+}
+
+async function validateRenderedDigests(root, jobs) {
+  const manifestPath = path.join(root, "rendered", "manifest.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  const entries = new Map((manifest.exports || []).map((entry) => [entry.output, entry]));
+  for (const job of jobs) {
+    const entry = entries.get(job.output);
+    if (!entry) throw new Error(`${job.output}: missing manifest entry`);
+    const sourceBlockSha256 = sha256(job.definition);
+    if (entry.sourceBlockSha256 !== sourceBlockSha256) {
+      throw new Error(`${job.output}: source block SHA-256 mismatch`);
+    }
+    const outputSha256 = sha256(await readFile(path.join(root, "rendered", job.output)));
+    if (entry.outputSha256 !== outputSha256) throw new Error(`${job.output}: output SHA-256 mismatch`);
+  }
+}
+
 export function buildNpxInvocation(platform = process.platform, execPath = process.execPath) {
   return platform === "win32"
     ? {
@@ -657,8 +684,11 @@ export function buildNpxInvocation(platform = process.platform, execPath = proce
     : { executable: "npx", argsPrefix: [] };
 }
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const onlyIndex = argv.indexOf("--only");
+  if (onlyIndex >= 0 && (!argv[onlyIndex + 1] || argv[onlyIndex + 1].startsWith("--"))) {
+    throw new Error("Usage: node docs/architecture/render.mjs [--check] [--only view[,view...]]");
+  }
   return {
     check: argv.includes("--check"),
     only: onlyIndex >= 0 ? new Set(argv[onlyIndex + 1].split(",")) : null,
@@ -707,7 +737,10 @@ export async function renderAtlas({
   if (diff.missing.length || (!only && diff.stale.length)) {
     throw new Error(`Traceability mismatch: ${JSON.stringify(diff)}`);
   }
-  if (check) return { jobs, diff };
+  if (check) {
+    await validateRenderedDigests(root, jobs);
+    return { jobs, diff };
+  }
 
   await mkdir(renderedDir, { recursive: true });
   await mkdir(tempDir, { recursive: true });
@@ -735,7 +768,13 @@ export async function renderAtlas({
       if (result.status !== 0) {
         throw new Error(`${job.output}: ${result.stderr || result.stdout || `renderer exited with status ${result.status}`}`);
       }
-      entries.push({ output: job.output, source: job.source, block: job.block });
+      entries.push({
+        output: job.output,
+        source: job.source,
+        block: job.block,
+        sourceBlockSha256: sha256(job.definition),
+        outputSha256: sha256(await readFile(output)),
+      });
     }
     let manifestEntries = entries;
     if (only) {
@@ -758,7 +797,12 @@ export async function renderAtlas({
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
-  const options = parseArgs(process.argv.slice(2));
-  await renderAtlas(options);
-  process.stdout.write(options.check ? "Atlas validation passed\n" : "Atlas render passed\n");
+  try {
+    const options = parseArgs(process.argv.slice(2));
+    await renderAtlas(options);
+    process.stdout.write(options.check ? "Atlas validation passed\n" : "Atlas render passed\n");
+  } catch (error) {
+    process.stderr.write(`${error.message}\n`);
+    process.exitCode = 1;
+  }
 }

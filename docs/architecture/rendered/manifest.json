@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-11T04:38:23.013Z",
+  "generatedAt": "2026-07-11T04:47:34.402Z",
   "renderer": "@mermaid-js/mermaid-cli@11.16.0",
   "sourceArchive": {
     "path": "C:\\Users\\dasbl\\Downloads\\files.zip",
@@ -11,88 +11,110 @@
       "output": "01-system-context.svg",
       "source": "01-system-context.md",
       "block": 1,
+      "sourceBlockSha256": "8633DC039E932C306CC1A1286209FB8BA6B4CD413F906FBC1A6F27EEA3325D03",
+      "outputSha256": "082C7D08055D85934ED2B4E006720529D62EA30DDCE8078E403BB872C2D21385",
       "archiveSha256": "0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229",
-      "generatedAt": "2026-07-11T04:38:23.013Z",
+      "generatedAt": "2026-07-11T04:47:34.402Z",
       "renderer": "@mermaid-js/mermaid-cli@11.16.0"
     },
     {
       "output": "02-container-channels.svg",
       "source": "02-container-channels.md",
       "block": 1,
+      "sourceBlockSha256": "3A5830E6E4CAAD5D461CFCCA95A617E4B9BAF297FCD5BB6FB91CC3F786B8D202",
+      "outputSha256": "B7F2C997E1B1F47C0D3FD464DAB3A52E40B0216244D2C0ADEA85BE4B65975159",
       "archiveSha256": "0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229",
-      "generatedAt": "2026-07-11T04:38:23.013Z",
+      "generatedAt": "2026-07-11T04:47:34.402Z",
       "renderer": "@mermaid-js/mermaid-cli@11.16.0"
     },
     {
       "output": "03-phase-dependencies.svg",
       "source": "03-phase-dependencies.md",
       "block": 1,
+      "sourceBlockSha256": "0CB58BD9A99DF7C501D3303188C0BA77AD9B60DBD794A33CE0E2EDBE48ADA0AB",
+      "outputSha256": "0A90F41883355EC5B73CDA1F3C6C1B3195BDB20ED7082B63C5678A45202194A0",
       "archiveSha256": "0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229",
-      "generatedAt": "2026-07-11T04:38:23.013Z",
+      "generatedAt": "2026-07-11T04:47:34.402Z",
       "renderer": "@mermaid-js/mermaid-cli@11.16.0"
     },
     {
       "output": "04-server-components.svg",
       "source": "04-server-components.md",
       "block": 1,
+      "sourceBlockSha256": "EC22F2DDB034907A29C78046CFBE071A370B230686AA8D80B23598550551B95F",
+      "outputSha256": "8078F42D3EFEE6D4A110FBC7918E6DBCA41F81303F973FDFF9AE6974B39723A4",
       "archiveSha256": "0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229",
-      "generatedAt": "2026-07-11T04:38:23.013Z",
+      "generatedAt": "2026-07-11T04:47:34.402Z",
       "renderer": "@mermaid-js/mermaid-cli@11.16.0"
     },
     {
       "output": "05-editor-mutation-sequence.svg",
       "source": "05-editor-mutation-sequence.md",
       "block": 1,
+      "sourceBlockSha256": "8720A86DB65B66113EAE7960A4D5451A9829C05D537EAB13DDB191955D7851D3",
+      "outputSha256": "42C7FAAAE24AE52148F4700A83D6DC742A7854144D83B9691F65FF8A32E71744",
       "archiveSha256": "0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229",
-      "generatedAt": "2026-07-11T04:38:23.013Z",
+      "generatedAt": "2026-07-11T04:47:34.402Z",
       "renderer": "@mermaid-js/mermaid-cli@11.16.0"
     },
     {
       "output": "06-runtime-debug-sequence.svg",
       "source": "06-runtime-debug-sequence.md",
       "block": 1,
+      "sourceBlockSha256": "011D87601A0FB2976E67F6DF9FEE9821DBEA0260B0C106EB57E735980706EE15",
+      "outputSha256": "FF0D6CC5A0F1BC9C6574A5D68CFF2DA56DB5428AC2D963862560BD1D3318503C",
       "archiveSha256": "0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229",
-      "generatedAt": "2026-07-11T04:38:23.013Z",
+      "generatedAt": "2026-07-11T04:47:34.402Z",
       "renderer": "@mermaid-js/mermaid-cli@11.16.0"
     },
     {
       "output": "07-policy-pipeline.svg",
       "source": "07-policy-pipeline.md",
       "block": 1,
+      "sourceBlockSha256": "22E682E70ADAF93046F15B7AD72E5AA8FAAB380F46EF7213743D343CEB99A370",
+      "outputSha256": "56F4EDC632A2092E4B84C58B40A120D1603D7A1A12C727595B1F1C52F58F5957",
       "archiveSha256": "0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229",
-      "generatedAt": "2026-07-11T04:38:23.013Z",
+      "generatedAt": "2026-07-11T04:47:34.402Z",
       "renderer": "@mermaid-js/mermaid-cli@11.16.0"
     },
     {
       "output": "08a-editor-websocket-lifecycle.svg",
       "source": "08-connection-lifecycles.md",
       "block": 1,
+      "sourceBlockSha256": "F7C054402D0DCC835430BEBE1FCD9FE1FA6A8929B1AD4AABED993159BD725500",
+      "outputSha256": "B651F40435BB87FE39D6F0D24CE0DA39FEB6DC6A534C491C41A2BC72EDA6A65A",
       "archiveSha256": "0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229",
-      "generatedAt": "2026-07-11T04:38:23.013Z",
+      "generatedAt": "2026-07-11T04:47:34.402Z",
       "renderer": "@mermaid-js/mermaid-cli@11.16.0"
     },
     {
       "output": "08b-lsp-lifecycle.svg",
       "source": "08-connection-lifecycles.md",
       "block": 2,
+      "sourceBlockSha256": "AF69E33C7D59C1E63A846EDC914962CC7E60A8BB9B4F6BF14E902B24CBC796B5",
+      "outputSha256": "AC0FEEFAA136F0B8C3CC3CC5896A49752B0F624D493B4A2E07D2859AA838843F",
       "archiveSha256": "0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229",
-      "generatedAt": "2026-07-11T04:38:23.013Z",
+      "generatedAt": "2026-07-11T04:47:34.402Z",
       "renderer": "@mermaid-js/mermaid-cli@11.16.0"
     },
     {
       "output": "08c-game-process-lifecycle.svg",
       "source": "08-connection-lifecycles.md",
       "block": 3,
+      "sourceBlockSha256": "FA55821612A60C91981E82238B212AD2FCFAE128BDC627EEA4A82DC15CCE0CF9",
+      "outputSha256": "603F247502F00B3812C7FA8855029E89CF0C6823657BDA5FC5E4EF0AB8105510",
       "archiveSha256": "0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229",
-      "generatedAt": "2026-07-11T04:38:23.013Z",
+      "generatedAt": "2026-07-11T04:47:34.402Z",
       "renderer": "@mermaid-js/mermaid-cli@11.16.0"
     },
     {
       "output": "08d-dap-lifecycle.svg",
       "source": "08-connection-lifecycles.md",
       "block": 4,
+      "sourceBlockSha256": "00E191B5ACC3A626E044A4717AA71F8579FC462A420EE1E23B298C05B31DA534",
+      "outputSha256": "412CC2DA9D96196E9A0F6E35F54698B42A027559F4DA1B5B584750CE34C73BF1",
       "archiveSha256": "0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229",
-      "generatedAt": "2026-07-11T04:38:23.013Z",
+      "generatedAt": "2026-07-11T04:47:34.402Z",
       "renderer": "@mermaid-js/mermaid-cli@11.16.0"
     }
   ]

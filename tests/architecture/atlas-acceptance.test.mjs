@@ -160,6 +160,19 @@ test("all eleven SVG exports are nonempty and have complete manifest provenance"
     assert.equal(entry.archiveSha256, ARCHIVE_SHA256, `${entry.output}: archive SHA-256`);
     assert.match(entry.generatedAt, /^\d{4}-\d{2}-\d{2}T/, `${entry.output}: generation date`);
     assert.equal(entry.renderer, `@mermaid-js/mermaid-cli@${CLI_VERSION}`, `${entry.output}: renderer`);
+    assert.match(entry.sourceBlockSha256, /^[A-F0-9]{64}$/, `${entry.output}: source block SHA-256 shape`);
+    assert.match(entry.outputSha256, /^[A-F0-9]{64}$/, `${entry.output}: output SHA-256 shape`);
+    const blocks = extractMermaidBlocks(await readFile(path.join(ARCHITECTURE, entry.source), "utf8"));
+    assert.equal(
+      entry.sourceBlockSha256,
+      createHash("sha256").update(blocks[entry.block - 1]).digest("hex").toUpperCase(),
+      `${entry.output}: canonical source block SHA-256`,
+    );
+    assert.equal(
+      entry.outputSha256,
+      createHash("sha256").update(await readFile(path.join(RENDERED, entry.output))).digest("hex").toUpperCase(),
+      `${entry.output}: SVG output SHA-256`,
+    );
   }
   for (const filename of VIEWS) assert.ok((await readFile(path.join(ARCHITECTURE, filename), "utf8")).includes(ARCHIVE_SHA256));
 });

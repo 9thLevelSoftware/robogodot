@@ -1,8 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   ARCHIVE_SHA256,
   CLI_VERSION,
@@ -14,6 +17,7 @@ import {
   diffTraceability,
   extractMermaidBlocks,
   mergeManifestEntries,
+  parseArgs,
   parseTraceabilityIds,
   renderAtlas,
   validateMermaidAnchors,
@@ -308,6 +312,29 @@ test("renderAtlas requires the exact traceability header", async (t) => {
   );
 });
 
+test("renderAtlas rejects traceability data rows without exactly nine nonempty cells", async (t) => {
+  const malformed = sampleRows[0].replace(" | Test |", " | |");
+  const root = await createAtlasFixture(t, {
+    traceability: buildSampleTraceability({ rows: [malformed, ...sampleRows.slice(1)] }),
+  });
+  await assert.rejects(
+    renderSampleAtlas({ check: true, only: new Set(["01-system-context"]), root }),
+    /ACT-SAMPLE.*exactly 9 nonempty cells/,
+  );
+});
+
+test("parseArgs rejects --only without a view list", () => {
+  assert.throws(() => parseArgs(["--only"]), /Usage: node docs\/architecture\/render\.mjs.*--only/);
+});
+
+test("CLI reports a concise usage error when --only has no view list", () => {
+  const script = fileURLToPath(new URL("../../docs/architecture/render.mjs", import.meta.url));
+  const result = spawnSync(process.execPath, [script, "--only"], { encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^Usage: node docs\/architecture\/render\.mjs \[--check\] \[--only view\[,view\.\.\.\]\]\r?\n$/);
+  assert.doesNotMatch(result.stderr, /\bat\s+parseArgs\b|Error:/);
+});
+
 test("renderAtlas enforces immediate unique anchors and one edge per flow anchor", async (t) => {
   const cases = [
     {
@@ -574,6 +601,8 @@ test("renderAtlas passes the Windows launcher to spawn without a shell", async (
   const calls = [];
   const spawn = (...args) => {
     calls.push(args);
+    const output = args[1][args[1].indexOf("-o") + 1];
+    writeFileSync(output, "<svg>fixture</svg>\n", "utf8");
     return { status: 0, stdout: "", stderr: "" };
   };
 
@@ -652,7 +681,7 @@ test("renderAtlas enforces exact per-view ID contracts", async (t) => {
 
 test("builds detached export provenance", () => {
   const manifest = buildManifest(
-    [{ output: "01-system-context.svg", source: "01-system-context.md", block: 1 }],
+    [{ output: "01-system-context.svg", source: "01-system-context.md", block: 1, sourceBlockSha256: "A".repeat(64), outputSha256: "B".repeat(64) }],
     "2026-07-10T00:00:00.000Z",
   );
   assert.equal(manifest.renderer, "@mermaid-js/mermaid-cli@11.16.0");
@@ -664,7 +693,38 @@ test("builds detached export provenance", () => {
     archiveSha256: ARCHIVE_SHA256,
     generatedAt: "2026-07-10T00:00:00.000Z",
     renderer: "@mermaid-js/mermaid-cli@11.16.0",
+    sourceBlockSha256: "A".repeat(64),
+    outputSha256: "B".repeat(64),
   });
+});
+
+test("renderAtlas --check rejects a stale canonical Mermaid source block", async (t) => {
+  const root = await createAtlasFixture(t);
+  const spawn = (_executable, args) => {
+    writeFileSync(args[args.indexOf("-o") + 1], "<svg>fixture</svg>\n", "utf8");
+    return { status: 0, stdout: "", stderr: "" };
+  };
+  await renderSampleAtlas({ only: new Set(["01-system-context"]), root, spawn });
+  const sourcePath = path.join(root, "01-system-context.md");
+  await writeFile(sourcePath, (await readFile(sourcePath, "utf8")).replace("Accessible sample", "Changed sample"), "utf8");
+  await assert.rejects(
+    renderSampleAtlas({ check: true, only: new Set(["01-system-context"]), root }),
+    /01-system-context\.svg: source block SHA-256 mismatch/,
+  );
+});
+
+test("renderAtlas --check rejects a tampered SVG output", async (t) => {
+  const root = await createAtlasFixture(t);
+  const spawn = (_executable, args) => {
+    writeFileSync(args[args.indexOf("-o") + 1], "<svg>fixture</svg>\n", "utf8");
+    return { status: 0, stdout: "", stderr: "" };
+  };
+  await renderSampleAtlas({ only: new Set(["01-system-context"]), root, spawn });
+  await writeFile(path.join(root, "rendered", "01-system-context.svg"), "<svg>tampered</svg>\n", "utf8");
+  await assert.rejects(
+    renderSampleAtlas({ check: true, only: new Set(["01-system-context"]), root }),
+    /01-system-context\.svg: output SHA-256 mismatch/,
+  );
 });
 
 test("merges targeted exports without dropping prior manifest entries", () => {

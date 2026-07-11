@@ -57,7 +57,7 @@ node docs/architecture/render.mjs --check
 node docs/architecture/render.mjs
 ```
 
-The first command validates contracts without rewriting outputs. The second regenerates all SVGs and their manifest from canonical Mermaid.
+The first command validates contracts without rewriting outputs. The second regenerates all SVGs and their manifest from canonical Mermaid. Each manifest export records `sourceBlockSha256` (the SHA-256 of the exact canonical Mermaid block text, excluding Markdown fences) and `outputSha256` (the SHA-256 of the rendered SVG bytes), so `--check` detects stale sources and tampered outputs.
 
 ## Accessibility and text alternatives
 
