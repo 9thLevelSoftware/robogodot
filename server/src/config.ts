@@ -45,22 +45,22 @@ function readMode(raw: string | undefined): SafetyMode {
   throw new Error("GODOT_MCP_MODE must be full, read_only, or confirm_destructive");
 }
 
-function findProject(cwd: string, isFile: (candidate: string) => boolean): string | undefined {
-  let current = path.resolve(cwd);
+function findProject(cwd: string, isFile: (candidate: string) => boolean, pathApi: typeof path.win32): string | undefined {
+  let current = pathApi.resolve(cwd);
   while (true) {
-    if (isFile(path.join(current, "project.godot"))) return current;
-    const parent = path.dirname(current);
+    if (isFile(pathApi.join(current, "project.godot"))) return current;
+    const parent = pathApi.dirname(current);
     if (parent === current) return undefined;
     current = parent;
   }
 }
 
-function findGodot(platform: NodeJS.Platform, pathValue: string, isExecutable: (candidate: string) => boolean): string | undefined {
+function findGodot(platform: NodeJS.Platform, pathValue: string, isExecutable: (candidate: string) => boolean, pathApi: typeof path.win32): string | undefined {
   const names = platform === "win32" ? WINDOWS_EXECUTABLES : UNIX_EXECUTABLES;
   const delimiter = platform === "win32" ? ";" : ":";
   for (const directory of pathValue.split(delimiter).filter(Boolean)) {
     for (const name of names) {
-      const candidate = path.normalize(path.join(directory, name));
+      const candidate = pathApi.normalize(pathApi.join(directory, name));
       if (isExecutable(candidate)) return candidate;
     }
   }
@@ -74,12 +74,13 @@ export function resolveConfig(
   pathValue: string | ResolveConfigProbes = env.PATH ?? "",
 ): ResolvedConfig {
   const probes = typeof pathValue === "string" ? { pathValue } : pathValue;
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
   const isFile = probes.isFile ?? ((candidate: string) => fs.statSync(candidate, { throwIfNoEntry: false })?.isFile() === true);
   const isExecutable = probes.isExecutable ?? isFile;
   const discoveredGodot = env.GODOT_PATH === undefined
-    ? findGodot(platform, probes.pathValue ?? env.PATH ?? "", isExecutable)
+    ? findGodot(platform, probes.pathValue ?? env.PATH ?? "", isExecutable, pathApi)
     : undefined;
-  const discoveredProject = env.GODOT_PROJECT_PATH === undefined ? findProject(cwd, isFile) : undefined;
+  const discoveredProject = env.GODOT_PROJECT_PATH === undefined ? findProject(cwd, isFile, pathApi) : undefined;
   const config: ResolvedConfig = {
     editorHost: "127.0.0.1",
     editorPort: readPort(env, "GODOT_MCP_PORT", 9200),

@@ -4,8 +4,8 @@ import { resolveConfig } from "../src/config.js";
 
 const probes = (files: string[] = [], executables: string[] = []) => ({
   pathValue: "C:\\Tools;C:\\Godot",
-  isFile: (candidate: string) => files.includes(path.normalize(candidate)),
-  isExecutable: (candidate: string) => executables.includes(path.normalize(candidate)),
+  isFile: (candidate: string) => files.includes(candidate),
+  isExecutable: (candidate: string) => executables.includes(candidate),
 });
 
 describe("resolveConfig", () => {
@@ -22,8 +22,8 @@ describe("resolveConfig", () => {
   });
 
   it("finds the nearest parent containing project.godot", () => {
-    const projectFile = path.normalize("C:\\repo\\game\\project.godot");
-    expect(resolveConfig({}, "C:\\repo\\game\\src", "win32", probes([projectFile])).projectPath).toBe(path.normalize("C:\\repo\\game"));
+    const projectFile = path.win32.normalize("C:\\repo\\game\\project.godot");
+    expect(resolveConfig({}, "C:\\repo\\game\\src", "win32", probes([projectFile])).projectPath).toBe(path.win32.normalize("C:\\repo\\game"));
   });
 
   it("prefers explicit GODOT_PATH", () => {
@@ -33,18 +33,28 @@ describe("resolveConfig", () => {
   });
 
   it("discovers Windows executable candidates from PATH", () => {
-    const executable = path.normalize("C:\\Godot\\godot4_console.exe");
+    const executable = path.win32.normalize("C:\\Godot\\godot4_console.exe");
     expect(resolveConfig({}, "C:\\repo", "win32", probes([], [executable])).godotPath).toBe(executable);
   });
 
   it("uses the target platform delimiter when resolving a Unix PATH on Windows", () => {
-    const executable = path.normalize("/opt/godot/bin/godot4");
+    const executable = path.posix.normalize("/opt/godot/bin/godot4");
     const injected = {
       pathValue: "/usr/local/bin:/opt/godot/bin",
       isFile: () => false,
       isExecutable: (candidate: string) => candidate === executable,
     };
     expect(resolveConfig({}, "/repo", "linux", injected).godotPath).toBe(executable);
+  });
+
+  it("uses Unix parent traversal when resolving a Unix project on Windows", () => {
+    const projectFile = path.posix.normalize("/repo/game/project.godot");
+    const injected = {
+      pathValue: "",
+      isFile: (candidate: string) => candidate === projectFile,
+      isExecutable: () => false,
+    };
+    expect(resolveConfig({}, "/repo/game/src", "linux", injected).projectPath).toBe(path.posix.normalize("/repo/game"));
   });
 
   it.each(["0", "65536", "2.5", "nope"])("rejects invalid port %s", (value) => {
