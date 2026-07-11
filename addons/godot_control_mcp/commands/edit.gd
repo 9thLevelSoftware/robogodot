@@ -43,9 +43,8 @@ static func node_add(params: Dictionary) -> Dictionary:
 		if not parsed.ok: node.free(); return _failure(parsed.error)
 		if not _value_matches(parsed.value, descriptor): node.free(); return _failure("Property '%s' requires %s." % [property, type_string(int(descriptor.type))])
 		node.set(property, parsed.value)
-	var applied: Dictionary = _controller().add_node(parent, node, "Add %s" % name)
+	var applied: Dictionary = _controller().add_node(parent, node, "Add %s" % name, _root())
 	if not applied.ok: node.free(); return applied
-	_set_owner_recursive(node, _root())
 	return _success({"path": _path(node)})
 
 static func node_delete(params: Dictionary) -> Dictionary:
@@ -72,7 +71,6 @@ static func node_duplicate(params: Dictionary) -> Dictionary:
 	if source == null or parent == null: return _failure("Provide valid source and parent paths.")
 	var result: Dictionary = _controller().duplicate_node(source, parent, int(params.get("flags", 15)), String(params.get("name", "")), "Duplicate %s" % source.name)
 	if not result.ok: return result
-	_set_owner_recursive(result.node, _root())
 	return _success({"path": _path(result.node)})
 
 static func node_get(params: Dictionary) -> Dictionary:

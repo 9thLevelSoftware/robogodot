@@ -18,8 +18,10 @@ describe("Phase 3 node tools", () => {
       const tools = (await h.client.listTools()).tools.slice(8);
       expect(tools.map(t => t.name)).toEqual(["godot_node_add", "godot_node_delete", "godot_node_reparent", "godot_node_rename", "godot_node_duplicate", "godot_node_get", "godot_node_set_property", "godot_node_call_method"]);
       expect(tools.every(t => t.inputSchema.additionalProperties === false)).toBe(true);
-      expect(tools.slice(0, 5).concat(tools.slice(6, 7)).every(t => t.annotations?.readOnlyHint === false)).toBe(true);
-      expect([tools[5], tools[7]].every(t => t?.annotations?.readOnlyHint === true)).toBe(true);
+      const mutation = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
+      const read = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+      for (const tool of tools.slice(0, 5).concat(tools.slice(6, 7))) expect(tool.annotations).toEqual(mutation);
+      for (const tool of [tools[5], tools[7]]) expect(tool?.annotations).toEqual(read);
     } finally { await h.close(); }
   });
 

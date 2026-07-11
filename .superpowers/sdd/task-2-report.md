@@ -103,3 +103,25 @@ Review implementation notes:
 - All parsed properties are checked against the live descriptor type and object class before any undo action is created.
 - External paths require exact canonical resolution; stale hints contain a bounded hierarchy (64 nodes, 2048 characters).
 - New EditorInterface version-sensitive access is isolated in `godot_compat.gd`.
+
+## Final focused test hardening
+
+Server command:
+
+`cd server && npm test -- --run tests/phase3-node-tools.test.ts`
+
+Observed: exit 0; 1 file passed, 8 tests passed. The registration test now compares all four annotation fields for every mutation and read node tool.
+
+Expanded focused Godot RED used a clean fixture copy, fresh port 19224, and `phase_3_node_smoke.gd`.
+
+Observed: exit 1. The new assertions reported `redo add restores initial property and owner` and `undo delete restores explicit recursive owners`, proving the undo actions did not preserve recursive ownership. The controller was corrected to register recursive do-owner properties for add/duplicate and snapshot/register recursive undo-owner properties for delete before committing the action.
+
+Focused Godot GREEN repeated the clean-fixture command with port 19225.
+
+Observed: exit 0 in 7.7 seconds with `PASS phase 3 undoable node tools`. Delete undo restored the target at its original sibling index with child/grandchild hierarchy, distinct stored positions, and explicit owners; redo removed the retained whole subtree. Add redo restored `Vector2(10, 20)` and the edited-scene owner.
+
+Full bounded Godot command:
+
+`$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; $env:GODOT_MCP_SMOKE_PORT='19226'; node tests/godot/run-smoke.mjs`
+
+Observed: exit 0 in 27.9 seconds, including `PASS phase 3 edit controller foundation`, `PASS phase 3 undoable node tools`, and all bounded runner pass markers.

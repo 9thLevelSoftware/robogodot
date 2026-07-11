@@ -8,11 +8,12 @@ var _last_history_target: Object
 func _init(undo: EditorUndoRedoManager) -> void:
 	_undo = undo
 
-func add_node(parent: Node, node: Node, action_name: String) -> Dictionary:
+func add_node(parent: Node, node: Node, action_name: String, persistent_owner: Node = null) -> Dictionary:
 	if not is_instance_valid(parent) or not is_instance_valid(node) or node.get_parent() != null:
 		return _failure("Parent and detached node are required.")
 	_undo.create_action(action_name, UndoRedo.MERGE_DISABLE, parent)
 	_undo.add_do_method(parent, "add_child", node, true)
+	if is_instance_valid(persistent_owner): _add_do_owner_recursive(node, persistent_owner)
 	_undo.add_do_reference(node)
 	_undo.add_undo_method(parent, "remove_child", node)
 	_undo.commit_action()
@@ -35,10 +36,13 @@ func delete_node(node: Node, action_name: String) -> Dictionary:
 		return _failure("An attached node is required.")
 	var parent := node.get_parent()
 	var index := node.get_index()
+	var owners: Array[Dictionary] = []
+	_snapshot_owners(node, owners)
 	_undo.create_action(action_name, UndoRedo.MERGE_DISABLE, parent)
 	_undo.add_do_method(parent, "remove_child", node)
 	_undo.add_undo_method(parent, "add_child", node, true)
 	_undo.add_undo_method(parent, "move_child", node, index)
+	for entry in owners: _undo.add_undo_property(entry.node, "owner", entry.owner)
 	_undo.add_undo_reference(node)
 	_undo.commit_action()
 	_last_history_target = parent
@@ -70,7 +74,7 @@ func duplicate_node(source: Node, parent: Node, duplicate_flags: int, requested_
 	var copy := source.duplicate(duplicate_flags)
 	if copy == null: return _failure("Godot could not duplicate the node.")
 	if not requested_name.is_empty(): copy.name = requested_name
-	var result := add_node(parent, copy, action_name)
+	var result := add_node(parent, copy, action_name, source.owner)
 	if result.ok: result.node = copy
 	return result
 
@@ -101,3 +105,11 @@ func _is_writable_property(target: Object, property: StringName) -> bool:
 
 func _failure(hint: String) -> Dictionary:
 	return {"ok": false, "hint": hint}
+
+func _add_do_owner_recursive(node: Node, owner: Node) -> void:
+	_undo.add_do_property(node, "owner", owner)
+	for child in node.get_children(): _add_do_owner_recursive(child, owner)
+
+func _snapshot_owners(node: Node, output: Array[Dictionary]) -> void:
+	output.append({"node": node, "owner": node.owner})
+	for child in node.get_children(): _snapshot_owners(child, output)

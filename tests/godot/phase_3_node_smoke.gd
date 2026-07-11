@@ -26,7 +26,9 @@ func _run() -> void:
 	var controller = preload("res://addons/godot_control_mcp/edit_controller.gd").new(undo)
 	controller._last_history_target = root
 	controller.undo(); _check(root.get_node_or_null("Added") == null, "undo add")
-	controller.redo(); _check(root.get_node_or_null("Added") != null, "redo add")
+	controller.redo()
+	var redone_added: Node2D = root.get_node("Added")
+	_check(redone_added.position == Vector2(10, 20) and redone_added.owner == root, "redo add restores initial property and owner")
 	var added_node := root.get_node("Added")
 	var rename_version := Compat.undo_history_version(undo, added_node)
 	var renamed: Dictionary = Edit.node_rename({"path": "/root/Main/Added", "name": "Renamed"})
@@ -64,12 +66,21 @@ func _run() -> void:
 	_check(copy.get_parent() == root and copy.get_index() == old_index and copy.owner == old_owner and copy.global_transform == old_global, "undo reparent restores parent/index/owner/transform")
 	Compat.undo_history_redo(undo, copy); _check(copy.get_parent() == root.get_node("B"), "redo reparent")
 	var parent_b := root.get_node("B")
+	var before_sibling := Node.new(); before_sibling.name = "Before"; parent_b.add_child(before_sibling); before_sibling.owner = root
+	var after_sibling := Node.new(); after_sibling.name = "After"; parent_b.add_child(after_sibling); after_sibling.owner = root
+	parent_b.move_child(copy, 1)
+	var child := Node2D.new(); child.name = "Child"; child.position = Vector2(21, 22); copy.add_child(child); child.owner = root
+	var grandchild := Node2D.new(); grandchild.name = "Grandchild"; grandchild.position = Vector2(31, 32); child.add_child(grandchild); grandchild.owner = root
+	var delete_index := copy.get_index()
 	var delete_version := Compat.undo_history_version(undo, parent_b)
 	var deleted: Dictionary = Edit.node_delete({"path": "/root/Main/B/Copy"})
 	_check(deleted.ok and root.get_node_or_null("B/Copy") == null, "delete")
 	_check(Compat.undo_history_version(undo, parent_b) == delete_version + 1, "delete increments history once")
-	Compat.undo_history_undo(undo, parent_b); _check(parent_b.get_node_or_null("Copy") == copy and copy.owner == old_owner, "undo delete restores subtree owner")
-	Compat.undo_history_redo(undo, parent_b); _check(copy.get_parent() == null, "redo delete")
+	Compat.undo_history_undo(undo, parent_b)
+	_check(parent_b.get_node_or_null("Copy") == copy and copy.get_index() == delete_index, "undo delete restores original sibling index")
+	_check(copy.get_node_or_null("Child/Grandchild") == grandchild and child.position == Vector2(21, 22) and grandchild.position == Vector2(31, 32), "undo delete restores full hierarchy and stored values")
+	_check(copy.owner == old_owner and child.owner == root and grandchild.owner == root, "undo delete restores explicit recursive owners")
+	Compat.undo_history_redo(undo, parent_b); _check(copy.get_parent() == null and child.get_parent() == copy and grandchild.get_parent() == child, "redo delete removes whole retained subtree")
 	var stale: Dictionary = Edit.node_get({"path": "/root/Main/Missing"})
 	_check(not stale.ok and "Current tree" in stale.hint and "/root/Main/A" in stale.hint and stale.hint.length() <= 2048, "stale path bounded hierarchical tree")
 	var proto: Dictionary = Edit.node_set_property({"path": "/root/Main", "property": "__proto__", "value": 1})
