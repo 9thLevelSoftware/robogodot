@@ -1,8 +1,11 @@
 extends SceneTree
 
 const Plugin = preload("../fixtures/godot_project/addons/godot_control_mcp/plugin.gd")
-const PORT := 19201
 var failures: Array[String] = []
+
+func _port() -> int:
+	var value := OS.get_environment("GODOT_MCP_PORT")
+	return value.to_int() if value.is_valid_int() else 9200
 
 func _initialize() -> void:
 	call_deferred("_run")
@@ -14,7 +17,7 @@ func _check(condition: bool, message: String) -> void:
 
 func _connect() -> WebSocketPeer:
 	var client := WebSocketPeer.new()
-	_check(client.connect_to_url("ws://127.0.0.1:%d" % PORT) == OK, "lifecycle client connect must start")
+	_check(client.connect_to_url("ws://127.0.0.1:%d" % _port()) == OK, "lifecycle client connect must start")
 	for ignored in range(120):
 		client.poll()
 		if client.get_ready_state() == WebSocketPeer.STATE_OPEN:
@@ -25,7 +28,7 @@ func _connect() -> WebSocketPeer:
 func _run() -> void:
 	var cfg := ConfigFile.new()
 	_check(cfg.load("res://addons/godot_control_mcp/plugin.cfg") == OK, "real plugin.cfg must load")
-	_check(Plugin.port_from_environment() == PORT, "valid GODOT_MCP_PORT must be used")
+	_check(Plugin.port_from_environment() == _port(), "valid GODOT_MCP_PORT must be used")
 	for value in ["", "abc", "-1", "0", "65536"]:
 		_check(Plugin.parse_port(value) == 9200, "invalid port '%s' must fall back" % value)
 	var plugin_path := "res://addons/godot_control_mcp/plugin.cfg"
