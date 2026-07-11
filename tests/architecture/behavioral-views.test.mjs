@@ -42,6 +42,44 @@ const mutationMessages = new Map([
 
 const mutationIds = [...mutationParticipants, ...mutationMessages.keys()];
 
+const runtimeParticipants = [
+  "CNT-MCP-CLIENT",
+  "CMP-RUNTIME-TOOLS",
+  "CMP-PROCESS-RUNNER",
+  "CNT-RUNNING-GAME",
+  "CMP-DAP-CLIENT",
+  "CNT-GODOT-DAP",
+  "CMP-RUNTIME-DRIVER",
+  "CMP-RUNTIME-AUTOLOADS",
+  "CNT-RUNTIME-IPC-FILES",
+  "CMP-AUDIT",
+];
+
+const runtimeMessages = new Map([
+  ["FLOW-RUN-001", "MCP_CLIENT->>RUNTIME_TOOLS: godot_run_project"],
+  ["FLOW-RUN-002", "PROCESS_RUNNER->>RUNNING_GAME: spawn godot --path <project> [scene]"],
+  ["FLOW-RUN-003", "RUNNING_GAME-->>PROCESS_RUNNER: stream stdout/stderr into ring buffer"],
+  ["FLOW-RUN-004", "MCP_CLIENT->>RUNTIME_TOOLS: incremental output using since/next"],
+  ["FLOW-RUN-005", "RUNTIME_TOOLS->>DAP_CLIENT: initialize DAP"],
+  ["FLOW-RUN-006", "DAP_CLIENT->>GODOT_DAP: [UNRESOLVED] launch or attach ownership (Q-010)"],
+  ["FLOW-RUN-007", "RUNTIME_TOOLS->>RUNTIME_DRIVER: inject/use bridge autoloads through Phase 2 execution"],
+  ["FLOW-RUN-008", "MCP_CLIENT->>RUNTIME_TOOLS: runtime inspect/input/screenshot request"],
+  ["FLOW-RUN-009", "RUNTIME_TOOLS->>RUNTIME_DRIVER: allocate monotonic request ID"],
+  ["FLOW-RUN-010", "RUNTIME_DRIVER->>IPC_FILES: write user://.mcp/req.json"],
+  ["FLOW-RUN-011", "AUTOLOADS->>IPC_FILES: autoload polls and reads request"],
+  ["FLOW-RUN-012", "AUTOLOADS->>RUNNING_GAME: execute requested operation"],
+  ["FLOW-RUN-013", "AUTOLOADS->>IPC_FILES: write user://.mcp/resp-<id>.json"],
+  ["FLOW-RUN-014", "RUNTIME_DRIVER->>IPC_FILES: server reads and deletes response"],
+  ["FLOW-RUN-015", "RUNTIME_TOOLS-->>MCP_CLIENT: return structured result"],
+  ["FLOW-RUN-016", "RUNTIME_TOOLS-->>MCP_CLIENT: timeout alternative with game-not-running hint"],
+  ["FLOW-RUN-017", "RUNTIME_TOOLS-->>MCP_CLIENT: screenshot alternative returns path, dimensions, and PNG"],
+  ["FLOW-RUN-018", "RUNTIME_TOOLS->>PROCESS_RUNNER: graceful stop, then force if required"],
+  ["FLOW-RUN-019", "RUNTIME_TOOLS->>RUNTIME_TOOLS: remove IPC files, end DAP, clean orphan PID"],
+  ["FLOW-RUN-020", "RUNTIME_TOOLS->>AUDIT: audit outcome"],
+]);
+
+const runtimeIds = [...runtimeParticipants, ...runtimeMessages.keys()];
+
 function sectionBetween(markdown, startHeading, endHeading) {
   const start = markdown.indexOf(startHeading);
   const end = markdown.indexOf(endHeading, start + startHeading.length);
@@ -174,4 +212,122 @@ test("stale or ambiguous NodePath failures belong to the routed Godot error bran
   const trace014 = traceability.split(/\r?\n/).find((line) => line.startsWith("| `FLOW-MUT-014` |"));
   assert.doesNotMatch(trace005, /stale|NodePath|\bpath\b/i);
   assert.match(trace014, /godot_error.*stale\/ambiguous NodePath/i);
+});
+
+test("runtime debug sequence preserves the exact setup, interaction, and shutdown contract", async () => {
+  const markdown = await assertView("06-runtime-debug-sequence.md", {
+    ids: runtimeIds,
+    tokens: [
+      "sequenceDiagram",
+      "SETUP",
+      "INTERACTION",
+      "SHUTDOWN",
+      "since",
+      "next",
+      "req.json",
+      "resp-<id>.json",
+      "PNG",
+      "[UNRESOLVED]",
+      "Q-010",
+      "Q-011",
+      "Q-012",
+      "game-not-running",
+      "degrade to process + bridge",
+    ],
+  });
+
+  const [block] = extractMermaidBlocks(markdown);
+  const lines = block.split(/\r?\n/);
+  const participantAnchors = lines
+    .map((line) => line.trim().match(/^%% atlas-node: (.+)$/)?.[1])
+    .filter(Boolean);
+  assert.deepEqual(participantAnchors, runtimeParticipants, "participant declaration order");
+
+  const flowAnchors = lines
+    .map((line) => line.trim().match(/^%% atlas-flow: (FLOW-RUN-\d{3})$/)?.[1])
+    .filter(Boolean);
+  assert.deepEqual(flowAnchors, [...runtimeMessages.keys()], "runtime flow order");
+
+  for (const [flowId, message] of runtimeMessages) {
+    const anchor = lines.findIndex((line) => line.trim() === `%% atlas-flow: ${flowId}`);
+    assert.notEqual(anchor, -1, `${flowId} anchor`);
+    assert.equal(lines[anchor + 1].trim(), message, `${flowId} message`);
+  }
+
+  const responseAlternative = lines.findIndex(
+    (line) => line.trim() === "alt Response file appears before the per-request timeout",
+  );
+  const flow014 = lines.findIndex((line) => line.trim() === "%% atlas-flow: FLOW-RUN-014");
+  const flow015 = lines.findIndex((line) => line.trim() === "%% atlas-flow: FLOW-RUN-015");
+  const timeoutAlternative = lines.findIndex((line) => line.trim() === "else Response deadline expires");
+  const flow016 = lines.findIndex((line) => line.trim() === "%% atlas-flow: FLOW-RUN-016");
+  assert.ok(
+    responseAlternative >= 0
+      && responseAlternative < flow014
+      && flow014 < flow015
+      && flow015 < timeoutAlternative
+      && timeoutAlternative < flow016,
+    "response read/delete belongs only to the success branch while preserving flow order",
+  );
+
+  const setup = block.indexOf("SETUP");
+  const interaction = block.indexOf("INTERACTION");
+  const shutdown = block.indexOf("SHUTDOWN");
+  assert.ok(setup < interaction && interaction < shutdown, "phase bands stay visually ordered");
+});
+
+test("runtime debug view has exhaustive adjacent participant and relationship outlines", async () => {
+  const markdown = await assertView("06-runtime-debug-sequence.md", { ids: runtimeIds });
+  const diagramEnd = markdown.indexOf("```", markdown.indexOf("```mermaid") + 3);
+  const participantHeading = markdown.indexOf("## Participant outline");
+  const relationshipHeading = markdown.indexOf("## Relationship outline");
+  assert.ok(diagramEnd < participantHeading, "participant outline follows the diagram");
+  assert.ok(participantHeading < relationshipHeading, "relationship outline follows participants");
+
+  const participantSection = sectionBetween(markdown, "## Participant outline", "## Relationship outline");
+  assert.ok(
+    participantSection.includes("| Participant | Responsibility | Phase owner | Protocol / boundary |"),
+    "participant outline columns",
+  );
+  const participantRows = tableRows(participantSection, /^\| `(?:CNT|CMP)-[A-Z0-9-]+` \|/);
+  assert.deepEqual(
+    participantRows.map((row) => row.match(/^\| `([^`]+)` \|/)[1]),
+    runtimeParticipants,
+    "participant outline inventory",
+  );
+  for (const row of participantRows) {
+    assert.equal(row.split("|").length, 6, `participant outline column count: ${row}`);
+    assert.match(row, /\| (?:Phase|Consumer integration)/, `participant phase owner: ${row}`);
+  }
+
+  const relationshipSection = sectionBetween(markdown, "## Relationship outline", "## Failure and degradation ownership");
+  assert.ok(
+    relationshipSection.includes(
+      "| Flow | From → To | Message / outcome | Evidence | Phase / protocol | Source / trace |",
+    ),
+    "relationship outline columns",
+  );
+  const relationshipRows = tableRows(relationshipSection, /^\| `FLOW-RUN-\d{3}` \|/);
+  assert.deepEqual(
+    relationshipRows.map((row) => row.match(/^\| `([^`]+)` \|/)[1]),
+    [...runtimeMessages.keys()],
+    "relationship outline inventory",
+  );
+
+  for (const [index, row] of relationshipRows.entries()) {
+    const flowId = `FLOW-RUN-${String(index + 1).padStart(3, "0")}`;
+    assert.equal(row.split("|").length, 8, `relationship outline column count: ${flowId}`);
+    assert.equal(row.split("|")[4].trim(), flowId === "FLOW-RUN-006" ? "Unresolved" : "Explicit", `${flowId} evidence`);
+    assert.match(row.split("|")[5], /Phase 5 \/.+/, `${flowId} phase and protocol detail`);
+    assert.ok(
+      row.includes("[trace](traceability.md#architecture-atlas-traceability)"),
+      `${flowId} trace link`,
+    );
+  }
+
+  assert.ok(markdown.includes("[Traceability index](traceability.md#architecture-atlas-traceability)"));
+  assert.ok(markdown.includes("[Open-question register](open-questions.md#architecture-open-questions)"));
+  assert.ok(relationshipRows[5].includes("[Q-010](open-questions.md#architecture-open-questions)"));
+  assert.ok(relationshipRows[9].includes("[Q-011](open-questions.md#architecture-open-questions)"));
+  assert.ok(relationshipRows[9].includes("[Q-012](open-questions.md#architecture-open-questions)"));
 });

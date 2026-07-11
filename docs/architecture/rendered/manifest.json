@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-11T02:38:10.123Z",
+  "generatedAt": "2026-07-11T02:55:48.189Z",
   "renderer": "@mermaid-js/mermaid-cli@11.16.0",
   "sourceArchive": {
     "path": "C:\\Users\\dasbl\\Downloads\\files.zip",
@@ -30,6 +30,11 @@
     {
       "output": "05-editor-mutation-sequence.svg",
       "source": "05-editor-mutation-sequence.md",
+      "block": 1
+    },
+    {
+      "output": "06-runtime-debug-sequence.svg",
+      "source": "06-runtime-debug-sequence.md",
       "block": 1
     }
   ]

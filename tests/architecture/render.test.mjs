@@ -201,6 +201,22 @@ test("declares the exact curated-mutation sequence ID contract", () => {
   ]);
 });
 
+test("declares the exact runtime-debug sequence ID contract", () => {
+  assert.deepEqual(VIEW_ID_CONTRACTS["06-runtime-debug-sequence.md"], [
+    "CNT-MCP-CLIENT",
+    "CMP-RUNTIME-TOOLS",
+    "CMP-PROCESS-RUNNER",
+    "CNT-RUNNING-GAME",
+    "CMP-DAP-CLIENT",
+    "CNT-GODOT-DAP",
+    "CMP-RUNTIME-DRIVER",
+    "CMP-RUNTIME-AUTOLOADS",
+    "CNT-RUNTIME-IPC-FILES",
+    "CMP-AUDIT",
+    ...Array.from({ length: 20 }, (_, index) => `FLOW-RUN-${String(index + 1).padStart(3, "0")}`),
+  ]);
+});
+
 test("builds a shell-free Windows npx invocation with opaque paths", () => {
   const execPath = String.raw`C:\Tools\Node & 100%^!\node.exe`;
   assert.deepEqual(buildNpxInvocation("win32", execPath), {
