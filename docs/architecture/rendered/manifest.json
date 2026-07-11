@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-11T03:19:51.812Z",
+  "generatedAt": "2026-07-11T03:48:59.242Z",
   "renderer": "@mermaid-js/mermaid-cli@11.16.0",
   "sourceArchive": {
     "path": "C:\\Users\\dasbl\\Downloads\\files.zip",
@@ -41,6 +41,26 @@
       "output": "07-policy-pipeline.svg",
       "source": "07-policy-pipeline.md",
       "block": 1
+    },
+    {
+      "output": "08a-editor-websocket-lifecycle.svg",
+      "source": "08-connection-lifecycles.md",
+      "block": 1
+    },
+    {
+      "output": "08b-lsp-lifecycle.svg",
+      "source": "08-connection-lifecycles.md",
+      "block": 2
+    },
+    {
+      "output": "08c-game-process-lifecycle.svg",
+      "source": "08-connection-lifecycles.md",
+      "block": 3
+    },
+    {
+      "output": "08d-dap-lifecycle.svg",
+      "source": "08-connection-lifecycles.md",
+      "block": 4
     }
   ]
 }

@@ -121,6 +121,108 @@ const policyEdges = new Map([
 
 const policyIds = [...policyNodes, ...policyEdges.keys()];
 
+const lifecycleViews = [
+  {
+    heading: "## Editor WebSocket transport lifecycle",
+    states: [
+      "STATE-WS-DISCONNECTED",
+      "STATE-WS-CONNECTING",
+      "STATE-WS-CONNECTED",
+      "STATE-WS-RECONNECTING",
+    ],
+    transitions: new Map([
+      ["FLOW-WS-001", "[*] --> WS_DISCONNECTED"],
+      ["FLOW-WS-002", "WS_DISCONNECTED --> WS_CONNECTING : start"],
+      ["FLOW-WS-003", "WS_CONNECTING --> WS_CONNECTED : socket open"],
+      ["FLOW-WS-004", "WS_CONNECTING --> WS_RECONNECTING : connection failure"],
+      ["FLOW-WS-005", "WS_CONNECTED --> WS_RECONNECTING : close or missed heartbeat (Q-003)"],
+      ["FLOW-WS-006", "WS_RECONNECTING --> WS_CONNECTING : backoff elapsed"],
+    ]),
+    evidence: "Explicit",
+    phase: "Phase 1",
+  },
+  {
+    heading: "## Godot LSP document lifecycle",
+    states: [
+      "STATE-LSP-DISCONNECTED",
+      "STATE-LSP-TCP-CONNECTED",
+      "STATE-LSP-INITIALIZING",
+      "STATE-LSP-READY",
+      "STATE-LSP-DOCUMENT-SYNCED",
+      "STATE-LSP-RECONNECTING",
+      "STATE-LSP-SHUTTING-DOWN",
+      "STATE-LSP-EXITED",
+    ],
+    transitions: new Map([
+      ["FLOW-LSP-001", "[*] --> LSP_DISCONNECTED : [INFERRED] initial disconnected state"],
+      ["FLOW-LSP-002", "LSP_DISCONNECTED --> LSP_TCP_CONNECTED : [INFERRED] TCP connect"],
+      ["FLOW-LSP-003", "LSP_TCP_CONNECTED --> LSP_INITIALIZING : [INFERRED] initialize"],
+      ["FLOW-LSP-004", "LSP_INITIALIZING --> LSP_READY : [INFERRED] initialized"],
+      ["FLOW-LSP-005", "LSP_READY --> LSP_DOCUMENT_SYNCED : [INFERRED] didOpen"],
+      ["FLOW-LSP-006", "LSP_DOCUMENT_SYNCED --> LSP_DOCUMENT_SYNCED : [INFERRED] didChange"],
+      ["FLOW-LSP-007", "LSP_READY --> LSP_RECONNECTING : [INFERRED] connection drop"],
+      ["FLOW-LSP-008", "LSP_DOCUMENT_SYNCED --> LSP_RECONNECTING : [INFERRED] connection drop"],
+      ["FLOW-LSP-009", "LSP_RECONNECTING --> LSP_TCP_CONNECTED : [INFERRED] reconnect"],
+      ["FLOW-LSP-010", "LSP_READY --> LSP_SHUTTING_DOWN : [INFERRED] shutdown"],
+      ["FLOW-LSP-011", "LSP_SHUTTING_DOWN --> LSP_EXITED : [INFERRED] exit"],
+    ]),
+    evidence: "Inferred",
+    phase: "Phase 4",
+  },
+  {
+    heading: "## Managed game process lifecycle",
+    states: [
+      "STATE-PROC-STOPPED",
+      "STATE-PROC-STARTING",
+      "STATE-PROC-RUNNING",
+      "STATE-PROC-STOPPING",
+      "STATE-PROC-EXITED",
+      "STATE-PROC-CRASHED",
+      "STATE-PROC-FORCE-STOPPING",
+    ],
+    transitions: new Map([
+      ["FLOW-PROC-001", "[*] --> PROC_STOPPED : [INFERRED] initial stopped state"],
+      ["FLOW-PROC-002", "PROC_STOPPED --> PROC_STARTING : [INFERRED] run"],
+      ["FLOW-PROC-003", "PROC_STARTING --> PROC_RUNNING : [INFERRED] process started"],
+      ["FLOW-PROC-004", "PROC_STARTING --> PROC_CRASHED : [INFERRED] launch failure"],
+      ["FLOW-PROC-005", "PROC_RUNNING --> PROC_STOPPING : [INFERRED] graceful stop"],
+      ["FLOW-PROC-006", "PROC_STOPPING --> PROC_STOPPED : [INFERRED] clean exit"],
+      ["FLOW-PROC-007", "PROC_STOPPING --> PROC_FORCE_STOPPING : [INFERRED] timeout"],
+      ["FLOW-PROC-008", "PROC_FORCE_STOPPING --> PROC_STOPPED : [INFERRED] killed and cleaned"],
+      ["FLOW-PROC-009", "PROC_RUNNING --> PROC_EXITED : [INFERRED] process exit"],
+      ["FLOW-PROC-010", "PROC_RUNNING --> PROC_CRASHED : [INFERRED] abnormal exit"],
+    ]),
+    evidence: "Inferred",
+    phase: "Phase 5",
+  },
+  {
+    heading: "## Godot DAP session lifecycle",
+    states: [
+      "STATE-DAP-DISCONNECTED",
+      "STATE-DAP-INITIALIZED",
+      "STATE-DAP-LAUNCHED-ATTACHED",
+      "STATE-DAP-RUNNING",
+      "STATE-DAP-PAUSED",
+      "STATE-DAP-TERMINATED",
+    ],
+    transitions: new Map([
+      ["FLOW-DAP-001", "[*] --> DAP_DISCONNECTED : [INFERRED] initial disconnected state"],
+      ["FLOW-DAP-002", "DAP_DISCONNECTED --> DAP_INITIALIZED : [INFERRED] initialize"],
+      ["FLOW-DAP-003", "DAP_INITIALIZED --> DAP_LAUNCHED_ATTACHED : [INFERRED] launch or attach (Q-010)"],
+      ["FLOW-DAP-004", "DAP_LAUNCHED_ATTACHED --> DAP_RUNNING : [INFERRED] continue"],
+      ["FLOW-DAP-005", "DAP_RUNNING --> DAP_PAUSED : [INFERRED] breakpoint or pause"],
+      ["FLOW-DAP-006", "DAP_PAUSED --> DAP_RUNNING : [INFERRED] continue"],
+      ["FLOW-DAP-007", "DAP_PAUSED --> DAP_PAUSED : [INFERRED] step"],
+      ["FLOW-DAP-008", "DAP_RUNNING --> DAP_TERMINATED : [INFERRED] terminate"],
+      ["FLOW-DAP-009", "DAP_PAUSED --> DAP_TERMINATED : [INFERRED] terminate"],
+    ]),
+    evidence: "Inferred",
+    phase: "Phase 5",
+  },
+];
+
+const lifecycleIds = lifecycleViews.flatMap(({ states, transitions }) => [...states, ...transitions.keys()]);
+
 function sectionBetween(markdown, startHeading, endHeading) {
   const start = markdown.indexOf(startHeading);
   const end = markdown.indexOf(endHeading, start + startHeading.length);
@@ -549,4 +651,134 @@ test("policy risks keep queue, consistency, and unresolved guard limits explicit
   assert.match(markdown, /Q-006.+headless GDScript/is);
   assert.match(markdown, /Q-008.+in-progress mutation/is);
   assert.match(markdown, /Q-009.+export output paths/is);
+});
+
+test("transport and runtime lifecycles preserve the exact four state machines", async () => {
+  const markdown = await assertView("08-connection-lifecycles.md", {
+    blockCount: 4,
+    ids: lifecycleIds,
+    tokens: [
+      "stateDiagram-v2",
+      "exponential backoff",
+      "didOpen",
+      "didChange",
+      "graceful stop",
+      "force",
+      "breakpoint or pause",
+      "[INFERRED]",
+      "Q-003",
+      "Q-010",
+      "Source status",
+      "Operational invariant",
+    ],
+  });
+
+  const blocks = extractMermaidBlocks(markdown);
+  assert.equal(blocks.length, lifecycleViews.length, "one block per named lifecycle export");
+
+  for (const [index, view] of lifecycleViews.entries()) {
+    const lines = blocks[index].split(/\r?\n/);
+    assert.equal(lines[0].trim(), "stateDiagram-v2", `${view.heading}: diagram type`);
+    const stateAnchors = lines
+      .map((line) => line.trim().match(/^%% atlas-node: (STATE-[A-Z0-9-]+)$/)?.[1])
+      .filter(Boolean);
+    assert.deepEqual(stateAnchors, view.states, `${view.heading}: state declaration order`);
+    const flowAnchors = lines
+      .map((line) => line.trim().match(/^%% atlas-flow: (FLOW-[A-Z]+-\d{3})$/)?.[1])
+      .filter(Boolean);
+    assert.deepEqual(flowAnchors, [...view.transitions.keys()], `${view.heading}: transition order`);
+
+    for (const [flowId, transition] of view.transitions) {
+      const anchor = lines.findIndex((line) => line.trim() === `%% atlas-flow: ${flowId}`);
+      assert.notEqual(anchor, -1, `${flowId} anchor`);
+      assert.equal(lines[anchor + 1].trim(), transition, `${flowId} transition`);
+      assert.match(transition, /-->/, `${flowId}: normal state arrow`);
+      assert.doesNotMatch(transition, /-\.->|==>/, `${flowId}: evidence is not encoded by arrow style`);
+      if (view.evidence === "Inferred") assert.match(transition, /: \[INFERRED\]/, `${flowId}: inferred label`);
+    }
+  }
+
+  assert.match(lifecycleViews[0].transitions.get("FLOW-WS-005"), /missed heartbeat \(Q-003\)/);
+});
+
+test("lifecycle view has exhaustive adjacent state and transition outlines plus trace rows", async () => {
+  const markdown = await assertView("08-connection-lifecycles.md", { blockCount: 4, ids: lifecycleIds });
+
+  for (const [index, view] of lifecycleViews.entries()) {
+    const start = markdown.indexOf(view.heading);
+    const nextHeading = lifecycleViews[index + 1]?.heading;
+    const end = nextHeading ? markdown.indexOf(nextHeading, start + view.heading.length) : markdown.length;
+    assert.notEqual(start, -1, `${view.heading}: heading`);
+    assert.ok(end > start, `${view.heading}: bounded section`);
+    const section = markdown.slice(start, end);
+    const diagramEnd = section.indexOf("```", section.indexOf("```mermaid") + 3);
+    const sourceStatus = section.indexOf("**Source status.**");
+    const invariant = section.indexOf("**Operational invariant.**");
+    const stateHeading = section.indexOf("### State outline");
+    const transitionHeading = section.indexOf("### Transition outline");
+    assert.ok(diagramEnd < sourceStatus, `${view.heading}: source status follows diagram`);
+    assert.ok(sourceStatus < invariant, `${view.heading}: source status precedes invariant`);
+    assert.ok(invariant < stateHeading, `${view.heading}: invariant precedes state outline`);
+    assert.ok(stateHeading < transitionHeading, `${view.heading}: state outline precedes transition outline`);
+
+    const stateSection = section.slice(stateHeading, transitionHeading);
+    assert.ok(
+      stateSection.includes(
+        "| State | Meaning | Evidence | Phase owner | Protocol / boundary | Source / trace / open questions |",
+      ),
+      `${view.heading}: state outline columns`,
+    );
+    const stateRows = tableRows(stateSection, /^\| `STATE-[A-Z0-9-]+` \|/);
+    assert.deepEqual(
+      stateRows.map((row) => row.match(/^\| `([^`]+)` \|/)[1]),
+      view.states,
+      `${view.heading}: state outline inventory`,
+    );
+    for (const row of stateRows) {
+      const cells = row.split("|");
+      assert.equal(cells.length, 8, `state outline column count: ${row}`);
+      assert.equal(cells[3].trim(), view.evidence, `state evidence: ${row}`);
+      assert.equal(cells[4].trim(), view.phase, `state phase owner: ${row}`);
+      assert.ok(cells[5].trim(), `state protocol or boundary: ${row}`);
+      assert.ok(row.includes("[trace](traceability.md#architecture-atlas-traceability)"), `state trace link: ${row}`);
+    }
+
+    const transitionSection = section.slice(transitionHeading);
+    assert.ok(
+      transitionSection.includes(
+        "| Flow | From → To | Trigger / outcome | Evidence | Phase owner | Protocol / boundary | Source / trace / open questions |",
+      ),
+      `${view.heading}: transition outline columns`,
+    );
+    const transitionRows = tableRows(transitionSection, /^\| `FLOW-[A-Z]+-\d{3}` \|/);
+    assert.deepEqual(
+      transitionRows.map((row) => row.match(/^\| `([^`]+)` \|/)[1]),
+      [...view.transitions.keys()],
+      `${view.heading}: transition outline inventory`,
+    );
+    for (const row of transitionRows) {
+      const cells = row.split("|");
+      assert.equal(cells.length, 9, `transition outline column count: ${row}`);
+      assert.equal(cells[4].trim(), view.evidence, `transition evidence: ${row}`);
+      assert.equal(cells[5].trim(), view.phase, `transition phase owner: ${row}`);
+      assert.ok(cells[6].trim(), `transition protocol or boundary: ${row}`);
+      assert.ok(row.includes("[trace](traceability.md#architecture-atlas-traceability)"), `transition trace link: ${row}`);
+    }
+  }
+
+  assert.ok(markdown.includes("[Q-003](open-questions.md#architecture-open-questions)"), "Q-003 direct link");
+  assert.ok(markdown.includes("[Q-010](open-questions.md#architecture-open-questions)"), "Q-010 direct link");
+
+  const traceability = await readFile(new URL("../../docs/architecture/traceability.md", import.meta.url), "utf8");
+  const traceRows = traceability.split(/\r?\n/);
+  for (const view of lifecycleViews) {
+    for (const id of [...view.states, ...view.transitions.keys()]) {
+      const row = traceRows.find((line) => line.startsWith(`| \`${id}\` |`));
+      assert.ok(row, `${id}: trace row`);
+      assert.ok(row.includes("`08-connection-lifecycles.md`"), `${id}: lifecycle view trace`);
+      assert.equal(row.split("|")[4].trim(), view.evidence, `${id}: trace evidence`);
+    }
+  }
+  const heartbeatTrace = traceRows.find((line) => line.startsWith("| `FLOW-WS-005` |"));
+  assert.match(heartbeatTrace, /Q-003/, "heartbeat transition traces the unresolved transport detail");
 });

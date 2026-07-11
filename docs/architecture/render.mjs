@@ -243,6 +243,69 @@ export const VIEW_ID_CONTRACTS = Object.freeze({
     "FLOW-POL-019",
     "FLOW-POL-020",
   ]),
+  "08-connection-lifecycles.md": Object.freeze([
+    "STATE-WS-DISCONNECTED",
+    "STATE-WS-CONNECTING",
+    "STATE-WS-CONNECTED",
+    "STATE-WS-RECONNECTING",
+    "STATE-LSP-DISCONNECTED",
+    "STATE-LSP-TCP-CONNECTED",
+    "STATE-LSP-INITIALIZING",
+    "STATE-LSP-READY",
+    "STATE-LSP-DOCUMENT-SYNCED",
+    "STATE-LSP-RECONNECTING",
+    "STATE-LSP-SHUTTING-DOWN",
+    "STATE-LSP-EXITED",
+    "STATE-PROC-STOPPED",
+    "STATE-PROC-STARTING",
+    "STATE-PROC-RUNNING",
+    "STATE-PROC-STOPPING",
+    "STATE-PROC-EXITED",
+    "STATE-PROC-CRASHED",
+    "STATE-PROC-FORCE-STOPPING",
+    "STATE-DAP-DISCONNECTED",
+    "STATE-DAP-INITIALIZED",
+    "STATE-DAP-LAUNCHED-ATTACHED",
+    "STATE-DAP-RUNNING",
+    "STATE-DAP-PAUSED",
+    "STATE-DAP-TERMINATED",
+    "FLOW-WS-001",
+    "FLOW-WS-002",
+    "FLOW-WS-003",
+    "FLOW-WS-004",
+    "FLOW-WS-005",
+    "FLOW-WS-006",
+    "FLOW-LSP-001",
+    "FLOW-LSP-002",
+    "FLOW-LSP-003",
+    "FLOW-LSP-004",
+    "FLOW-LSP-005",
+    "FLOW-LSP-006",
+    "FLOW-LSP-007",
+    "FLOW-LSP-008",
+    "FLOW-LSP-009",
+    "FLOW-LSP-010",
+    "FLOW-LSP-011",
+    "FLOW-PROC-001",
+    "FLOW-PROC-002",
+    "FLOW-PROC-003",
+    "FLOW-PROC-004",
+    "FLOW-PROC-005",
+    "FLOW-PROC-006",
+    "FLOW-PROC-007",
+    "FLOW-PROC-008",
+    "FLOW-PROC-009",
+    "FLOW-PROC-010",
+    "FLOW-DAP-001",
+    "FLOW-DAP-002",
+    "FLOW-DAP-003",
+    "FLOW-DAP-004",
+    "FLOW-DAP-005",
+    "FLOW-DAP-006",
+    "FLOW-DAP-007",
+    "FLOW-DAP-008",
+    "FLOW-DAP-009",
+  ]),
 });
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -346,10 +409,29 @@ function parseSequenceMessage(line) {
   return match ? { endpoints: [match[1], match[2]] } : null;
 }
 
+function parseStateDeclaration(line) {
+  const trimmed = line.trim();
+  const quotedName = trimmed.match(/^state\s+"(?:\\.|[^"\\])*"\s+as\s+([A-Za-z_][A-Za-z0-9_-]*)\s*$/i);
+  if (quotedName) return quotedName[1];
+  const quotedLabel = trimmed.match(
+    /^state\s+([A-Za-z_][A-Za-z0-9_-]*)\s+as\s+"(?:\\.|[^"\\])*"\s*$/i,
+  );
+  if (quotedLabel) return quotedLabel[1];
+  const bare = trimmed.match(/^state\s+([A-Za-z_][A-Za-z0-9_-]*)\s*$/i);
+  return bare?.[1] ?? null;
+}
+
+function parseStateTransition(line) {
+  const endpoint = String.raw`(?:\[\*\]|[A-Za-z_][A-Za-z0-9_-]*)`;
+  const match = line.trim().match(new RegExp(`^(${endpoint})\\s*-->\\s*(${endpoint})(?:\\s*:\\s*.*)?$`));
+  return match ? { endpoints: [match[1], match[2]].filter((state) => state !== "[*]") } : null;
+}
+
 export function validateMermaidAnchors(block, context = "Mermaid block") {
   const lines = block.split(/\r?\n/);
   const isFlowchart = lines.some((line) => /^\s*(?:flowchart|graph)\s+/.test(line));
   const isSequence = lines.some((line) => /^\s*sequenceDiagram\s*$/.test(line));
+  const isState = lines.some((line) => /^\s*stateDiagram(?:-v2)?\s*$/.test(line));
   const anchors = [];
   const seenAnchors = new Set();
 
@@ -365,6 +447,56 @@ export function validateMermaidAnchors(block, context = "Mermaid block") {
     }
     seenAnchors.add(anchor.id);
     anchors.push({ ...anchor, index });
+  }
+
+  if (isState) {
+    const declaredStates = new Set();
+    const transitions = [];
+    for (const { kind, id, index } of anchors) {
+      const next = lines[index + 1] ?? "";
+      if (kind === "node" && !parseStateDeclaration(next)) {
+        throw new Error(`${context} line ${index + 1}: atlas-node ${id} must immediately precede a state declaration`);
+      }
+      if (kind === "flow" && !parseStateTransition(next)) {
+        throw new Error(`${context} line ${index + 1}: atlas-flow ${id} must immediately precede a state transition`);
+      }
+    }
+
+    for (const [index, line] of lines.entries()) {
+      const state = parseStateDeclaration(line);
+      if (state) {
+        const anchor = parseAtlasAnchor(lines[index - 1] ?? "");
+        if (!anchor || anchor.kind !== "node") {
+          throw new Error(
+            `${context} line ${index + 1}: ${state} missing immediately preceding atlas-node anchor; atlas-node must immediately precede every state declaration`,
+          );
+        }
+        declaredStates.add(state);
+      }
+
+      const transition = parseStateTransition(line);
+      if (transition) {
+        const anchor = parseAtlasAnchor(lines[index - 1] ?? "");
+        if (!anchor || anchor.kind !== "flow") {
+          throw new Error(
+            `${context} line ${index + 1}: transition missing immediately preceding atlas-flow anchor; atlas-flow must immediately precede every state transition`,
+          );
+        }
+        transitions.push(transition);
+      }
+    }
+
+    for (const { endpoints } of transitions) {
+      for (const endpoint of endpoints) {
+        if (!declaredStates.has(endpoint)) {
+          throw new Error(`${context}: ${endpoint} must have an anchored state declaration`);
+        }
+      }
+    }
+
+    const unanchoredIds = [...collectAtlasIds([block])].filter((id) => !seenAnchors.has(id)).sort();
+    if (unanchoredIds.length) throw new Error(`${context}: Unanchored atlas IDs: ${unanchoredIds.join(", ")}`);
+    return new Set(anchors.map(({ id }) => id));
   }
 
   if (isSequence) {

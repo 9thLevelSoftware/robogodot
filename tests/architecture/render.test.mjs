@@ -236,6 +236,46 @@ test("declares the exact centralized-policy pipeline ID contract", () => {
   ]);
 });
 
+test("declares the exact connection-lifecycle view ID contract and exports", () => {
+  assert.deepEqual(EXPORT_MAP["08-connection-lifecycles.md"], [
+    "08a-editor-websocket-lifecycle.svg",
+    "08b-lsp-lifecycle.svg",
+    "08c-game-process-lifecycle.svg",
+    "08d-dap-lifecycle.svg",
+  ]);
+  assert.deepEqual(VIEW_ID_CONTRACTS["08-connection-lifecycles.md"], [
+    "STATE-WS-DISCONNECTED",
+    "STATE-WS-CONNECTING",
+    "STATE-WS-CONNECTED",
+    "STATE-WS-RECONNECTING",
+    "STATE-LSP-DISCONNECTED",
+    "STATE-LSP-TCP-CONNECTED",
+    "STATE-LSP-INITIALIZING",
+    "STATE-LSP-READY",
+    "STATE-LSP-DOCUMENT-SYNCED",
+    "STATE-LSP-RECONNECTING",
+    "STATE-LSP-SHUTTING-DOWN",
+    "STATE-LSP-EXITED",
+    "STATE-PROC-STOPPED",
+    "STATE-PROC-STARTING",
+    "STATE-PROC-RUNNING",
+    "STATE-PROC-STOPPING",
+    "STATE-PROC-EXITED",
+    "STATE-PROC-CRASHED",
+    "STATE-PROC-FORCE-STOPPING",
+    "STATE-DAP-DISCONNECTED",
+    "STATE-DAP-INITIALIZED",
+    "STATE-DAP-LAUNCHED-ATTACHED",
+    "STATE-DAP-RUNNING",
+    "STATE-DAP-PAUSED",
+    "STATE-DAP-TERMINATED",
+    ...Array.from({ length: 6 }, (_, index) => `FLOW-WS-${String(index + 1).padStart(3, "0")}`),
+    ...Array.from({ length: 11 }, (_, index) => `FLOW-LSP-${String(index + 1).padStart(3, "0")}`),
+    ...Array.from({ length: 10 }, (_, index) => `FLOW-PROC-${String(index + 1).padStart(3, "0")}`),
+    ...Array.from({ length: 9 }, (_, index) => `FLOW-DAP-${String(index + 1).padStart(3, "0")}`),
+  ]);
+});
+
 test("builds a shell-free Windows npx invocation with opaque paths", () => {
   const execPath = String.raw`C:\Tools\Node & 100%^!\node.exe`;
   assert.deepEqual(buildNpxInvocation("win32", execPath), {
@@ -452,6 +492,78 @@ test("sequence create declarations require immediate node anchors", async (t) =>
   for (const fixture of cases) {
     await t.test(fixture.name, () => {
       assert.throws(() => validateMermaidAnchors(fixture.block, "sequence create fixture"), fixture.error);
+    });
+  }
+});
+
+test("state diagrams require immediate state and transition anchors, including pseudostate and self-loop transitions", async (t) => {
+  const stateBlock = `stateDiagram-v2
+  accTitle: Anchored state sample
+  accDescr: Quoted state aliases have semantic anchors; initial, ordinary, and self-loop transitions have flow anchors.
+  %% atlas-node: STATE-SAMPLE-IDLE
+  state "Idle" as SAMPLE_IDLE
+  %% atlas-node: STATE-SAMPLE-RUNNING
+  state "Running" as SAMPLE_RUNNING
+  %% atlas-flow: FLOW-SAMPLE-001
+  [*] --> SAMPLE_IDLE
+  %% atlas-flow: FLOW-SAMPLE-002
+  SAMPLE_IDLE --> SAMPLE_RUNNING : start
+  %% atlas-flow: FLOW-SAMPLE-003
+  SAMPLE_RUNNING --> SAMPLE_RUNNING : tick`;
+
+  assert.deepEqual(
+    [...validateMermaidAnchors(stateBlock, "state fixture")].sort(),
+    [
+      "FLOW-SAMPLE-001",
+      "FLOW-SAMPLE-002",
+      "FLOW-SAMPLE-003",
+      "STATE-SAMPLE-IDLE",
+      "STATE-SAMPLE-RUNNING",
+    ],
+  );
+
+  const cases = [
+    {
+      name: "quoted state declaration without anchor",
+      block: stateBlock.replace("  %% atlas-node: STATE-SAMPLE-RUNNING\n", ""),
+      error: /SAMPLE_RUNNING.*missing immediately preceding atlas-node anchor/,
+    },
+    {
+      name: "initial pseudostate transition without anchor",
+      block: stateBlock.replace("  %% atlas-flow: FLOW-SAMPLE-001\n", ""),
+      error: /transition missing immediately preceding atlas-flow anchor/,
+    },
+    {
+      name: "self-loop transition without anchor",
+      block: stateBlock.replace("  %% atlas-flow: FLOW-SAMPLE-003\n", ""),
+      error: /transition missing immediately preceding atlas-flow anchor/,
+    },
+    {
+      name: "blank between anchor and state",
+      block: stateBlock.replace(
+        "  %% atlas-node: STATE-SAMPLE-RUNNING\n",
+        "  %% atlas-node: STATE-SAMPLE-RUNNING\n\n",
+      ),
+      error: /atlas-node STATE-SAMPLE-RUNNING must immediately precede a state declaration/,
+    },
+    {
+      name: "directive between anchor and transition",
+      block: stateBlock.replace(
+        "  %% atlas-flow: FLOW-SAMPLE-002\n",
+        "  %% atlas-flow: FLOW-SAMPLE-002\n  note right of SAMPLE_IDLE: intervening directive\n",
+      ),
+      error: /atlas-flow FLOW-SAMPLE-002 must immediately precede a state transition/,
+    },
+    {
+      name: "implicit state endpoint",
+      block: stateBlock.replace("SAMPLE_IDLE --> SAMPLE_RUNNING : start", "SAMPLE_IDLE --> SAMPLE_EXTRA : start"),
+      error: /SAMPLE_EXTRA.*must have an anchored state declaration/,
+    },
+  ];
+
+  for (const fixture of cases) {
+    await t.test(fixture.name, () => {
+      assert.throws(() => validateMermaidAnchors(fixture.block, "state fixture"), fixture.error);
     });
   }
 });
