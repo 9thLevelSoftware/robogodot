@@ -144,6 +144,38 @@ export const VIEW_ID_CONTRACTS = Object.freeze({
     "FLOW-CMP-022",
     "FLOW-CMP-023",
   ]),
+  "05-editor-mutation-sequence.md": Object.freeze([
+    "CNT-MCP-CLIENT",
+    "CMP-REGISTRY",
+    "CMP-SCHEMA-CONTRACTS",
+    "CMP-SEMANTIC-SERVICES",
+    "CMP-SAFETY",
+    "CMP-REQUEST-QUEUE",
+    "CMP-WS-CLIENT",
+    "CMP-COMMAND-ROUTER",
+    "CMP-EDIT-CONTROLLER",
+    "SYS-UNDO-REDO",
+    "CMP-READ-CACHE",
+    "CMP-AUDIT",
+    "FLOW-MUT-001",
+    "FLOW-MUT-002",
+    "FLOW-MUT-003",
+    "FLOW-MUT-004",
+    "FLOW-MUT-005",
+    "FLOW-MUT-006",
+    "FLOW-MUT-007",
+    "FLOW-MUT-008",
+    "FLOW-MUT-009",
+    "FLOW-MUT-010",
+    "FLOW-MUT-011",
+    "FLOW-MUT-012",
+    "FLOW-MUT-013",
+    "FLOW-MUT-014",
+    "FLOW-MUT-015",
+    "FLOW-MUT-016",
+    "FLOW-MUT-017",
+    "FLOW-MUT-018",
+  ]),
 });
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -235,9 +267,22 @@ function parseFlowchartNode(line) {
   return bare?.[1] ?? null;
 }
 
+function parseSequenceParticipant(line) {
+  const match = line.trim().match(/^(?:participant|actor)\s+([A-Za-z_][A-Za-z0-9_-]*)(?:\s+as\s+.+)?$/i);
+  return match?.[1] ?? null;
+}
+
+function parseSequenceMessage(line) {
+  const match = line.trim().match(
+    /^([A-Za-z_][A-Za-z0-9_-]*?)\s*(?:<<-->>|<<->>|-->>|->>|--x|-x|--\)|-\)|-->|->)\s*[+-]?\s*([A-Za-z_][A-Za-z0-9_-]*?)\s*[+-]?\s*:/,
+  );
+  return match ? { endpoints: [match[1], match[2]] } : null;
+}
+
 export function validateMermaidAnchors(block, context = "Mermaid block") {
   const lines = block.split(/\r?\n/);
   const isFlowchart = lines.some((line) => /^\s*(?:flowchart|graph)\s+/.test(line));
+  const isSequence = lines.some((line) => /^\s*sequenceDiagram\s*$/.test(line));
   const anchors = [];
   const seenAnchors = new Set();
 
@@ -253,6 +298,56 @@ export function validateMermaidAnchors(block, context = "Mermaid block") {
     }
     seenAnchors.add(anchor.id);
     anchors.push({ ...anchor, index });
+  }
+
+  if (isSequence) {
+    const declaredParticipants = new Set();
+    const messages = [];
+    for (const { kind, id, index } of anchors) {
+      const next = lines[index + 1] ?? "";
+      if (kind === "node" && !parseSequenceParticipant(next)) {
+        throw new Error(`${context} line ${index + 1}: atlas-node ${id} must immediately precede a sequence participant or actor`);
+      }
+      if (kind === "flow" && !parseSequenceMessage(next)) {
+        throw new Error(`${context} line ${index + 1}: atlas-flow ${id} must immediately precede a sequence message`);
+      }
+    }
+
+    for (const [index, line] of lines.entries()) {
+      const participant = parseSequenceParticipant(line);
+      if (participant) {
+        const anchor = parseAtlasAnchor(lines[index - 1] ?? "");
+        if (!anchor || anchor.kind !== "node") {
+          throw new Error(
+            `${context} line ${index + 1}: ${participant} missing immediately preceding atlas-node anchor; atlas-node must immediately precede every sequence participant or actor`,
+          );
+        }
+        declaredParticipants.add(participant);
+      }
+
+      const message = parseSequenceMessage(line);
+      if (message) {
+        const anchor = parseAtlasAnchor(lines[index - 1] ?? "");
+        if (!anchor || anchor.kind !== "flow") {
+          throw new Error(
+            `${context} line ${index + 1}: message missing immediately preceding atlas-flow anchor; atlas-flow must immediately precede every sequence message`,
+          );
+        }
+        messages.push(message);
+      }
+    }
+
+    for (const { endpoints } of messages) {
+      for (const endpoint of endpoints) {
+        if (!declaredParticipants.has(endpoint)) {
+          throw new Error(`${context}: ${endpoint} must have an anchored sequence participant declaration`);
+        }
+      }
+    }
+
+    const unanchoredIds = [...collectAtlasIds([block])].filter((id) => !seenAnchors.has(id)).sort();
+    if (unanchoredIds.length) throw new Error(`${context}: Unanchored atlas IDs: ${unanchoredIds.join(", ")}`);
+    return new Set(anchors.map(({ id }) => id));
   }
 
   if (!isFlowchart) return new Set(anchors.map(({ id }) => id));

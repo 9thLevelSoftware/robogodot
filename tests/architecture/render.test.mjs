@@ -16,6 +16,7 @@ import {
   mergeManifestEntries,
   parseTraceabilityIds,
   renderAtlas,
+  validateMermaidAnchors,
 } from "../../docs/architecture/render.mjs";
 
 const sample = `# Sample
@@ -182,6 +183,24 @@ test("declares the exact server-component view ID contract", () => {
   ]);
 });
 
+test("declares the exact curated-mutation sequence ID contract", () => {
+  assert.deepEqual(VIEW_ID_CONTRACTS["05-editor-mutation-sequence.md"], [
+    "CNT-MCP-CLIENT",
+    "CMP-REGISTRY",
+    "CMP-SCHEMA-CONTRACTS",
+    "CMP-SEMANTIC-SERVICES",
+    "CMP-SAFETY",
+    "CMP-REQUEST-QUEUE",
+    "CMP-WS-CLIENT",
+    "CMP-COMMAND-ROUTER",
+    "CMP-EDIT-CONTROLLER",
+    "SYS-UNDO-REDO",
+    "CMP-READ-CACHE",
+    "CMP-AUDIT",
+    ...Array.from({ length: 18 }, (_, index) => `FLOW-MUT-${String(index + 1).padStart(3, "0")}`),
+  ]);
+});
+
 test("builds a shell-free Windows npx invocation with opaque paths", () => {
   const execPath = String.raw`C:\Tools\Node & 100%^!\node.exe`;
   assert.deepEqual(buildNpxInvocation("win32", execPath), {
@@ -300,6 +319,66 @@ test("renderAtlas enforces immediate unique anchors and one edge per flow anchor
         renderSampleAtlas({ check: true, only: new Set(["01-system-context"]), root }),
         fixture.error,
       );
+    });
+  }
+});
+
+test("sequence diagrams require immediate participant and message anchors while ignoring directives", async (t) => {
+  const sequenceBlock = `sequenceDiagram
+  accTitle: Anchored sequence sample
+  accDescr: Actor and participant exchange one semantic message inside non-semantic directives.
+  %% atlas-node: ACT-SAMPLE
+  actor CLIENT as ACT-SAMPLE
+  %% atlas-node: SYS-TARGET
+  participant TARGET as SYS-TARGET
+  rect rgb(245, 245, 245)
+    note over CLIENT,TARGET: CLIENT->>TARGET in note prose is not a message
+    alt target available
+      %% atlas-flow: FLOW-SAMPLE-001
+      CLIENT->>TARGET: uses
+      %% atlas-flow: FLOW-SAMPLE-002
+      TARGET-->>CLIENT: result
+    else target unavailable
+      opt no-op branch
+        note over CLIENT,TARGET: No semantic message in this branch
+      end
+    end
+  end`;
+
+  assert.deepEqual(
+    [...validateMermaidAnchors(sequenceBlock, "sequence fixture")].sort(),
+    ["ACT-SAMPLE", "FLOW-SAMPLE-001", "FLOW-SAMPLE-002", "SYS-TARGET"],
+  );
+
+  const cases = [
+    {
+      name: "actor without anchor",
+      block: sequenceBlock.replace("  %% atlas-node: ACT-SAMPLE\n", ""),
+      error: /CLIENT.*missing immediately preceding atlas-node anchor/,
+    },
+    {
+      name: "participant without anchor",
+      block: sequenceBlock.replace("  %% atlas-node: SYS-TARGET\n", ""),
+      error: /TARGET.*missing immediately preceding atlas-node anchor/,
+    },
+    {
+      name: "message without anchor",
+      block: sequenceBlock.replace("      %% atlas-flow: FLOW-SAMPLE-001\n", ""),
+      error: /message missing immediately preceding atlas-flow anchor/,
+    },
+    {
+      name: "directive between anchor and message",
+      block: sequenceBlock.replace(
+        "      %% atlas-flow: FLOW-SAMPLE-001\n",
+        "      %% atlas-flow: FLOW-SAMPLE-001\n      note over CLIENT,TARGET: intervening directive\n",
+      ),
+      error: /atlas-flow FLOW-SAMPLE-001 must immediately precede a sequence message/,
+    },
+  ];
+
+  for (const fixture of cases) {
+    await t.test(fixture.name, () => {
+      assert.throws(() => validateMermaidAnchors(fixture.block, "sequence fixture"), fixture.error);
     });
   }
 });
