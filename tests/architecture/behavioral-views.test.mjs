@@ -101,9 +101,9 @@ const policyEdges = new Map([
   ["FLOW-POL-002", 'REGISTRY -->|"annotations and mode"| MODE_GATE'],
   ["FLOW-POL-003", 'MODE_GATE -->|"allowed"| PATH_GUARD'],
   ["FLOW-POL-004", 'PATH_GUARD -->|"path safe"| EXEC_GUARD'],
-  ["FLOW-POL-005", 'MODE_GATE -.->|"[INFERRED] blocked_by_policy (Q-007)"| AUDIT'],
-  ["FLOW-POL-006", 'PATH_GUARD -.->|"[INFERRED] blocked path (Q-007)"| AUDIT'],
-  ["FLOW-POL-007", 'EXEC_GUARD -.->|"[INFERRED] blocked execution (Q-006, Q-007)"| AUDIT'],
+  ["FLOW-POL-005", 'MODE_GATE -.->|"«inferred» blocked_by_policy (Q-007)"| AUDIT'],
+  ["FLOW-POL-006", 'PATH_GUARD -.->|"«inferred» blocked path (Q-007)"| AUDIT'],
+  ["FLOW-POL-007", 'EXEC_GUARD -.->|"«inferred» blocked execution (Q-006, Q-007)"| AUDIT'],
   ["FLOW-POL-008", 'AUDIT -->|"rejected outcome"| STRUCTURED_ERROR'],
   ["FLOW-POL-009", 'EXEC_GUARD -->|"safe request"| REQUEST_CLASSIFIER'],
   ["FLOW-POL-010", 'REQUEST_CLASSIFIER -->|"read-only"| READ_CACHE'],
@@ -550,6 +550,7 @@ test("centralized policy pipeline preserves the exact guarded read, mutation, an
 
   for (const flowId of ["FLOW-POL-005", "FLOW-POL-006", "FLOW-POL-007"]) {
     assert.match(policyEdges.get(flowId), /-\.->/, `${flowId} is visibly inferred without color`);
+    assert.match(policyEdges.get(flowId), /«inferred»/, `${flowId} uses flowchart evidence notation`);
   }
   assert.equal(
     [...policyEdges.values()].filter((edge) => edge.startsWith("STRUCTURED_ERROR ")).length,

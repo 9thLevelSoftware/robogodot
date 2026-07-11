@@ -657,15 +657,31 @@ test("builds detached export provenance", () => {
   );
   assert.equal(manifest.renderer, "@mermaid-js/mermaid-cli@11.16.0");
   assert.equal(manifest.sourceArchive.sha256, ARCHIVE_SHA256);
-  assert.equal(manifest.exports[0].block, 1);
+  assert.deepEqual(manifest.exports[0], {
+    output: "01-system-context.svg",
+    source: "01-system-context.md",
+    block: 1,
+    archiveSha256: ARCHIVE_SHA256,
+    generatedAt: "2026-07-10T00:00:00.000Z",
+    renderer: "@mermaid-js/mermaid-cli@11.16.0",
+  });
 });
 
 test("merges targeted exports without dropping prior manifest entries", () => {
+  const existing = {
+    output: "01-system-context.svg", source: "01-system-context.md", block: 1,
+    archiveSha256: ARCHIVE_SHA256, generatedAt: "2026-07-09T00:00:00.000Z", renderer: "old-renderer",
+  };
+  const next = { output: "02-container-channels.svg", source: "02-container-channels.md", block: 1 };
+  const merged = buildManifest(
+    mergeManifestEntries([existing], [next]),
+    "2026-07-10T00:00:00.000Z",
+  ).exports;
   assert.deepEqual(
-    mergeManifestEntries(
-      [{ output: "01-system-context.svg", source: "01-system-context.md", block: 1 }],
-      [{ output: "02-container-channels.svg", source: "02-container-channels.md", block: 1 }],
-    ).map((entry) => entry.output),
+    merged.map((entry) => entry.output),
     ["01-system-context.svg", "02-container-channels.svg"],
   );
+  assert.deepEqual(merged[0], existing, "untouched targeted export retains its metadata values");
+  assert.equal(merged[0].generatedAt, "2026-07-09T00:00:00.000Z");
+  assert.equal(merged[1].generatedAt, "2026-07-10T00:00:00.000Z");
 });

@@ -627,12 +627,18 @@ export function validateViewIdContract(source, actualIds, contracts = VIEW_ID_CO
 }
 
 export function buildManifest(entries, generatedAt = new Date().toISOString()) {
+  const renderer = `@mermaid-js/mermaid-cli@${CLI_VERSION}`;
   return {
     schemaVersion: 1,
     generatedAt,
-    renderer: `@mermaid-js/mermaid-cli@${CLI_VERSION}`,
+    renderer,
     sourceArchive: { path: "C:\\Users\\dasbl\\Downloads\\files.zip", sha256: ARCHIVE_SHA256 },
-    exports: entries,
+    exports: entries.map((entry) => ({
+      ...entry,
+      archiveSha256: entry.archiveSha256 ?? ARCHIVE_SHA256,
+      generatedAt: entry.generatedAt ?? generatedAt,
+      renderer: entry.renderer ?? renderer,
+    })),
   };
 }
 

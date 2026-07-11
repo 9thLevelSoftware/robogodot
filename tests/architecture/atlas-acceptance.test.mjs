@@ -44,6 +44,42 @@ async function markdownFiles(directory) {
   return nested.flat();
 }
 
+export function assertMermaidEvidence(block, context = "Mermaid block") {
+  const isFlowchart = /^\s*(?:flowchart|graph)\s+/m.test(block);
+  const edgePattern = /(?:-\.->|-\.-|-->|==>|---|->>|-->>|-x|--x)/;
+  for (const line of block.split(/\r?\n/).filter((candidate) => edgePattern.test(candidate))) {
+    if (isFlowchart && /inferred/i.test(line)) assert.match(line, /«inferred»/i, `${context}: inferred flowchart marker: ${line}`);
+    if (isFlowchart && /unresolved/i.test(line)) {
+      assert.match(line, /\? unresolved/i, `${context}: unresolved flowchart marker: ${line}`);
+      assert.match(line, /\bQ-\d{3}\b/, `${context}: unresolved flowchart Q ID: ${line}`);
+    }
+    if (!isFlowchart && /inferred|unresolved/i.test(line)) {
+      assert.match(line, /\[(?:INFERRED|UNRESOLVED)\]/, `${context}: sequence/state evidence marker: ${line}`);
+    }
+  }
+}
+
+export function assertNoDoubledBacktickCitations(markdown, context = "Markdown") {
+  const prose = markdown.split(/\r?\n/).filter((line) => !/^\s*```/.test(line)).join("\n");
+  assert.doesNotMatch(prose, /``/, `${context}: malformed doubled-backtick citation`);
+}
+
+test("dotted flowchart edges require the family-specific unresolved marker and Q ID", () => {
+  assert.doesNotThrow(() => assertMermaidEvidence(`flowchart TB\n  A -.->|"? unresolved · Q-002"| B`, "phase fixture"));
+  assert.throws(
+    () => assertMermaidEvidence(`flowchart TB\n  A -.->|"unresolved · Q-002"| B`, "phase fixture"),
+    /unresolved flowchart marker/,
+  );
+});
+
+test("doubled-backtick citation detection covers source-summary filename lines", () => {
+  assert.throws(
+    () => assertNoDoubledBacktickCitations("- Source: `phase-01-foundation-and-transport.md` — ``4–6 and 8–9."),
+    /malformed doubled-backtick citation/,
+  );
+  assert.doesNotThrow(() => assertNoDoubledBacktickCitations("```mermaid\nflowchart LR\n```"));
+});
+
 test("README is the complete atlas entry point in the required order", async () => {
   const markdown = await readFile(path.join(ARCHITECTURE, "README.md"), "utf8");
   let previous = -1;
@@ -84,9 +120,7 @@ test("all Mermaid blocks provide accessibility metadata and evidence text", asyn
     for (const block of extractMermaidBlocks(markdown)) {
       assert.match(block, /\baccTitle:/, `${filename}: accTitle`);
       assert.match(block, /\baccDescr:/, `${filename}: accDescr`);
-      for (const line of block.split(/\r?\n/).filter((line) => /inferred|unresolved/i.test(line) && /(?:-->|->>|-->>|-x|--x)/.test(line))) {
-        assert.match(line, /\[(?:INFERRED|UNRESOLVED)\]/, `${filename}: evidence marker: ${line}`);
-      }
+      assertMermaidEvidence(block, filename);
     }
     const diagramText = extractMermaidBlocks(markdown).join("\n");
     for (const question of new Set([...diagramText.matchAll(/\b(Q-\d{3})\b/g)].map((match) => match[1]))) {
@@ -103,13 +137,9 @@ test("atlas and traceability IDs match bidirectionally without duplicate trace r
   assert.deepEqual([...validateTraceability(traceMarkdown)].sort(), [...parseTraceabilityIds(traceMarkdown)].sort());
 });
 
-test("lifecycle source citations have balanced single backticks", async () => {
+test("lifecycle view contains no malformed doubled-backtick citations", async () => {
   const markdown = await readFile(path.join(ARCHITECTURE, "08-connection-lifecycles.md"), "utf8");
-  for (const [index, line] of markdown.split(/\r?\n/).entries()) {
-    if (!/Phase [145] .*\d/.test(line)) continue;
-    assert.equal((line.match(/`/g) ?? []).length % 2, 0, `line ${index + 1}: unmatched backtick`);
-    assert.doesNotMatch(line, /``/, `line ${index + 1}: doubled backtick`);
-  }
+  assertNoDoubledBacktickCitations(markdown, "08-connection-lifecycles.md");
 });
 
 test("all eleven SVG exports are nonempty and have complete manifest provenance", async () => {
@@ -127,6 +157,9 @@ test("all eleven SVG exports are nonempty and have complete manifest provenance"
   for (const entry of manifest.exports) {
     assert.ok(VIEWS.includes(entry.source), `${entry.output}: source`);
     assert.ok(Number.isInteger(entry.block) && entry.block > 0, `${entry.output}: block ordinal`);
+    assert.equal(entry.archiveSha256, ARCHIVE_SHA256, `${entry.output}: archive SHA-256`);
+    assert.match(entry.generatedAt, /^\d{4}-\d{2}-\d{2}T/, `${entry.output}: generation date`);
+    assert.equal(entry.renderer, `@mermaid-js/mermaid-cli@${CLI_VERSION}`, `${entry.output}: renderer`);
   }
   for (const filename of VIEWS) assert.ok((await readFile(path.join(ARCHITECTURE, filename), "utf8")).includes(ARCHIVE_SHA256));
 });

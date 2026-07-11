@@ -32,8 +32,8 @@ Read the context and primary channel view first, then dependencies and component
 ## Evidence and ID legend
 
 - **Explicit**: stated directly by the source baseline.
-- **Inferred**: a necessary projection or organization of explicit source operations; diagrams show `[INFERRED]` text.
-- **Unresolved**: the sources leave a choice open; diagrams show `[UNRESOLVED]` and a stable `Q-*` reference when available.
+- **Inferred**: a necessary projection or organization of explicit source operations; flowcharts show `«inferred»`, while sequence and state diagrams show `[INFERRED]`.
+- **Unresolved**: the sources leave a choice open; flowcharts show `? unresolved` plus a stable `Q-*` ID, while sequence and state diagrams show `[UNRESOLVED]` and a stable `Q-*` reference when available.
 - `ACT-*`, `SYS-*`, `CNT-*`, `CMP-*`, `CH-*`, `PHASE-*`, and `STATE-*` identify modeled elements; `FLOW-*` identifies one relationship, message, or transition. The [traceability table](traceability.md) maps each ID to evidence, source, owner, inputs, outputs, and consequence.
 
 ## Five capability channels

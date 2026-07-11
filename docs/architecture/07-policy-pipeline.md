@@ -68,11 +68,11 @@ flowchart TD
   %% atlas-flow: FLOW-POL-004
   PATH_GUARD -->|"path safe"| EXEC_GUARD
   %% atlas-flow: FLOW-POL-005
-  MODE_GATE -.->|"[INFERRED] blocked_by_policy (Q-007)"| AUDIT
+  MODE_GATE -.->|"«inferred» blocked_by_policy (Q-007)"| AUDIT
   %% atlas-flow: FLOW-POL-006
-  PATH_GUARD -.->|"[INFERRED] blocked path (Q-007)"| AUDIT
+  PATH_GUARD -.->|"«inferred» blocked path (Q-007)"| AUDIT
   %% atlas-flow: FLOW-POL-007
-  EXEC_GUARD -.->|"[INFERRED] blocked execution (Q-006, Q-007)"| AUDIT
+  EXEC_GUARD -.->|"«inferred» blocked execution (Q-006, Q-007)"| AUDIT
   %% atlas-flow: FLOW-POL-008
   AUDIT -->|"rejected outcome"| STRUCTURED_ERROR
   %% atlas-flow: FLOW-POL-009
@@ -129,9 +129,9 @@ The node inventory is exhaustive for this view and indexed in the [Traceability 
 | `FLOW-POL-002` | `CMP-REGISTRY` → `CMP-MODE-GATE` | Supply tool annotations, configured mode, and arguments. | Explicit | Phase 7 / registry middleware context | Phase 7 §§3–7 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-POL-003` | `CMP-MODE-GATE` → `CMP-PATH-GUARD` | Continue an annotation- and mode-allowed call. | Explicit | Phase 7 / mode and annotation policy | Phase 7 §§2, 4–8 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-POL-004` | `CMP-PATH-GUARD` → `CMP-EXEC-GUARD` | Continue after canonical path validation. | Explicit | Phases 6 and 7 / `FsGuard` path contract | Phase 6 §§5–9; Phase 7 §§1–4 · [Q-009](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
-| `FLOW-POL-005` | `CMP-MODE-GATE` → `CMP-AUDIT` | Record `[INFERRED] blocked_by_policy` rejection. | Inferred | Phase 7 / rejected-call audit finalization | Phase 7 §§4–5 · [Q-007](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
-| `FLOW-POL-006` | `CMP-PATH-GUARD` → `CMP-AUDIT` | Record an `[INFERRED]` blocked path. | Inferred | Phases 6 and 7 / guarded-path rejection audit | Phase 6 §§5–9; Phase 7 §§4–5 · [Q-007](open-questions.md#architecture-open-questions) · [Q-009](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
-| `FLOW-POL-007` | `CMP-EXEC-GUARD` → `CMP-AUDIT` | Record an `[INFERRED]` blocked execution. | Inferred | Phases 2 and 7 / exec-guard rejection audit | Phase 2 §§4–9; Phase 7 §§4–7 · [Q-006](open-questions.md#architecture-open-questions) · [Q-007](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
+| `FLOW-POL-005` | `CMP-MODE-GATE` → `CMP-AUDIT` | Record `«inferred» blocked_by_policy` rejection. | Inferred | Phase 7 / rejected-call audit finalization | Phase 7 §§4–5 · [Q-007](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
+| `FLOW-POL-006` | `CMP-PATH-GUARD` → `CMP-AUDIT` | Record an `«inferred»` blocked path. | Inferred | Phases 6 and 7 / guarded-path rejection audit | Phase 6 §§5–9; Phase 7 §§4–5 · [Q-007](open-questions.md#architecture-open-questions) · [Q-009](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
+| `FLOW-POL-007` | `CMP-EXEC-GUARD` → `CMP-AUDIT` | Record an `«inferred»` blocked execution. | Inferred | Phases 2 and 7 / exec-guard rejection audit | Phase 2 §§4–9; Phase 7 §§4–7 · [Q-006](open-questions.md#architecture-open-questions) · [Q-007](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-POL-008` | `CMP-AUDIT` → `SYS-STRUCTURED-ERROR` | Map a rejected outcome to `{code, message, hint}` and terminate the branch. | Explicit | Phase 7 / stable structured error mapping | Phase 7 §§2, 4, 6–8 · [Q-007](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-POL-009` | `CMP-EXEC-GUARD` → `CMP-REQUEST-CLASSIFIER` | Classify a safe request. | Explicit | Phase 7 / registry classifier handoff | Phase 7 §§4–8 · [Q-006](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-POL-010` | `CMP-REQUEST-CLASSIFIER` → `CMP-READ-CACHE` | Route a read-only request to the concurrent cache lane. | Explicit | Phase 7 / annotation-driven concurrent read lane | Phase 7 §§2, 4–8 · [Q-008](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
@@ -154,5 +154,5 @@ The node inventory is exhaustive for this view and indexed in the [Traceability 
 - The queue is not a rollback transaction. FIFO serialization controls when mutations start; undo, compensation, and partial-failure semantics remain the handler's channel-specific responsibility.
 - Concurrent reads may observe in-progress mutation state. Reads intentionally proceed during a long mutation, while TTL and affected-tag invalidation happen outside a snapshot-isolation contract; [Q-008](open-questions.md#architecture-open-questions) tracks cached pre-state, partial live state, and stale repopulation risks.
 - FIFO, timeout, fairness, backpressure, and watchdog are queue liveness controls. They do not guarantee rollback, atomicity, or read consistency.
-- The three dashed rejection edges are **[INFERRED]** from the requirement for an append-only record of every tool call. The source diagram exits directly on a block, so rejected-call audit coverage remains open under [Q-007](open-questions.md#architecture-open-questions).
+- The three dashed rejection edges are **«inferred»** from the requirement for an append-only record of every tool call. The source diagram exits directly on a block, so rejected-call audit coverage remains open under [Q-007](open-questions.md#architecture-open-questions).
 - Cached reads, uncached reads, and successful mutations converge through `CMP-AUDIT` before `structuredContent`. Rejections and stable mapped failures also reach audit, then terminate at `SYS-STRUCTURED-ERROR`; no success edge leaves that terminal node.
