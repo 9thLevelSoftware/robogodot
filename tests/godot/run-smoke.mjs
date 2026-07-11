@@ -13,8 +13,24 @@ const fixtureAddon = resolve(root, "tests/fixtures/godot_project/addons/godot_co
 function run(args, env = process.env) {
   return new Promise((resolveRun, reject) => {
     const child = spawn(godot, args, { cwd: root, env, stdio: "inherit", windowsHide: true });
-    child.once("error", reject);
-    child.once("exit", (code) => code === 0 ? resolveRun() : reject(new Error(`Godot exited with code ${code}`)));
+    const timeout = setTimeout(async () => {
+      if (process.platform === "win32") {
+        const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
+        await once(killer, "exit");
+      } else {
+        child.kill("SIGKILL");
+      }
+      reject(new Error(`Godot timed out after 30 seconds: ${args.join(" ")}`));
+    }, 30_000);
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timeout);
+      if (code === 0) resolveRun();
+      else reject(new Error(`Godot exited with code ${code}`));
+    });
   });
 }
 
@@ -31,6 +47,7 @@ async function freePort() {
 try {
   await run(["--headless", "--path", root, "--script", "tests/godot/phase_1_smoke.gd"]);
   await run(["--headless", "--path", root, "--script", "tests/godot/phase_2_auth_smoke.gd"]);
+  await run(["--headless", "--path", root, "--script", "tests/godot/variant_parity_smoke.gd"]);
   await cp(resolve(root, "addons/godot_control_mcp"), fixtureAddon, { recursive: true });
   const lifecyclePort = process.env.GODOT_MCP_SMOKE_PORT ?? String(await freePort());
   if (!/^\d+$/.test(lifecyclePort) || Number(lifecyclePort) < 1 || Number(lifecyclePort) > 65535) throw new Error("GODOT_MCP_SMOKE_PORT must be an integer from 1 to 65535");

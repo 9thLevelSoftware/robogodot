@@ -1,0 +1,39 @@
+{
+  "contract": {
+    "tagField": "$type",
+    "vector2": { "$type": "Vector2", "x": 1, "y": 2 },
+    "vector3": { "$type": "Vector3", "x": 1, "y": 2, "z": 3 },
+    "color": { "$type": "Color", "r": 1, "g": 0.5, "b": 0, "a": 1 },
+    "nodePath": { "$type": "NodePath", "path": "/root/Main" },
+    "rect2": { "$type": "Rect2", "x": 1, "y": 2, "width": 3, "height": 4 }
+  },
+  "valid": [
+    { "name": "json null", "input": "null", "expected": null },
+    { "name": "json boolean", "input": "true", "expected": true },
+    { "name": "json finite integer", "input": "42", "expected": 42 },
+    { "name": "json finite decimal", "input": "-1.25e2", "expected": -125 },
+    { "name": "json string", "input": "\"hello\\nworld\"", "expected": "hello\nworld" },
+    { "name": "vector2", "input": "Vector2(1, -2.5)", "expected": { "$type": "Vector2", "x": 1, "y": -2.5 } },
+    { "name": "vector3", "input": "Vector3(1, 2, 3)", "expected": { "$type": "Vector3", "x": 1, "y": 2, "z": 3 } },
+    { "name": "color rgb", "input": "Color(1, 0.5, 0)", "expected": { "$type": "Color", "r": 1, "g": 0.5, "b": 0, "a": 1 } },
+    { "name": "color rgba", "input": "Color(0.1, 0.2, 0.3, 0.4)", "expected": { "$type": "Color", "r": 0.1, "g": 0.2, "b": 0.3, "a": 0.4 } },
+    { "name": "color hex rgb", "input": "#3366CC", "expected": { "$type": "Color", "r": 0.2, "g": 0.4, "b": 0.8, "a": 1 } },
+    { "name": "color hex rgba", "input": "#3366CC80", "expected": { "$type": "Color", "r": 0.2, "g": 0.4, "b": 0.8, "a": 0.5019608 } },
+    { "name": "node path", "input": "NodePath(\"/root/Main/Camera3D\")", "expected": { "$type": "NodePath", "path": "/root/Main/Camera3D" } },
+    { "name": "rect2", "input": "Rect2(1, 2, 3.5, 4)", "expected": { "$type": "Rect2", "x": 1, "y": 2, "width": 3.5, "height": 4 } },
+    { "name": "json nested collection", "input": "[null,true,{\"label\":\"ok\",\"items\":[1,2]}]", "expected": [null, true, { "label": "ok", "items": [1, 2] }] },
+    { "name": "tagged nested collection", "input": [{ "$type": "Vector2", "x": 1, "y": 2 }, { "color": { "$type": "Color", "r": 1, "g": 0, "b": 0, "a": 0.5 } }], "expected": [{ "$type": "Vector2", "x": 1, "y": 2 }, { "color": { "$type": "Color", "r": 1, "g": 0, "b": 0, "a": 0.5 } }] }
+  ],
+  "invalid": [
+    { "name": "ambiguous tuple", "input": "(1,2)", "contains": "ambiguous" },
+    { "name": "wrong vector arity", "input": "Vector2(1)", "contains": "Vector2 expects 2" },
+    { "name": "wrong color arity", "input": "Color(1,2)", "contains": "Color expects 3 or 4" },
+    { "name": "nonfinite number", "input": "1e999", "contains": "finite" },
+    { "name": "constructor nonfinite", "input": "Vector2(1e999, 2)", "contains": "finite" },
+    { "name": "trailing junk", "input": "Vector3(1,2,3) nope", "contains": "trailing" },
+    { "name": "unknown constructor", "input": "Transform3D(1,2,3)", "contains": "unknown constructor" },
+    { "name": "unquoted node path", "input": "NodePath(/root/Main)", "contains": "quoted JSON string" },
+    { "name": "bad hex", "input": "#12345", "contains": "6 or 8" },
+    { "name": "unknown tag", "input": { "$type": "Basis", "values": [] }, "contains": "unknown tagged Variant" }
+  ]
+}
