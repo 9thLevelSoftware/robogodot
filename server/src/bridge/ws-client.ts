@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import WebSocket from "ws";
 import { GodotMcpError } from "../errors.js";
 import type { Logger } from "../logger.js";
-import { parseJsonRpcResponse } from "./json-rpc.js";
+import { parseJsonRpcResponse, serializeJsonRpcRequest } from "./json-rpc.js";
 
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "reconnecting";
 export interface ClientStatus {
@@ -12,7 +12,7 @@ export interface ClientStatus {
   reconnectAttempt: number;
   lastError: string | undefined;
 }
-export interface CallOptions { timeoutMs?: number }
+export interface CallOptions { timeoutMs?: number; maxRequestBytes?: number }
 interface SocketLike {
   readyState: number;
   on(event: "open", listener: () => void): unknown;
@@ -98,15 +98,19 @@ export class JsonRpcClient extends EventEmitter {
       return Promise.reject(new GodotMcpError("not_connected", "Godot editor is not connected.", "Open the project in Godot and enable the RoboGodot plugin."));
     }
     const id = this.nextId++;
-    const request: Record<string, unknown> = { jsonrpc: "2.0", id, method };
-    if (params !== undefined) request.params = params;
+    let frame: string;
+    try { frame = serializeJsonRpcRequest(id, method, params); }
+    catch (error) { return Promise.reject(new GodotMcpError("invalid_args", "Editor request is not JSON-serializable.", "Use JSON-compatible, acyclic script arguments.", error)); }
+    if (opts.maxRequestBytes !== undefined && Buffer.byteLength(frame, "utf8") > opts.maxRequestBytes) {
+      return Promise.reject(new GodotMcpError("invalid_args", `Serialized editor request exceeds ${opts.maxRequestBytes} UTF-8 bytes.`, "Reduce script source or arguments."));
+    }
     return new Promise<T>((resolve, reject) => {
       const timer = unrefTimer(setTimeout(() => {
         this.pending.delete(id);
         reject(new GodotMcpError("timeout", `JSON-RPC call '${method}' timed out.`, "Check the editor connection and try again."));
       }, opts.timeoutMs ?? 10_000));
       this.pending.set(id, { resolve: (value) => resolve(value as T), reject, timer });
-      try { this.socket!.send(JSON.stringify(request)); }
+      try { this.socket!.send(frame); }
       catch (error) {
         clearTimeout(timer); this.pending.delete(id);
         reject(new GodotMcpError("not_connected", "Failed to send to the Godot editor.", "Wait for reconnection and try again.", error));

@@ -4,11 +4,12 @@ import { describe, expect, it, vi } from "vitest";
 import { createServer } from "../src/server.js";
 import type { ClientStatus } from "../src/bridge/ws-client.js";
 import { GodotMcpError } from "../src/errors.js";
+import { serializeJsonRpcRequest } from "../src/bridge/json-rpc.js";
 
 const connected: ClientStatus = { state: "connected", url: "ws://127.0.0.1:9200", connectedSince: "2026-01-01T00:00:00Z", reconnectAttempt: 0, lastError: undefined };
 
-async function harness(call = vi.fn(), mode: "full" | "read_only" | "confirm_destructive" = "full") {
-  const server = createServer({ bridge: { getStatus: () => connected, call }, mode });
+async function harness(call = vi.fn(), mode: "full" | "read_only" | "confirm_destructive" = "full", docsLoader?: () => Promise<any>) {
+  const server = createServer({ bridge: { getStatus: () => connected, call }, mode, ...(docsLoader ? { docsLoader } : {}) });
   const client = new Client({ name: "test", version: "1" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(b), client.connect(a)]);
@@ -37,7 +38,38 @@ describe("Phase 2 MCP tools", () => {
     try {
       const response = await fixture.client.callTool({ name: "godot_script_run", arguments: { source: "func __run(args):\n\treturn 42", allowDangerous: true } });
       expect(response.structuredContent).toEqual(result);
-      expect(fixture.call).toHaveBeenCalledWith("exec.run", { source: "func __run(args):\n\treturn 42", args: null, outputCapBytes: 262144 }, { timeoutMs: 15000 });
+      expect(fixture.call).toHaveBeenCalledWith("exec.run", { source: "func __run(args):\n\treturn 42", args: null, outputCapBytes: 262144 }, { timeoutMs: 15000, maxRequestBytes: 32768 });
+    } finally { await fixture.close(); }
+  });
+
+  it("preflights exact serialized exec frames at the 32768-byte boundary without dispatching oversized args", async () => {
+    const dispatched = vi.fn();
+    const call = vi.fn(async (method: string, params: unknown, options?: { maxRequestBytes?: number }) => {
+      const frame = serializeJsonRpcRequest(1, method, params);
+      if (options?.maxRequestBytes !== undefined && Buffer.byteLength(frame, "utf8") > options.maxRequestBytes) {
+        throw new GodotMcpError("invalid_args", "Serialized editor request exceeds 32768 UTF-8 bytes.", "Reduce script source or arguments.");
+      }
+      dispatched();
+      return { ok: true, returnValue: null, stdout: "", errors: [], elapsedMs: 0, truncated: false };
+    });
+    const fixture = await harness(call);
+    try {
+      const base = { source: "func __run(args):\n\treturn args", args: { value: "" }, outputCapBytes: 262144 };
+      const emptySize = Buffer.byteLength(serializeJsonRpcRequest(1, "exec.run", base), "utf8");
+      const exactArgs = { value: "x".repeat(32768 - emptySize) };
+      const exact = await fixture.client.callTool({ name: "godot_script_run", arguments: { source: base.source, args: exactArgs, allowDangerous: true } });
+      expect(exact.isError).not.toBe(true);
+      const over = await fixture.client.callTool({ name: "godot_script_run", arguments: { source: base.source, args: { value: `${exactArgs.value}é` }, allowDangerous: true } });
+      expect(over).toMatchObject({ isError: true, structuredContent: { code: "invalid_args", hint: expect.stringMatching(/reduce script source or arguments/i) } });
+      expect(dispatched).toHaveBeenCalledTimes(1);
+    } finally { await fixture.close(); }
+  });
+
+  it("rejects malformed six-key execution responses as a compatibility error", async () => {
+    const fixture = await harness(vi.fn().mockResolvedValue({ ok: true, returnValue: null, stdout: "", errors: [], elapsedMs: 1, truncated: false, extra: true }));
+    try {
+      const result = await fixture.client.callTool({ name: "godot_script_run", arguments: { source: "func __run(args):\n\treturn null", allowDangerous: true } });
+      expect(result).toMatchObject({ isError: true, structuredContent: { code: "godot_error", hint: expect.stringMatching(/compatible/i) } });
     } finally { await fixture.close(); }
   });
 
@@ -87,6 +119,20 @@ describe("Phase 2 MCP tools", () => {
       expect(result.isError).not.toBe(true);
       expect(result.structuredContent).toMatchObject({ class: "Node", engineVersion: "4.6.2", member: { kind: "method", name: "add_child" } });
       expect(call).toHaveBeenCalledWith("core.get_version");
+    } finally { await fixture.close(); }
+  });
+
+  it.each([
+    [new GodotMcpError("not_connected", "offline", "Open Godot"), "not_connected"],
+    [{ engine: { major: 4, minor: 5, patch: 0 } }, "feature_disabled"],
+  ])("gates class docs before touching a rejecting artifact loader", async (versionResult, code) => {
+    const loader = vi.fn().mockRejectedValue(new Error("corrupt artifact"));
+    const call = versionResult instanceof Error ? vi.fn().mockRejectedValue(versionResult) : vi.fn().mockResolvedValue(versionResult);
+    const fixture = await harness(call, "full", loader);
+    try {
+      const result = await fixture.client.callTool({ name: "godot_api_class_doc", arguments: { class: "Node" } });
+      expect(result).toMatchObject({ isError: true, structuredContent: { code } });
+      expect(loader).not.toHaveBeenCalled();
     } finally { await fixture.close(); }
   });
 

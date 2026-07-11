@@ -38,7 +38,7 @@ describe("editor execution guard", () => {
       code: "timeout",
       hint: expect.stringMatching(/restart.*editor/i),
     });
-    expect(call).toHaveBeenCalledWith("exec.run", expect.any(Object), { timeoutMs: 15_000 });
+    expect(call).toHaveBeenCalledWith("exec.run", expect.any(Object), { timeoutMs: 15_000, maxRequestBytes: 32_768 });
   });
 
   test("passes the default 262144-byte output cap", async () => {

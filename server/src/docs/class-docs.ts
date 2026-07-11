@@ -154,10 +154,13 @@ function boundResponse<T extends Record<string, unknown>>(result: T): T & { trun
   return bounded;
 }
 
-export async function classDoc(client: VersionClient, index: DocsIndex, params: ClassDocParams) {
+export async function requireDocsVersion(client: VersionClient): Promise<void> {
   const version = await client.call<{ engine?: { major?: number; minor?: number; patch?: number } }>("core.get_version");
   const engine = version.engine;
   if (engine?.major !== 4 || engine.minor !== 6) throw new GodotMcpError("feature_disabled", `Bundled class docs support Godot 4.6.x; connected engine is ${engine?.major ?? "?"}.${engine?.minor ?? "?"}.${engine?.patch ?? "?"}.`, "Use a Godot 4.6.x editor or install a documentation index matching the connected engine.");
+}
+
+export function classDocFromVerifiedVersion(index: DocsIndex, params: ClassDocParams) {
   const entry = index.classes[params.class];
   if (typeof params.class !== "string" || !params.class || !entry) throw new GodotMcpError("invalid_args", `Unknown documented class '${String(params.class)}'.`, "Call godot_api_list_classes and pass an exact class name.");
   const result: Record<string, unknown> = { class: params.class, engineVersion: index.manifest.engineVersion, brief: entry.brief, description: entry.description };
@@ -168,4 +171,9 @@ export async function classDoc(client: VersionClient, index: DocsIndex, params: 
     result.member = { kind: params.member.kind, name: params.member.name, ...doc };
   }
   return boundResponse(result);
+}
+
+export async function classDoc(client: VersionClient, index: DocsIndex, params: ClassDocParams) {
+  await requireDocsVersion(client);
+  return classDocFromVerifiedVersion(index, params);
 }

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Logger } from "../src/logger.js";
 import { GodotMcpError } from "../src/errors.js";
 import { JsonRpcClient } from "../src/bridge/ws-client.js";
+import { serializeJsonRpcRequest } from "../src/bridge/json-rpc.js";
 
 class FakeSocket extends EventEmitter {
   sent: string[] = [];
@@ -132,6 +133,20 @@ describe("JsonRpcClient", () => {
     sockets[0]!.message(JSON.stringify({ jsonrpc: "2.0", id: 2, result: "B" }));
     sockets[0]!.message(JSON.stringify({ jsonrpc: "2.0", id: 1, result: "A" }));
     await expect(first).resolves.toBe("A"); await expect(second).resolves.toBe("B"); client.stop();
+  });
+
+  it("checks the exact serialized frame cap before socket send", async () => {
+    const { client, sockets } = harness(); client.start(); authenticate(sockets[0]!);
+    const base = { value: "" };
+    const overhead = Buffer.byteLength(serializeJsonRpcRequest(1, "exec.run", base), "utf8");
+    const exact = client.call("exec.run", { value: "x".repeat(32768 - overhead) }, { maxRequestBytes: 32768 });
+    expect(Buffer.byteLength(sockets[0]!.sent.at(-1)!, "utf8")).toBe(32768);
+    sockets[0]!.message(JSON.stringify({ jsonrpc: "2.0", id: 1, result: true }));
+    await expect(exact).resolves.toBe(true);
+    await expect(client.call("exec.run", { value: "x".repeat(32768 - overhead + 1) }, { maxRequestBytes: 32768 })).rejects.toMatchObject({ code: "invalid_args" });
+    expect(sockets[0]!.sent).toHaveLength(2);
+    expect(client.getStatus().state).toBe("connected");
+    client.stop();
   });
 
   it("decodes ws text frames delivered as buffers", async () => {

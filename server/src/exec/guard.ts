@@ -21,7 +21,23 @@ export interface EditorExecutionResult {
   truncated: boolean;
 }
 export interface RpcCaller {
-  call<T>(method: string, params?: unknown, options?: { timeoutMs?: number }): Promise<T>;
+  call<T>(method: string, params?: unknown, options?: { timeoutMs?: number; maxRequestBytes?: number }): Promise<T>;
+}
+
+const EXEC_REQUEST_FRAME_CAP_BYTES = 32_768;
+
+function validateExecutionResult(value: unknown): EditorExecutionResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new GodotMcpError("godot_error", "Godot returned an invalid execution response.", "Check that the Godot plugin and MCP server versions are compatible.");
+  const result = value as Record<string, unknown>;
+  const keys = Object.keys(result).sort();
+  const expected = ["elapsedMs", "errors", "ok", "returnValue", "stdout", "truncated"];
+  if (JSON.stringify(keys) !== JSON.stringify(expected)
+    || typeof result.ok !== "boolean" || typeof result.stdout !== "string" || typeof result.truncated !== "boolean"
+    || typeof result.elapsedMs !== "number" || !Number.isFinite(result.elapsedMs) || result.elapsedMs < 0
+    || !Array.isArray(result.errors) || !result.errors.every((entry) => typeof entry === "string")) {
+    throw new GodotMcpError("godot_error", "Godot returned an invalid execution response.", "Check that the Godot plugin and MCP server versions are compatible.");
+  }
+  return value as EditorExecutionResult;
 }
 
 function blocked(message: string, hint: string): never {
@@ -50,11 +66,12 @@ export async function executeEditorScript(client: RpcCaller, request: EditorScri
   validateExecutionPolicy(request);
   const { mode: _mode, confirmed: _confirmed, allowDangerous: _allowDangerous, ...params } = request;
   try {
-    return await client.call<EditorExecutionResult>("exec.run", {
+    const result = await client.call<unknown>("exec.run", {
       ...params,
       args: request.args ?? null,
       outputCapBytes: request.outputCapBytes ?? DEFAULT_OUTPUT_CAP_BYTES,
-    }, { timeoutMs: EDITOR_EXEC_TIMEOUT_MS });
+    }, { timeoutMs: EDITOR_EXEC_TIMEOUT_MS, maxRequestBytes: EXEC_REQUEST_FRAME_CAP_BYTES });
+    return validateExecutionResult(result);
   } catch (error) {
     if (error instanceof GodotMcpError && error.code === "timeout") {
       throw new GodotMcpError("timeout", "Editor-script execution exceeded the 15000 ms response deadline.",

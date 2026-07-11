@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { classDoc, loadBundledDocsIndex, type DocsIndex, type VersionClient } from "../docs/class-docs.js";
+import { classDocFromVerifiedVersion, loadBundledDocsIndex, requireDocsVersion, type DocsIndex, type VersionClient } from "../docs/class-docs.js";
 import { GodotMcpError } from "../errors.js";
 import { registerTool } from "../registry.js";
 
@@ -29,8 +29,8 @@ function validateRemote<T>(schema: z.ZodType<T>, value: unknown): T {
   return parsed.data;
 }
 
-export function registerIntrospectionTools(server: McpServer, bridge: VersionClient, docs?: Promise<DocsIndex>): void {
-  let docsPromise = docs;
+export function registerIntrospectionTools(server: McpServer, bridge: VersionClient, docsLoader: () => Promise<DocsIndex> = loadBundledDocsIndex): void {
+  let docsPromise: Promise<DocsIndex> | undefined;
   registerTool(server, { name: "godot_api_list_classes", description: "List live ClassDB classes with deterministic pagination.", inputSchema: listInput, outputSchema: listOutput, annotations,
     handler: async (input) => validateRemote(listOutput, await bridge.call("introspection.list_classes", input)) });
   registerTool(server, { name: "godot_api_describe_class", description: "Describe members declared directly on one live ClassDB class.", inputSchema: describeInput, outputSchema: describeOutput, annotations,
@@ -40,7 +40,8 @@ export function registerIntrospectionTools(server: McpServer, bridge: VersionCli
   registerTool(server, { name: "godot_api_class_doc", description: "Read version-gated official Godot 4.6.2 class or member documentation from the verified offline index.", inputSchema: docInput, outputSchema: docOutput, annotations,
     handler: async (input) => {
       const value = input as z.infer<typeof docInput>;
-      docsPromise ??= loadBundledDocsIndex();
-      return classDoc(bridge, await docsPromise, { class: value.class, ...(value.member ? { member: value.member } : {}) });
+      await requireDocsVersion(bridge);
+      docsPromise ??= docsLoader();
+      return classDocFromVerifiedVersion(await docsPromise, { class: value.class, ...(value.member ? { member: value.member } : {}) });
     } });
 }
