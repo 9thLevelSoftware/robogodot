@@ -383,6 +383,44 @@ test("sequence diagrams require immediate participant and message anchors while 
   }
 });
 
+test("sequence create declarations require immediate node anchors", async (t) => {
+  const sequenceBlock = `sequenceDiagram
+  accTitle: Sequence create declaration sample
+  accDescr: Dynamically created participant and actor declarations retain atlas anchors.
+  %% atlas-node: ACT-SAMPLE
+  actor CLIENT as ACT-SAMPLE
+  %% atlas-node: CMP-CREATED-PARTICIPANT
+  create participant CREATED_PARTICIPANT as CMP-CREATED-PARTICIPANT
+  %% atlas-node: SYS-CREATED-ACTOR
+  create actor CREATED_ACTOR as SYS-CREATED-ACTOR
+  %% atlas-flow: FLOW-SAMPLE-001
+  CLIENT->>CREATED_PARTICIPANT: create target`;
+
+  assert.deepEqual(
+    [...validateMermaidAnchors(sequenceBlock, "sequence create fixture")].sort(),
+    ["ACT-SAMPLE", "CMP-CREATED-PARTICIPANT", "FLOW-SAMPLE-001", "SYS-CREATED-ACTOR"],
+  );
+
+  const cases = [
+    {
+      name: "create participant without anchor",
+      block: sequenceBlock.replace("  %% atlas-node: CMP-CREATED-PARTICIPANT\n", ""),
+      error: /CREATED_PARTICIPANT.*missing immediately preceding atlas-node anchor/,
+    },
+    {
+      name: "create actor without anchor",
+      block: sequenceBlock.replace("  %% atlas-node: SYS-CREATED-ACTOR\n", ""),
+      error: /CREATED_ACTOR.*missing immediately preceding atlas-node anchor/,
+    },
+  ];
+
+  for (const fixture of cases) {
+    await t.test(fixture.name, () => {
+      assert.throws(() => validateMermaidAnchors(fixture.block, "sequence create fixture"), fixture.error);
+    });
+  }
+});
+
 test("renderAtlas passes the Windows launcher to spawn without a shell", async (t) => {
   const root = await createAtlasFixture(t);
   const execPath = String.raw`C:\Tools\Node & 100%^!\node.exe`;

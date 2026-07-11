@@ -268,7 +268,7 @@ function parseFlowchartNode(line) {
 }
 
 function parseSequenceParticipant(line) {
-  const match = line.trim().match(/^(?:participant|actor)\s+([A-Za-z_][A-Za-z0-9_-]*)(?:\s+as\s+.+)?$/i);
+  const match = line.trim().match(/^(?:create\s+)?(?:participant|actor)\s+([A-Za-z_][A-Za-z0-9_-]*)(?:\s+as\s+.+)?$/i);
   return match?.[1] ?? null;
 }
 
