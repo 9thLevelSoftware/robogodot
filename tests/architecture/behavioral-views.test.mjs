@@ -80,6 +80,47 @@ const runtimeMessages = new Map([
 
 const runtimeIds = [...runtimeParticipants, ...runtimeMessages.keys()];
 
+const policyNodes = [
+  "CNT-MCP-CLIENT",
+  "CMP-REGISTRY",
+  "CMP-MODE-GATE",
+  "CMP-PATH-GUARD",
+  "CMP-EXEC-GUARD",
+  "CMP-REQUEST-CLASSIFIER",
+  "CMP-READ-CACHE",
+  "CMP-REQUEST-QUEUE",
+  "CMP-HANDLER",
+  "CMP-CACHE-INVALIDATOR",
+  "CMP-AUDIT",
+  "SYS-STRUCTURED-RESULT",
+  "SYS-STRUCTURED-ERROR",
+];
+
+const policyEdges = new Map([
+  ["FLOW-POL-001", 'MCP_CLIENT -->|"tool call"| REGISTRY'],
+  ["FLOW-POL-002", 'REGISTRY -->|"annotations and mode"| MODE_GATE'],
+  ["FLOW-POL-003", 'MODE_GATE -->|"allowed"| PATH_GUARD'],
+  ["FLOW-POL-004", 'PATH_GUARD -->|"path safe"| EXEC_GUARD'],
+  ["FLOW-POL-005", 'MODE_GATE -.->|"[INFERRED] blocked_by_policy (Q-007)"| AUDIT'],
+  ["FLOW-POL-006", 'PATH_GUARD -.->|"[INFERRED] blocked path (Q-007)"| AUDIT'],
+  ["FLOW-POL-007", 'EXEC_GUARD -.->|"[INFERRED] blocked execution (Q-006, Q-007)"| AUDIT'],
+  ["FLOW-POL-008", 'AUDIT -->|"rejected outcome"| STRUCTURED_ERROR'],
+  ["FLOW-POL-009", 'EXEC_GUARD -->|"safe request"| REQUEST_CLASSIFIER'],
+  ["FLOW-POL-010", 'REQUEST_CLASSIFIER -->|"read-only"| READ_CACHE'],
+  ["FLOW-POL-011", 'READ_CACHE -->|"cache hit"| AUDIT'],
+  ["FLOW-POL-012", 'READ_CACHE -->|"cache miss"| HANDLER'],
+  ["FLOW-POL-013", 'REQUEST_CLASSIFIER -->|"mutation"| REQUEST_QUEUE'],
+  ["FLOW-POL-014", 'REQUEST_QUEUE -->|"FIFO dispatch"| HANDLER'],
+  ["FLOW-POL-015", 'HANDLER -->|"mutation success"| CACHE_INVALIDATOR'],
+  ["FLOW-POL-016", 'CACHE_INVALIDATOR -->|"affected tags invalidated"| AUDIT'],
+  ["FLOW-POL-017", 'HANDLER -->|"read success"| AUDIT'],
+  ["FLOW-POL-018", 'HANDLER -->|"stable mapped failure"| AUDIT'],
+  ["FLOW-POL-019", 'AUDIT -->|"successful outcome"| STRUCTURED_RESULT'],
+  ["FLOW-POL-020", 'STRUCTURED_RESULT -->|"structuredContent"| MCP_CLIENT'],
+]);
+
+const policyIds = [...policyNodes, ...policyEdges.keys()];
+
 function sectionBetween(markdown, startHeading, endHeading) {
   const start = markdown.indexOf(startHeading);
   const end = markdown.indexOf(endHeading, start + startHeading.length);
@@ -359,4 +400,153 @@ test("runtime debug view has exhaustive adjacent participant and relationship ou
   assert.ok(relationshipRows[5].includes("[Q-010](open-questions.md#architecture-open-questions)"));
   assert.ok(relationshipRows[9].includes("[Q-011](open-questions.md#architecture-open-questions)"));
   assert.ok(relationshipRows[9].includes("[Q-012](open-questions.md#architecture-open-questions)"));
+});
+
+test("centralized policy pipeline preserves the exact guarded read, mutation, and outcome flow", async () => {
+  const markdown = await assertView("07-policy-pipeline.md", {
+    ids: policyIds,
+    tokens: [
+      "flowchart TD",
+      "full",
+      "read_only",
+      "confirm_destructive",
+      "blocked_by_policy",
+      "{code, message, hint}",
+      "FIFO",
+      "TTL",
+      "tags",
+      "fairness",
+      "backpressure",
+      "watchdog",
+      "Q-006",
+      "Q-007",
+      "Q-008",
+      "Q-009",
+      "structuredContent",
+    ],
+  });
+
+  const [block] = extractMermaidBlocks(markdown);
+  const lines = block.split(/\r?\n/);
+  assert.equal(lines[0].trim(), "flowchart TD", "policy pipeline direction");
+
+  const nodeAnchors = lines
+    .map((line) => line.trim().match(/^%% atlas-node: (.+)$/)?.[1])
+    .filter(Boolean);
+  assert.deepEqual(nodeAnchors, policyNodes, "policy node declaration order");
+
+  const flowAnchors = lines
+    .map((line) => line.trim().match(/^%% atlas-flow: (FLOW-POL-\d{3})$/)?.[1])
+    .filter(Boolean);
+  assert.deepEqual(flowAnchors, [...policyEdges.keys()], "policy flow order");
+
+  for (const [flowId, edge] of policyEdges) {
+    const anchor = lines.findIndex((line) => line.trim() === `%% atlas-flow: ${flowId}`);
+    assert.notEqual(anchor, -1, `${flowId} anchor`);
+    assert.equal(lines[anchor + 1].trim(), edge, `${flowId} edge`);
+  }
+
+  for (const flowId of ["FLOW-POL-005", "FLOW-POL-006", "FLOW-POL-007"]) {
+    assert.match(policyEdges.get(flowId), /-\.->/, `${flowId} is visibly inferred without color`);
+  }
+  assert.equal(
+    [...policyEdges.values()].filter((edge) => edge.startsWith("STRUCTURED_ERROR ")).length,
+    0,
+    "structured error visually terminates rejected outcomes",
+  );
+});
+
+test("policy view has exhaustive adjacent node and relationship outlines plus trace rows", async () => {
+  const markdown = await assertView("07-policy-pipeline.md", { ids: policyIds });
+  const diagramEnd = markdown.indexOf("```", markdown.indexOf("```mermaid") + 3);
+  const nodeHeading = markdown.indexOf("## Node outline");
+  const relationshipHeading = markdown.indexOf("## Relationship outline");
+  assert.ok(diagramEnd < nodeHeading, "node outline follows the diagram");
+  assert.ok(nodeHeading < relationshipHeading, "relationship outline follows nodes");
+
+  const nodeSection = sectionBetween(markdown, "## Node outline", "## Relationship outline");
+  assert.ok(
+    nodeSection.includes(
+      "| Node | Responsibility | Evidence | Phase owner | Protocol / boundary | Source / trace / open questions |",
+    ),
+    "node outline columns",
+  );
+  const nodeRows = tableRows(nodeSection, /^\| `(?:CNT|CMP|SYS)-[A-Z0-9-]+` \|/);
+  assert.deepEqual(
+    nodeRows.map((row) => row.match(/^\| `([^`]+)` \|/)[1]),
+    policyNodes,
+    "node outline inventory",
+  );
+  for (const row of nodeRows) {
+    const cells = row.split("|");
+    assert.equal(cells.length, 8, `node outline column count: ${row}`);
+    assert.equal(cells[3].trim(), "Explicit", `node evidence: ${row}`);
+    assert.match(cells[4], /(?:Phase|Consumer integration)/, `node phase owner: ${row}`);
+    assert.ok(cells[5].trim(), `node protocol or boundary: ${row}`);
+    assert.ok(row.includes("[trace](traceability.md#architecture-atlas-traceability)"), `node trace link: ${row}`);
+  }
+
+  const relationshipSection = sectionBetween(
+    markdown,
+    "## Relationship outline",
+    "## Policy, concurrency, and consistency risks",
+  );
+  assert.ok(
+    relationshipSection.includes(
+      "| Flow | From → To | Message / outcome | Evidence | Phase / protocol | Source / trace |",
+    ),
+    "relationship outline columns",
+  );
+  const relationshipRows = tableRows(relationshipSection, /^\| `FLOW-POL-\d{3}` \|/);
+  assert.deepEqual(
+    relationshipRows.map((row) => row.match(/^\| `([^`]+)` \|/)[1]),
+    [...policyEdges.keys()],
+    "relationship outline inventory",
+  );
+  for (const [index, row] of relationshipRows.entries()) {
+    const flowId = `FLOW-POL-${String(index + 1).padStart(3, "0")}`;
+    const expectedEvidence = index >= 4 && index <= 6 ? "Inferred" : "Explicit";
+    const cells = row.split("|");
+    assert.equal(cells.length, 8, `relationship outline column count: ${flowId}`);
+    assert.equal(cells[4].trim(), expectedEvidence, `${flowId} evidence`);
+    assert.match(cells[5], /Phases? .+\/.+/, `${flowId} phase and protocol detail`);
+    assert.ok(row.includes("[trace](traceability.md#architecture-atlas-traceability)"), `${flowId} trace link`);
+  }
+
+  assert.ok(markdown.includes("[Traceability index](traceability.md#architecture-atlas-traceability)"));
+  assert.ok(markdown.includes("[Open-question register](open-questions.md#architecture-open-questions)"));
+  for (const question of ["Q-006", "Q-007", "Q-008", "Q-009"]) {
+    assert.ok(
+      markdown.includes(`[${question}](open-questions.md#architecture-open-questions)`),
+      `${question} direct link`,
+    );
+  }
+
+  const traceability = await readFile(new URL("../../docs/architecture/traceability.md", import.meta.url), "utf8");
+  for (const nodeId of policyNodes) {
+    const row = traceability.split(/\r?\n/).find((line) => line.startsWith(`| \`${nodeId}\` |`));
+    assert.ok(row, `${nodeId} trace row`);
+    assert.ok(row.includes("`07-policy-pipeline.md`"), `${nodeId} includes policy view`);
+  }
+  const traceRows = traceability
+    .split(/\r?\n/)
+    .filter((line) => /^\| `FLOW-POL-\d{3}` \|/.test(line));
+  assert.deepEqual(
+    traceRows.map((row) => row.match(/^\| `([^`]+)` \|/)[1]),
+    [...policyEdges.keys()],
+    "policy flow trace inventory",
+  );
+  for (const [index, row] of traceRows.entries()) {
+    assert.ok(row.includes("`07-policy-pipeline.md`"), `FLOW-POL trace view: ${row}`);
+    assert.match(row, index >= 4 && index <= 6 ? /\| Inferred · `Q-00[67]`/ : /\| Explicit/, `trace evidence: ${row}`);
+  }
+});
+
+test("policy risks keep queue, consistency, and unresolved guard limits explicit", async () => {
+  const markdown = await assertView("07-policy-pipeline.md", { ids: policyIds });
+  assert.match(markdown, /queue is not a rollback transaction/i);
+  assert.match(markdown, /concurrent reads may observe in-progress mutation state/i);
+  assert.match(markdown, /Q-006.+headless GDScript/is);
+  assert.match(markdown, /Q-008.+in-progress mutation/is);
+  assert.match(markdown, /Q-009.+export output paths/is);
 });

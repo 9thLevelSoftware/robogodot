@@ -217,6 +217,25 @@ test("declares the exact runtime-debug sequence ID contract", () => {
   ]);
 });
 
+test("declares the exact centralized-policy pipeline ID contract", () => {
+  assert.deepEqual(VIEW_ID_CONTRACTS["07-policy-pipeline.md"], [
+    "CNT-MCP-CLIENT",
+    "CMP-REGISTRY",
+    "CMP-MODE-GATE",
+    "CMP-PATH-GUARD",
+    "CMP-EXEC-GUARD",
+    "CMP-REQUEST-CLASSIFIER",
+    "CMP-READ-CACHE",
+    "CMP-REQUEST-QUEUE",
+    "CMP-HANDLER",
+    "CMP-CACHE-INVALIDATOR",
+    "CMP-AUDIT",
+    "SYS-STRUCTURED-RESULT",
+    "SYS-STRUCTURED-ERROR",
+    ...Array.from({ length: 20 }, (_, index) => `FLOW-POL-${String(index + 1).padStart(3, "0")}`),
+  ]);
+});
+
 test("builds a shell-free Windows npx invocation with opaque paths", () => {
   const execPath = String.raw`C:\Tools\Node & 100%^!\node.exe`;
   assert.deepEqual(buildNpxInvocation("win32", execPath), {

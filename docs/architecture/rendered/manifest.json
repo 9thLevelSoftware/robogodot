@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-11T03:06:16.152Z",
+  "generatedAt": "2026-07-11T03:19:51.812Z",
   "renderer": "@mermaid-js/mermaid-cli@11.16.0",
   "sourceArchive": {
     "path": "C:\\Users\\dasbl\\Downloads\\files.zip",
@@ -35,6 +35,11 @@
     {
       "output": "06-runtime-debug-sequence.svg",
       "source": "06-runtime-debug-sequence.md",
+      "block": 1
+    },
+    {
+      "output": "07-policy-pipeline.svg",
+      "source": "07-policy-pipeline.md",
       "block": 1
     }
   ]
