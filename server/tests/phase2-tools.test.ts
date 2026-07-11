@@ -122,6 +122,23 @@ describe("Phase 2 MCP tools", () => {
     } finally { await fixture.close(); }
   });
 
+  it.each(["constructor", "toString", "__proto__"])("rejects prototype-like class key %s consistently with and without a member selector", async (className) => {
+    const call = vi.fn().mockResolvedValue({ engine: { major: 4, minor: 6, patch: 2 } });
+    const fixture = await harness(call);
+    try {
+      for (const arguments_ of [
+        { class: className },
+        { class: className, member: { kind: "method", name: "toString" } },
+      ]) {
+        const result = await fixture.client.callTool({ name: "godot_api_class_doc", arguments: arguments_ });
+        expect(result).toMatchObject({
+          isError: true,
+          structuredContent: { code: "invalid_args", message: `Unknown documented class '${className}'.` },
+        });
+      }
+    } finally { await fixture.close(); }
+  });
+
   it.each([
     [new GodotMcpError("not_connected", "offline", "Open Godot"), "not_connected"],
     [{ engine: { major: 4, minor: 5, patch: 0 } }, "feature_disabled"],

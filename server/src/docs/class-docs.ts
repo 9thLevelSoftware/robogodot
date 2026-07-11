@@ -161,13 +161,15 @@ export async function requireDocsVersion(client: VersionClient): Promise<void> {
 }
 
 export function classDocFromVerifiedVersion(index: DocsIndex, params: ClassDocParams) {
-  const entry = index.classes[params.class];
-  if (typeof params.class !== "string" || !params.class || !entry) throw new GodotMcpError("invalid_args", `Unknown documented class '${String(params.class)}'.`, "Call godot_api_list_classes and pass an exact class name.");
+  const hasClass = typeof params.class === "string" && params.class.length > 0 && Object.hasOwn(index.classes, params.class);
+  if (!hasClass) throw new GodotMcpError("invalid_args", `Unknown documented class '${String(params.class)}'.`, "Call godot_api_list_classes and pass an exact class name.");
+  const entry = index.classes[params.class]!;
   const result: Record<string, unknown> = { class: params.class, engineVersion: index.manifest.engineVersion, brief: entry.brief, description: entry.description };
   if (params.member) {
     if (!MEMBER_KINDS.includes(params.member.kind) || !params.member.name) throw new GodotMcpError("invalid_args", "Invalid documentation member selector.", "Use kind method, property, signal, constant, or enum with an exact member name.");
-    const doc = entry.members[`${params.member.kind}:${params.member.name}`];
-    if (!doc) throw new GodotMcpError("invalid_args", `Unknown ${params.member.kind} '${params.member.name}' on '${params.class}'.`, "Call godot_api_describe_class and pass an exact member name and kind.");
+    const memberKey = `${params.member.kind}:${params.member.name}`;
+    if (!Object.hasOwn(entry.members, memberKey)) throw new GodotMcpError("invalid_args", `Unknown ${params.member.kind} '${params.member.name}' on '${params.class}'.`, "Call godot_api_describe_class and pass an exact member name and kind.");
+    const doc = entry.members[memberKey]!;
     result.member = { kind: params.member.kind, name: params.member.name, ...doc };
   }
   return boundResponse(result);

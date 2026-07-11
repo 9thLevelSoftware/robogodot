@@ -64,6 +64,10 @@ describe("pinned official class docs", () => {
     await expect(classDoc(mismatched, index, { class: "Node" })).rejects.toMatchObject({ code: "feature_disabled" });
     await expect(classDoc(matching, index, { class: "Missing" })).rejects.toMatchObject({ code: "invalid_args" });
     await expect(classDoc(matching, index, { class: "Node", member: { kind: "method", name: "missing" } })).rejects.toMatchObject({ code: "invalid_args" });
+    for (const name of ["constructor", "toString", "__proto__"]) {
+      await expect(classDoc(matching, index, { class: name })).rejects.toMatchObject({ code: "invalid_args" });
+      await expect(classDoc(matching, index, { class: "Node", member: { kind: "method", name } })).rejects.toMatchObject({ code: "invalid_args" });
+    }
   });
 
   test("bounds the complete serialized response to 65536 bytes", async () => {
