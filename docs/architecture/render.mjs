@@ -20,6 +20,52 @@ export const EXPORT_MAP = Object.freeze({
     "08d-dap-lifecycle.svg",
   ],
 });
+export const VIEW_ID_CONTRACTS = Object.freeze({
+  "01-system-context.md": Object.freeze([
+    "ACT-ENGINEER-AI",
+    "SYS-GODOT-CONTROL-MCP",
+    "SYS-GODOT-EDITOR-PROJECT",
+    "SYS-RUNNING-GAME",
+    "SYS-PROJECT-FILES",
+    "SYS-ASSET-PROVIDER",
+    "FLOW-CTX-001",
+    "FLOW-CTX-002",
+    "FLOW-CTX-003",
+    "FLOW-CTX-004",
+    "FLOW-CTX-005",
+    "FLOW-CTX-006",
+  ]),
+  "02-container-channels.md": Object.freeze([
+    "CNT-MCP-CLIENT",
+    "CNT-TYPESCRIPT-SERVER",
+    "CH-EDITOR-MUTATION",
+    "CH-INTROSPECTION",
+    "CH-CODE-INTELLIGENCE",
+    "CH-RUNTIME-DEBUG",
+    "CH-HEADLESS-BATCH-FS",
+    "CNT-EDITOR-PLUGIN",
+    "SYS-CLASSDB-DOCS",
+    "CNT-GODOT-LSP",
+    "CNT-GODOT-DAP",
+    "CNT-RUNNING-GAME",
+    "CNT-RUNTIME-AUTOLOADS",
+    "CNT-HEADLESS-GODOT",
+    "CNT-PROJECT-STORAGE",
+    "CNT-ASSET-PROVIDER",
+    "FLOW-CH-001",
+    "FLOW-CH-002",
+    "FLOW-CH-003",
+    "FLOW-CH-004",
+    "FLOW-CH-005",
+    "FLOW-CH-006",
+    "FLOW-CH-007",
+    "FLOW-CH-008",
+    "FLOW-CH-009",
+    "FLOW-CH-010",
+    "FLOW-CH-011",
+    "FLOW-CH-012",
+  ]),
+});
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ID_PATTERN = /\b(?:ACT|SYS|CNT|CMP|CH|PHASE|STATE|FLOW)-[A-Z0-9-]+\b/g;
@@ -87,7 +133,7 @@ function parseFlowchartEdge(line) {
   const arrows = [...sanitized.matchAll(/<-->|<---|-\.->|==>|-->|---|-\.-|===|~~~|--o|--x|o--o|x--x/g)];
   if (arrows.length === 0) return null;
 
-  const expands = /(^|\s)&(\s|$)/.test(sanitized);
+  const expands = sanitized.includes("&");
   const edgeCount = arrows.length === 1 && !expands ? 1 : Math.max(2, arrows.length);
   const endpoints = [];
   if (arrows.length === 1) {
@@ -102,8 +148,12 @@ function parseFlowchartEdge(line) {
 
 function parseFlowchartNode(line) {
   if (parseFlowchartEdge(line)) return null;
-  const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*(?:\[|\(|\{|>)/);
-  return match?.[1] ?? null;
+  const trimmed = line.trim();
+  if (!trimmed || trimmed === "end") return null;
+  const shaped = trimmed.match(/^([A-Za-z_][A-Za-z0-9_-]*)\s*(?:@\{|\[|\(|\{|>)/);
+  if (shaped) return shaped[1];
+  const bare = trimmed.match(/^([A-Za-z_][A-Za-z0-9_-]*)(?:::[A-Za-z_][A-Za-z0-9_-]*)?$/);
+  return bare?.[1] ?? null;
 }
 
 export function validateMermaidAnchors(block, context = "Mermaid block") {
@@ -187,6 +237,22 @@ export function diffTraceability(diagramIds, traceabilityIds) {
   };
 }
 
+export function validateViewIdContract(source, actualIds, contracts = VIEW_ID_CONTRACTS) {
+  const configured = contracts[source];
+  if (!configured) return { missing: [], extra: [] };
+  const expected = new Set(configured);
+  if (expected.size !== configured.length) throw new Error(`${source} ID contract contains duplicate IDs`);
+  const actual = actualIds instanceof Set ? actualIds : new Set(actualIds);
+  const diff = {
+    missing: [...expected].filter((id) => !actual.has(id)).sort(),
+    extra: [...actual].filter((id) => !expected.has(id)).sort(),
+  };
+  if (diff.missing.length || diff.extra.length) {
+    throw new Error(`${source} ID contract mismatch: ${JSON.stringify(diff)}`);
+  }
+  return diff;
+}
+
 export function buildManifest(entries, generatedAt = new Date().toISOString()) {
   return {
     schemaVersion: 1,
@@ -227,6 +293,7 @@ export async function renderAtlas({
   spawn = spawnSync,
   platform = process.platform,
   execPath = process.execPath,
+  viewIdContracts = VIEW_ID_CONTRACTS,
 } = {}) {
   const selected = Object.entries(EXPORT_MAP).filter(([source]) => !only || only.has(source.replace(/\.md$/, "")));
   if (selected.length === 0) throw new Error("No atlas views selected");
@@ -243,13 +310,18 @@ export async function renderAtlas({
     if (blocks.length !== outputs.length) {
       throw new Error(`${source}: expected ${outputs.length} Mermaid block(s), found ${blocks.length}`);
     }
+    const sourceIds = new Set();
     blocks.forEach((block, index) => {
       if (!block.includes("accTitle:") || !block.includes("accDescr:")) {
         throw new Error(`${source} block ${index + 1}: missing accTitle or accDescr`);
       }
-      validateMermaidAnchors(block, `${source} block ${index + 1}`).forEach((id) => diagramIds.add(id));
+      validateMermaidAnchors(block, `${source} block ${index + 1}`).forEach((id) => {
+        diagramIds.add(id);
+        sourceIds.add(id);
+      });
       jobs.push({ source, block: index + 1, definition: block, output: outputs[index] });
     });
+    validateViewIdContract(source, sourceIds, viewIdContracts);
   }
 
   const diff = diffTraceability(diagramIds, traceability);

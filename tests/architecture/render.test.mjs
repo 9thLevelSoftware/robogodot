@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -39,6 +39,9 @@ const sampleRows = [
   "| `SYS-TARGET` | Sample target | `01-system-context.md` | Explicit | source — heading | Test | request | result | target consequence |",
   "| `FLOW-SAMPLE-001` | Uses | `01-system-context.md` | Explicit | source — heading | Test | request | result | flow consequence |",
 ];
+const SAMPLE_VIEW_ID_CONTRACTS = Object.freeze({
+  "01-system-context.md": Object.freeze(["ACT-SAMPLE", "SYS-TARGET", "FLOW-SAMPLE-001"]),
+});
 
 const sampleBlock = extractMermaidBlocks(sample)[0];
 
@@ -52,6 +55,18 @@ async function createAtlasFixture(t, { block = sampleBlock, traceability = build
   await writeFile(path.join(root, "01-system-context.md"), `# Sample\n\n\`\`\`mermaid\n${block}\n\`\`\`\n`, "utf8");
   await writeFile(path.join(root, "traceability.md"), traceability, "utf8");
   await writeFile(path.join(root, "mermaid-config.json"), "{}\n", "utf8");
+  return root;
+}
+
+function renderSampleAtlas(options) {
+  return renderAtlas({ ...options, viewIdContracts: SAMPLE_VIEW_ID_CONTRACTS });
+}
+
+async function createContractFixture(t, { source, markdown, traceability }) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "architecture-atlas-contract-test-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, source), markdown, "utf8");
+  await writeFile(path.join(root, "traceability.md"), traceability, "utf8");
   return root;
 }
 
@@ -98,7 +113,7 @@ test("renderAtlas rejects duplicate traceability IDs", async (t) => {
     traceability: buildSampleTraceability({ rows: [...sampleRows, sampleRows[0]] }),
   });
   await assert.rejects(
-    renderAtlas({ check: true, only: new Set(["01-system-context"]), root }),
+    renderSampleAtlas({ check: true, only: new Set(["01-system-context"]), root }),
     /Duplicate traceability IDs: ACT-SAMPLE/,
   );
 });
@@ -108,7 +123,7 @@ test("renderAtlas requires the exact traceability header", async (t) => {
     traceability: buildSampleTraceability({ header: TRACEABILITY_HEADER.replace("Phase owner", "Owner") }),
   });
   await assert.rejects(
-    renderAtlas({ check: true, only: new Set(["01-system-context"]), root }),
+    renderSampleAtlas({ check: true, only: new Set(["01-system-context"]), root }),
     /exact traceability header/,
   );
 });
@@ -152,12 +167,38 @@ test("renderAtlas enforces immediate unique anchors and one edge per flow anchor
       error: /must map to exactly one Mermaid edge/,
     },
     {
+      name: "compact fan-in expands to multiple edges",
+      block: sampleBlock.replace("  ACT_SAMPLE -->|uses| SYS_TARGET", "  ACT_SAMPLE&SYS_TARGET -->|uses| SYS_TARGET"),
+      error: /must map to exactly one Mermaid edge/,
+    },
+    {
+      name: "compact fan-out expands to multiple edges",
+      block: sampleBlock.replace("  ACT_SAMPLE -->|uses| SYS_TARGET", "  ACT_SAMPLE -->|uses| SYS_TARGET&ACT_SAMPLE"),
+      error: /must map to exactly one Mermaid edge/,
+    },
+    {
       name: "unanchored extra channel declaration",
       block: sampleBlock.replace(
         "  %% atlas-flow: FLOW-SAMPLE-001",
         '  CH_EXTRA["Extra channel"]\n  %% atlas-flow: FLOW-SAMPLE-001',
       ),
       error: /CH_EXTRA.*missing immediately preceding atlas-node anchor/,
+    },
+    {
+      name: "unanchored bare node declaration",
+      block: sampleBlock.replace(
+        "  %% atlas-flow: FLOW-SAMPLE-001",
+        "  BARE_NODE\n  %% atlas-flow: FLOW-SAMPLE-001",
+      ),
+      error: /BARE_NODE.*missing immediately preceding atlas-node anchor/,
+    },
+    {
+      name: "unanchored Mermaid v11 node declaration",
+      block: sampleBlock.replace(
+        "  %% atlas-flow: FLOW-SAMPLE-001",
+        '  V11_NODE@{ shape: rect, label: "V11 node" }\n  %% atlas-flow: FLOW-SAMPLE-001',
+      ),
+      error: /V11_NODE.*missing immediately preceding atlas-node anchor/,
     },
     {
       name: "implicit extra channel endpoint",
@@ -170,7 +211,7 @@ test("renderAtlas enforces immediate unique anchors and one edge per flow anchor
     await t.test(fixture.name, async (t) => {
       const root = await createAtlasFixture(t, { block: fixture.block });
       await assert.rejects(
-        renderAtlas({ check: true, only: new Set(["01-system-context"]), root }),
+        renderSampleAtlas({ check: true, only: new Set(["01-system-context"]), root }),
         fixture.error,
       );
     });
@@ -186,7 +227,7 @@ test("renderAtlas passes the Windows launcher to spawn without a shell", async (
     return { status: 0, stdout: "", stderr: "" };
   };
 
-  await renderAtlas({
+  await renderSampleAtlas({
     only: new Set(["01-system-context"]),
     root,
     platform: "win32",
@@ -207,10 +248,56 @@ test("renderAtlas propagates spawn EINVAL and cleans temporary files", async (t)
   const spawn = () => ({ status: null, error: spawnError, stdout: null, stderr: null });
 
   await assert.rejects(
-    renderAtlas({ only: new Set(["01-system-context"]), root, spawn }),
+    renderSampleAtlas({ only: new Set(["01-system-context"]), root, spawn }),
     /renderer launch failed: EINVAL: spawnSync npx-cli\.js EINVAL/,
   );
   await assert.rejects(access(path.join(root, ".render-tmp")), { code: "ENOENT" });
+});
+
+test("renderAtlas enforces exact per-view ID contracts", async (t) => {
+  const traceability = await readFile(new URL("../../docs/architecture/traceability.md", import.meta.url), "utf8");
+
+  await t.test("rejects an anchored sixth channel with a matching trace row", async (t) => {
+    const source = "02-container-channels.md";
+    const original = await readFile(new URL(`../../docs/architecture/${source}`, import.meta.url), "utf8");
+    const markdown = original.replace(
+      "      %% atlas-node: CH-HEADLESS-BATCH-FS",
+      '      %% atlas-node: CH-EXTRA\n      CH_EXTRA["CH-EXTRA<br/>Extra channel"]\n      %% atlas-node: CH-HEADLESS-BATCH-FS',
+    );
+    assert.notEqual(markdown, original, "extra-channel fixture mutation");
+    const withExtraTrace = `${traceability.trimEnd()}\n| \`CH-EXTRA\` | Extra channel | \`02-container-channels.md\` | Explicit | test — fixture | Test | input | output | must fail contract |\n`;
+    const root = await createContractFixture(t, { source, markdown, traceability: withExtraTrace });
+
+    await assert.rejects(
+      renderAtlas({ check: true, only: new Set(["02-container-channels"]), root }),
+      /02-container-channels\.md ID contract mismatch: .*"extra":\["CH-EXTRA"\]/,
+    );
+  });
+
+  await t.test("rejects missing IDs even when matching trace rows are removed", async (t) => {
+    const source = "01-system-context.md";
+    const original = await readFile(new URL(`../../docs/architecture/${source}`, import.meta.url), "utf8");
+    const markdown = original
+      .replace(
+        '    %% atlas-node: SYS-ASSET-PROVIDER\n    SYS_ASSET_PROVIDER["SYS-ASSET-PROVIDER<br/>Optional asset provider<br/>feature + credential boundary"]\n',
+        "",
+      )
+      .replace(
+        '  %% atlas-flow: FLOW-CTX-006\n  SYS_GODOT_CONTROL_MCP -->|"optionally requests generated assets"| SYS_ASSET_PROVIDER\n',
+        "",
+      );
+    assert.notEqual(markdown, original, "missing-ID fixture mutation");
+    const withoutTraceRows = traceability
+      .split(/\r?\n/)
+      .filter((line) => !/^\| `(?:SYS-ASSET-PROVIDER|FLOW-CTX-006)` \|/.test(line))
+      .join("\n");
+    const root = await createContractFixture(t, { source, markdown, traceability: withoutTraceRows });
+
+    await assert.rejects(
+      renderAtlas({ check: true, only: new Set(["01-system-context"]), root }),
+      /01-system-context\.md ID contract mismatch: .*"missing":\["FLOW-CTX-006","SYS-ASSET-PROVIDER"\]/,
+    );
+  });
 });
 
 test("builds detached export provenance", () => {
