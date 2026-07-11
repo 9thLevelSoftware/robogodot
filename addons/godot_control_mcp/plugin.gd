@@ -7,6 +7,7 @@ const Server = preload("ws_server.gd")
 const Core = preload("commands/core.gd")
 const Exec = preload("commands/exec.gd")
 const Introspection = preload("commands/introspection.gd")
+const Edit = preload("commands/edit.gd")
 var _server: Node
 
 static func parse_port(value: String) -> int:
@@ -45,6 +46,14 @@ func _enter_tree() -> void:
 	router.register_command("introspection.list_classes", Introspection.list_classes)
 	router.register_command("introspection.describe_class", Introspection.describe_class)
 	router.register_command("introspection.search", Introspection.search)
+	router.register_command("edit.node_add", Edit.node_add)
+	router.register_command("edit.node_delete", Edit.node_delete)
+	router.register_command("edit.node_reparent", Edit.node_reparent)
+	router.register_command("edit.node_rename", Edit.node_rename)
+	router.register_command("edit.node_duplicate", Edit.node_duplicate)
+	router.register_command("edit.node_get", Edit.node_get)
+	router.register_command("edit.node_set_property", Edit.node_set_property)
+	router.register_command("edit.node_call_readonly", Edit.node_call_readonly)
 	_server = Server.new()
 	add_child(_server)
 	var port := port_from_environment()

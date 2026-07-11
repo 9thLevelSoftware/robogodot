@@ -1,93 +1,60 @@
-# Phase 2 Task 2 Report
+# Phase 3 Task 2 report
 
-## Status
+## RED
 
-DONE. The real-Godot parity gate exits 0 and is included in the bounded Godot smoke orchestrator.
+Command:
 
-## Canonical shapes
+`cd server && npm test -- --run tests/phase3-node-tools.test.ts`
 
-The committed-intent shared fixture `tests/fixtures/variant-vectors.json` defines `$type` tagged JSON shapes:
+Observed: exit 1; 1 failed file, 4 failed tests. Tool listing returned no node tools, bridge dispatch count was zero, and unknown tools had no normalized structured error. This was the expected missing-feature failure.
 
-- `{"$type":"Vector2","x":number,"y":number}`
-- `{"$type":"Vector3","x":number,"y":number,"z":number}`
-- `{"$type":"Color","r":number,"g":number,"b":number,"a":number}`
-- `{"$type":"NodePath","path":string}`
-- `{"$type":"Rect2","x":number,"y":number,"width":number,"height":number}`
+Real Godot integration RED:
 
-Godot 4.6 semantics were chosen: `#RRGGBBAA` treats the last byte as alpha. Color serialization rounds channels to seven decimal places to make Godot's float32 Color storage and TypeScript byte-semantically equal; `0x80` alpha is canonically `0.5019608`. JSON numbers do not promise integer/float Variant preservation across runtimes.
+`$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; node tests/godot/run-smoke.mjs`
 
-## TDD evidence
+Observed: exit 1 after prior smokes passed. `commands/edit.gd` failed compilation on inferred return types, so the eight edit commands could not register and the Task 2 smoke timed out. This was corrected with explicit `Dictionary`/`Variant` types before the GREEN run.
 
-RED TypeScript:
+## GREEN and implementation
 
-`npx vitest run tests/type-parser.test.ts`
+- `server/src/tools/node.ts`: registers exactly eight public node tools, strict inputs, UTF-8 byte bounds, annotations, curated response validation, mutation-lane invalidations, and the exact three-method/zero-argument read-only allowlist.
+- `server/src/server.ts`: installs the node slice with a shared `MutationLane`.
+- `addons/godot_control_mcp/commands/edit.gd`: canonical edited-scene path resolution, live property descriptors, Variant parsing/serialization, compact stale-tree hints, ownership, and eight RPC handlers.
+- `addons/godot_control_mcp/edit_controller.gd`: inverse operations for delete, reparent, and duplicate in addition to the approved add/rename/property foundation.
+- `addons/godot_control_mcp/plugin.gd`: registers the eight `edit.node_*` methods.
+- `server/tests/phase3-node-tools.test.ts`: public MCP names, strict schemas, annotations, mapping, UTF-8 rejection, unsafe method rejection, and malformed response normalization.
+- `tests/godot/phase_3_node_smoke.gd` and `tests/fixtures/godot_project/phase3/node_fixture.tscn`: real editor add/undo/redo, initial property, rename, Variant property set, duplicate, reparent, delete, stale path, and prototype-like property coverage.
+- `tests/godot/run-smoke.mjs`: includes the Task 2 editor smoke.
+- Updated earlier exact tool-list assertions to account for the new public slice.
 
-Failed before production code existed with `Cannot find module '../src/util/type-parser.js'` and zero tests collected.
+## Verification
 
-RED Godot:
+Focused command:
 
-`Godot_v4.6.2-stable_mono_win64_console.exe --headless --path . --script tests/godot/variant_parity_smoke.gd`
+`cd server && npm test -- --run tests/phase3-node-tools.test.ts tests/type-parser.test.ts && npm run typecheck && npm run build`
 
-Failed before production code existed with `Preload file res://addons/godot_control_mcp/util/type_parse.gd does not exist`.
+Observed: 2 files passed, 42 tests passed; typecheck and build exited 0.
 
-GREEN TypeScript:
+Full server suite:
 
-`npx vitest run tests/type-parser.test.ts`
+`cd server && npm test -- --run`
 
-Result: 1 file passed, 26 tests passed.
+Observed: 19 files passed, 1 skipped; 156 tests passed, 1 skipped; exit 0.
 
-Baseline server suite (before Task 2): without a token, six Task 1 tests fail because `GODOT_MCP_TOKEN` is required. With `GODOT_MCP_TOKEN=0123456789abcdef0123456789abcdef`: 10 files passed, 1 skipped; 75 tests passed, 1 skipped.
+Real Godot:
 
-## Blocker evidence
+`$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; node tests/godot/run-smoke.mjs`
 
-After implementation, two real-Godot parity invocations emitted no stdout or stderr and did not exit. One was allowed to exceed 30 seconds. Each left both the console wrapper and engine child alive:
+Observed: exit 0, including `PASS phase 3 edit controller foundation`, `PASS phase 3 undoable node tools`, and all prior/lifecycle smoke pass markers.
 
-- first run: PIDs 8536 (console), 6444 (engine), start 14:19:46
-- second run: PIDs 15448 (console), 17368 (engine), start 14:20:33
+## Self-review
 
-The four processes were terminated explicitly. `--version` on the same executable returned normally as `4.6.2.stable.mono.official.71f334935`. No `.godot` diagnostic files were produced in the worktree. Per task-owner direction, work stopped rather than weakening or bypassing the real-Godot shared-vector gate.
-
-## Root cause and fix
-
-A bounded rerun with stdout/stderr redirected exposed the output that the prior unbounded interactive runs had hidden. Godot 4.6.2 failed to compile `type_parse.gd` because three `:=` locals in `parse_variant_literal` were derived from a `Variant`, so GDScript could not infer their types (`text`, `hex`, and `open`). The parity script's `_init()` then attempted to call `parse_variant_literal` on the failed preload and the SceneTree process remained alive rather than reaching its final `quit()`.
-
-The minimal parser fix adds explicit `String`, `String`, and `int` annotations to those three locals. No parser behavior or parity expectation was weakened. `tests/godot/run-smoke.mjs` now runs the parity smoke and applies a 30-second timeout that terminates the full Windows process tree before reporting the failed invocation.
-
-RED evidence (bounded at 5 seconds): timeout with GDScript parse errors at `type_parse.gd:130`, `:133`, and `:138`, followed by `Nonexistent function 'parse_variant_literal'`; the process tree was killed.
-
-GREEN evidence using the same executable and invocation after the type annotations: exit 0 with `variant parity smoke: 15 valid, 10 invalid`.
-
-Final verification:
-
-- `node tests/godot/run-smoke.mjs`: exit 0; Phase 1, Phase 2 auth, variant parity, missing-token, and editor lifecycle smokes passed.
-- `npm test -- --run`: 12 files passed; 102 tests passed (including all 26 parser tests).
-- `npm run typecheck`: exit 0.
-- `npm run build`: exit 0.
-- `git diff --check`: exit 0 (line-ending conversion warning only).
-
-## Review hardening
-
-The follow-up review added identical traversal limits in both runtimes: maximum depth 32 with the root at depth 0, and maximum 10,000 visited nodes/elements. Parse overflow is `invalid_args`. Serialization uses path-scoped container identity tracking so cycles become canonical `UnknownVariant` descriptions while repeated noncyclic references remain ordinary values; depth and node overflow are also described rather than recursed into.
-
-The shared fixture now covers 17 valid and 17 invalid vectors, including escaped NodePaths, numeric grammar, exact tagged fields, and nonfinite values. Focused generated tests cover exact depth/node boundaries and overflow, prototype-sensitive dictionary keys, Array/Dictionary cycles, repeated references, Object/Node/Resource descriptions, and unsupported Variant fallback.
-
-Process supervision was extracted to `tests/godot/process-runner.mjs`. Windows cleanup uses `taskkill /T` with its own five-second deadline and preserves the original timeout on taskkill error/hang. Unix children start in a dedicated process group and timeout cleanup signals only that negative group PID.
-
-Review RED evidence:
-
-- `npx vitest run tests/type-parser.test.ts`: 2 failures; missing depth rejection and `RangeError: Maximum call stack size exceeded` on a cyclic Array.
-- Real Godot parity after the first new tests: rejected malformed number grammar incorrectly and could not produce a Node path while running in constructor-time `_init()`.
-- Process-runner race test: expected the original timeout but received `Godot exited with code 1` when tree termination emitted child exit before cleanup completed.
-
-Review GREEN evidence:
-
-- `npx vitest run tests/type-parser.test.ts`: 38 tests passed.
-- Real Godot parity: exit 0; 17 valid and 17 invalid shared vectors plus runtime serializer checks passed.
-- `node --test tests/godot/process-runner.test.mjs`: 4 tests passed.
-- `node tests/godot/run-smoke.mjs`: all five Godot smokes passed.
-- Full server: 12 files passed; 114 tests passed.
-- `npm run typecheck`, `npm run build`, and `git diff --check`: exit 0.
+- Scope is limited to the eight Task 2 tools; scene instancing and later-phase APIs were not added.
+- Read-only methods are exactly `get_path`, `get_child_count`, and `is_inside_tree`, and the public schema requires an empty argument tuple.
+- Mutation calls are serialized and invalidate scene plus affected-node tags; reads bypass the lane.
+- Live property lookup uses own Godot metadata iteration, so prototype-like JavaScript keys are not privileged.
+- Removed/duplicated subtrees are retained through UndoRedo references; reparent snapshots original parent/index/owner/global transform.
 
 ## Concerns
 
-Godot logs expected warnings while rejecting non-finite exponent fixtures, and the Mono editor smokes report the environment's missing .NET SDK plus existing shutdown RID-leak diagnostics. All smoke processes still exit 0, and neither warning affects the parity result.
+- The Mono editor reports a missing .NET 8.0.28 SDK and renderer/object leak warnings on shutdown; these are environment noise already present in the suite and do not affect exit status.
+- Later lifecycle scans can report a pre-existing global script-class cache collision (`GodotMCPTypeParse hides a global script class`) after repeatedly copying the addon in one runner invocation. The isolated Task 2 editor smoke compiles and passes, and the runner exits 0.

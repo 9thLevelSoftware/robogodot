@@ -21,14 +21,14 @@ describe("Phase 2 MCP tools", () => {
     const fixture = await harness();
     try {
       const { tools } = await fixture.client.listTools();
-      expect(tools.map((tool) => tool.name)).toEqual([
+      expect(tools.slice(0, 8).map((tool) => tool.name)).toEqual([
         "godot_connection_status", "godot_get_version", "godot_ping",
         "godot_script_run", "godot_api_list_classes", "godot_api_describe_class", "godot_api_search", "godot_api_class_doc",
       ]);
       expect(tools.some((tool) => tool.name === "run_editor_script")).toBe(false);
-      for (const tool of tools.slice(3)) expect(tool.inputSchema.additionalProperties).toBe(false);
+      for (const tool of tools.slice(3, 8)) expect(tool.inputSchema.additionalProperties).toBe(false);
       expect(tools[3]?.annotations).toEqual({ readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true });
-      for (const tool of tools.slice(4)) expect(tool.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+      for (const tool of tools.slice(4, 8)) expect(tool.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
     } finally { await fixture.close(); }
   });
 

@@ -30,6 +30,50 @@ func rename_node(node: Node, new_name: String, action_name: String) -> Dictionar
 	_last_history_target = node
 	return {"ok": true}
 
+func delete_node(node: Node, action_name: String) -> Dictionary:
+	if not is_instance_valid(node) or node.get_parent() == null:
+		return _failure("An attached node is required.")
+	var parent := node.get_parent()
+	var index := node.get_index()
+	_undo.create_action(action_name, UndoRedo.MERGE_DISABLE, parent)
+	_undo.add_do_method(parent, "remove_child", node)
+	_undo.add_undo_method(parent, "add_child", node, true)
+	_undo.add_undo_method(parent, "move_child", node, index)
+	_undo.add_undo_reference(node)
+	_undo.commit_action()
+	_last_history_target = parent
+	return {"ok": true}
+
+func reparent_node(node: Node, parent: Node, index: int, action_name: String) -> Dictionary:
+	if not is_instance_valid(node) or not is_instance_valid(parent) or node.get_parent() == null or node == parent or node.is_ancestor_of(parent):
+		return _failure("Valid non-cyclic node and parent are required.")
+	var old_parent := node.get_parent()
+	var old_index := node.get_index()
+	var old_owner := node.owner
+	var old_transform: Variant = node.global_transform if node is Node2D or node is Node3D else null
+	_undo.create_action(action_name, UndoRedo.MERGE_DISABLE, node)
+	_undo.add_do_method(node, "reparent", parent, true)
+	if index >= 0: _undo.add_do_method(parent, "move_child", node, mini(index, parent.get_child_count()))
+	_undo.add_do_property(node, "owner", old_owner)
+	_undo.add_undo_method(node, "reparent", old_parent, true)
+	_undo.add_undo_method(old_parent, "move_child", node, old_index)
+	_undo.add_undo_property(node, "owner", old_owner)
+	if node is Node2D or node is Node3D:
+		_undo.add_undo_property(node, "global_transform", old_transform)
+	_undo.commit_action()
+	_last_history_target = node
+	return {"ok": true}
+
+func duplicate_node(source: Node, parent: Node, duplicate_flags: int, requested_name: String, action_name: String) -> Dictionary:
+	if not is_instance_valid(source) or not is_instance_valid(parent):
+		return _failure("Valid source and parent nodes are required.")
+	var copy := source.duplicate(duplicate_flags)
+	if copy == null: return _failure("Godot could not duplicate the node.")
+	if not requested_name.is_empty(): copy.name = requested_name
+	var result := add_node(parent, copy, action_name)
+	if result.ok: result.node = copy
+	return result
+
 func set_property(target: Object, property: StringName, value: Variant, action_name: String) -> Dictionary:
 	if not is_instance_valid(target) or not _is_writable_property(target, property):
 		return _failure("A valid target and property are required.")
