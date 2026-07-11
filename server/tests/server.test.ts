@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import { createServer } from "../src/server.js";
 import { runServer } from "../src/index.js";
 
+process.env.GODOT_MCP_TOKEN ??= "0123456789abcdef0123456789abcdef";
+
 describe("createServer", () => {
   it("identifies as godot-control-mcp version 0.1.0", () => {
     const server = createServer({});

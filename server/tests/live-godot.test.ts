@@ -110,6 +110,21 @@ liveDescribe("live Godot editor round trip (set GODOT_PATH to enable)", () => {
       });
       expect(execResult.errors).toEqual([]);
       expect(execResult).toMatchObject({ ok: true, returnValue: { $type: "Color", r: 1, g: 0.5, b: 0.25, a: 1 } });
+      const created = await connectedClient.call<Record<string, unknown>>("exec.run", {
+        source: "func __run(args):\n\tvar node := Node.new()\n\tnode.name = args.name\n\tvar result := {\"class\": node.get_class(), \"name\": str(node.name)}\n\tnode.free()\n\treturn result",
+        args: { name: "McpAuthoredNode" }, outputCapBytes: 262_144,
+      });
+      expect(created).toMatchObject({ ok: true, returnValue: { class: "Node", name: "McpAuthoredNode" }, errors: [] });
+      const propertySet = await connectedClient.call<Record<string, unknown>>("exec.run", {
+        source: "func __run(args):\n\tvar node := Node2D.new()\n\tnode.position = Vector2(args.x, args.y)\n\tvar result := node.position\n\tnode.free()\n\treturn result",
+        args: { x: 12.5, y: -3 }, outputCapBytes: 262_144,
+      });
+      expect(propertySet).toMatchObject({ ok: true, returnValue: { $type: "Vector2", x: 12.5, y: -3 }, errors: [] });
+      const settingRead = await connectedClient.call<Record<string, unknown>>("exec.run", {
+        source: "func __run(args):\n\treturn ProjectSettings.get_setting(args.key)",
+        args: { key: "application/config/name" }, outputCapBytes: 262_144,
+      });
+      expect(settingRead).toMatchObject({ ok: true, returnValue: "Godot Control MCP Live", errors: [] });
       const classes = await connectedClient.call<{ classes: string[]; total: number; hasMore: boolean }>("introspection.list_classes", { offset: 0, limit: 10 });
       expect(classes.classes).toHaveLength(10);
       expect(classes.total).toBeGreaterThan(10);
