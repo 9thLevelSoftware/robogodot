@@ -1,6 +1,7 @@
+import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, expect, test, vi } from "vitest";
-import { captureBoundedOutput, launchWithPortRetry } from "./live-support.js";
+import { captureBoundedOutput, launchWithPortRetry, liveTimeoutBudget, waitForProcessConnection } from "./live-support.js";
 
 describe("live Godot process support", () => {
   test("continuously drains output while retaining only the bounded diagnostic tail", () => {
@@ -15,32 +16,74 @@ describe("live Godot process support", () => {
     expect(stderr.listenerCount("data")).toBe(0);
   });
 
-  test("reaps a failed launch and retries with a fresh OS-assigned port", async () => {
+  test("slices an oversized incoming chunk before concatenation", () => {
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const capture = captureBoundedOutput(stdout, stderr, 4);
+    stdout.write(Buffer.alloc(1_000_000, "x"));
+    expect(capture.diagnostics()).toContain("stdout: xxxx");
+    capture.dispose();
+  });
+
+  test("reaps a classified bind collision and retries with a fresh OS-assigned port", async () => {
     const terminate = vi.fn(async () => undefined);
     const ports = [41001, 41002];
     const result = await launchWithPortRetry({
       attempts: 2,
       allocatePort: async () => ports.shift()!,
-      launch: (port) => ({ port }),
+      launch: (port) => ({ port, diagnostics: port === 41001 ? "Godot could not listen: address already in use" : "" }),
       waitUntilConnected: async (process) => {
-        if (process.port === 41001) throw new Error("bind collision: address already in use");
+        if (process.port === 41001) throw new Error("connection timed out");
       },
       terminate,
-      diagnostics: (process) => `port=${process.port}`,
+      diagnostics: (process) => process.diagnostics,
+      shouldRetry: (_error, process) => process.diagnostics.includes("address already in use"),
     });
-    expect(result).toEqual({ port: 41002 });
+    expect(result).toEqual({ port: 41002, diagnostics: "" });
     expect(terminate).toHaveBeenCalledOnce();
-    expect(terminate).toHaveBeenCalledWith({ port: 41001 });
+    expect(terminate).toHaveBeenCalledWith({ port: 41001, diagnostics: "Godot could not listen: address already in use" });
   });
 
-  test("reports all bounded launch diagnostics after the exact retry count", async () => {
+  test("does not retry a generic plugin failure and cleans up once", async () => {
+    const terminate = vi.fn(async () => undefined);
+    const allocatePort = vi.fn(async () => 42000);
     await expect(launchWithPortRetry({
-      attempts: 2,
-      allocatePort: async () => 42000,
+      attempts: 3,
+      allocatePort,
       launch: (port) => ({ port }),
       waitUntilConnected: async () => { throw new Error("plugin unavailable"); },
-      terminate: async () => undefined,
+      terminate,
       diagnostics: () => "stderr: listen failed",
-    })).rejects.toThrow("attempt 2/2: plugin unavailable\nstderr: listen failed");
+      shouldRetry: () => false,
+    })).rejects.toThrow("attempt 1/3: plugin unavailable\nstderr: listen failed");
+    expect(allocatePort).toHaveBeenCalledOnce();
+    expect(terminate).toHaveBeenCalledOnce();
+  });
+
+  test("turns a spawn error into a controlled diagnostic failure", async () => {
+    const child = new EventEmitter() as EventEmitter & { exitCode: number | null };
+    child.exitCode = null;
+    const pending = waitForProcessConnection({ child, isConnected: () => false, diagnostics: () => "stderr: bad path", timeoutMs: 1_000 });
+    child.emit("error", new Error("spawn ENOENT"));
+    await expect(pending).rejects.toThrow("Could not launch Godot: spawn ENOENT\nstderr: bad path");
+    expect(child.listenerCount("error")).toBe(0);
+    expect(child.listenerCount("exit")).toBe(0);
+  });
+
+  test("fails immediately when Godot exits before connecting", async () => {
+    const child = new EventEmitter() as EventEmitter & { exitCode: number | null };
+    child.exitCode = null;
+    const started = Date.now();
+    const pending = waitForProcessConnection({ child, isConnected: () => false, diagnostics: () => "stdout: parse error", timeoutMs: 5_000 });
+    child.exitCode = 1;
+    child.emit("exit", 1);
+    await expect(pending).rejects.toThrow("Godot exited with code 1 before connecting\nstdout: parse error");
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  test("outer timeout budget exceeds every reachable internal deadline", () => {
+    const budget = liveTimeoutBudget({ attempts: 3, connectMs: 5_000, terminateMs: 7_000, reconnectMs: 20_000, marginMs: 5_000 });
+    expect(budget).toBe(68_000);
+    expect(budget).toBeGreaterThan(3 * (5_000 + 7_000) + 20_000 + 7_000);
   });
 });

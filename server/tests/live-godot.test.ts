@@ -9,11 +9,16 @@ import { describe, expect, test } from "vitest";
 import { JsonRpcClient } from "../src/bridge/ws-client.js";
 import { GodotMcpError } from "../src/errors.js";
 import { createLogger } from "../src/logger.js";
-import { captureBoundedOutput, launchWithPortRetry, type OutputCapture } from "./live-support.js";
+import { captureBoundedOutput, launchWithPortRetry, liveTimeoutBudget, waitForProcessConnection, type OutputCapture } from "./live-support.js";
 
 const godotPath = process.env.GODOT_PATH;
 const liveDescribe = godotPath ? describe : describe.skip;
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const LAUNCH_ATTEMPTS = 3;
+const CONNECT_TIMEOUT_MS = 10_000;
+const TERMINATE_TIMEOUT_MS = 5_000;
+const RECONNECT_TIMEOUT_MS = 20_000;
+const LIVE_TEST_TIMEOUT_MS = liveTimeoutBudget({ attempts: LAUNCH_ATTEMPTS, connectMs: CONNECT_TIMEOUT_MS, terminateMs: TERMINATE_TIMEOUT_MS, reconnectMs: RECONNECT_TIMEOUT_MS, marginMs: 5_000 });
 
 async function freePort(): Promise<number> {
   const server = createServer();
@@ -34,7 +39,7 @@ async function waitFor(predicate: () => boolean, message: string | (() => string
   }
 }
 
-interface GodotProcess { child: ChildProcess; capture: OutputCapture; port: number }
+interface GodotProcess { child: ChildProcess; capture: OutputCapture; port: number; disposeCapture(): void }
 
 function launchGodot(projectPath: string, port: number): GodotProcess {
   const child = spawn(godotPath!, ["--headless", "--editor", "--path", projectPath], {
@@ -44,25 +49,29 @@ function launchGodot(projectPath: string, port: number): GodotProcess {
   });
   if (!child.stdout || !child.stderr) throw new Error("Godot diagnostic pipes were not created");
   const capture = captureBoundedOutput(child.stdout, child.stderr);
-  child.once("exit", () => capture.dispose());
-  return { child, capture, port };
+  const onExit = () => capture.dispose();
+  child.once("exit", onExit);
+  return { child, capture, port, disposeCapture: () => { child.off("exit", onExit); capture.dispose(); } };
 }
 
-async function terminate(process: GodotProcess | undefined): Promise<void> {
-  if (!process) return;
-  const { child } = process;
-  if (child.exitCode !== null) { process.capture.dispose(); return; }
-  const exited = new Promise<void>((resolveExit) => child.once("exit", () => resolveExit()));
-  child.kill();
-  await Promise.race([exited, new Promise((resolveWait) => setTimeout(resolveWait, 5_000))]);
-  if (child.exitCode === null) {
-    if (process.platform === "win32" && child.pid) {
-      const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore", windowsHide: true });
-      await once(killer, "exit");
-    } else child.kill("SIGKILL");
-    await Promise.race([exited, new Promise((_, reject) => setTimeout(() => reject(new Error("Godot did not terminate")), 5_000))]);
+async function terminate(managed: GodotProcess | undefined): Promise<void> {
+  if (!managed) return;
+  const { child } = managed;
+  if (child.exitCode !== null || child.pid === undefined) { managed.disposeCapture(); return; }
+  try {
+    const exited = new Promise<void>((resolveExit) => child.once("exit", () => resolveExit()));
+    child.kill();
+    await Promise.race([exited, new Promise((resolveWait) => setTimeout(resolveWait, 1_500))]);
+    if (child.exitCode === null) {
+      if (process.platform === "win32" && child.pid) {
+        const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore", windowsHide: true });
+        await Promise.race([once(killer, "exit"), new Promise((resolveWait) => setTimeout(resolveWait, 1_500))]);
+      } else child.kill("SIGKILL");
+      await Promise.race([exited, new Promise((_, reject) => setTimeout(() => reject(new Error("Godot did not terminate")), 2_000))]);
+    }
+  } finally {
+    managed.disposeCapture();
   }
-  process.capture.dispose();
 }
 
 liveDescribe("live Godot editor round trip (set GODOT_PATH to enable)", () => {
@@ -76,16 +85,17 @@ liveDescribe("live Godot editor round trip (set GODOT_PATH to enable)", () => {
       await writeFile(join(projectPath, "project.godot"), '[application]\nconfig/name="Godot Control MCP Live"\n[editor_plugins]\nenabled=PackedStringArray("res://addons/godot_control_mcp/plugin.cfg")\n');
 
       process = await launchWithPortRetry({
-        attempts: 3,
+        attempts: LAUNCH_ATTEMPTS,
         allocatePort: freePort,
         launch: (port) => {
           client = new JsonRpcClient({ url: `ws://127.0.0.1:${port}`, logger: createLogger("error"), heartbeatIntervalMs: 250, heartbeatTimeoutMs: 250 });
           client.start();
           return launchGodot(projectPath, port);
         },
-        waitUntilConnected: async () => waitFor(() => client!.getStatus().state === "connected", "plugin connection window expired (possible bind collision)", 5_000),
+        waitUntilConnected: async (launch) => waitForProcessConnection({ child: launch.child, isConnected: () => client!.getStatus().state === "connected", diagnostics: () => launch.capture.diagnostics(), timeoutMs: CONNECT_TIMEOUT_MS }),
         terminate: async (failed) => { client?.stop(); client = undefined; await terminate(failed); },
         diagnostics: (failed) => failed.capture.diagnostics(),
+        shouldRetry: (_error, failed) => /address already in use|ERR_ALREADY_IN_USE|could not listen[^\n]*error 22/i.test(failed.capture.diagnostics()),
       });
       const port = process.port;
       const connectedClient = client!;
@@ -100,12 +110,12 @@ liveDescribe("live Godot editor round trip (set GODOT_PATH to enable)", () => {
       await expect(connectedClient.call("core.ping")).rejects.toMatchObject<Partial<GodotMcpError>>({ code: "not_connected" });
 
       process = launchGodot(projectPath, port);
-      await waitFor(() => connectedClient.getStatus().state === "connected", () => `Client did not reconnect after editor restart\n${process!.capture.diagnostics()}`, 20_000);
+      await waitForProcessConnection({ child: process.child, isConnected: () => connectedClient.getStatus().state === "connected", diagnostics: () => process!.capture.diagnostics(), timeoutMs: RECONNECT_TIMEOUT_MS });
       await expect(connectedClient.call("core.ping")).resolves.toEqual({ pong: true });
     } finally {
       client?.stop();
       await terminate(process);
       await rm(projectPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
     }
-  }, 60_000);
+  }, LIVE_TEST_TIMEOUT_MS);
 });
