@@ -164,6 +164,11 @@ static func _is_ancestor(value: Variant, ancestors: Array) -> bool:
 		if is_same(ancestor, value): return true
 	return false
 
+static func _all_finite(values: Array) -> bool:
+	for value in values:
+		if not is_finite(float(value)): return false
+	return true
+
 static func _serialize(value: Variant, state: Dictionary, depth: int, ancestors: Array) -> Variant:
 	if depth > MAX_VARIANT_DEPTH: return _unknown("depth overflow", "maximum depth %d" % MAX_VARIANT_DEPTH)
 	state.nodes += 1
@@ -176,14 +181,18 @@ static func _serialize(value: Variant, state: Dictionary, depth: int, ancestors:
 		TYPE_FLOAT:
 			return value if is_finite(value) else _unknown("nonfinite number", str(value))
 		TYPE_VECTOR2:
+			if not _all_finite([value.x, value.y]): return _unknown("Vector2", str(value))
 			return {TAG: "Vector2", "x": value.x, "y": value.y}
 		TYPE_VECTOR3:
+			if not _all_finite([value.x, value.y, value.z]): return _unknown("Vector3", str(value))
 			return {TAG: "Vector3", "x": value.x, "y": value.y, "z": value.z}
 		TYPE_COLOR:
+			if not _all_finite([value.r, value.g, value.b, value.a]): return _unknown("Color", str(value))
 			return {TAG: "Color", "r": _color_number(value.r), "g": _color_number(value.g), "b": _color_number(value.b), "a": _color_number(value.a)}
 		TYPE_NODE_PATH:
 			return {TAG: "NodePath", "path": str(value)}
 		TYPE_RECT2:
+			if not _all_finite([value.position.x, value.position.y, value.size.x, value.size.y]): return _unknown("Rect2", str(value))
 			return {TAG: "Rect2", "x": value.position.x, "y": value.position.y, "width": value.size.x, "height": value.size.y}
 		TYPE_ARRAY:
 			ancestors.append(value)

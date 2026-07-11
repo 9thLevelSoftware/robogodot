@@ -62,6 +62,26 @@ func _run() -> void:
 	if resource_uid != ResourceUID.INVALID_ID and resource_description.get("uid") != ResourceUID.id_to_text(resource_uid): failures.append("Resource description must include UID when supported")
 	var unsupported: Dictionary = TypeParse.serialize_variant(RID())
 	if unsupported.get("$type") != "UnknownVariant" or unsupported.get("variantType") == "": failures.append("unsupported Variant must be described")
+	for nonfinite in [NAN, INF, -INF]:
+		var cases: Array[Dictionary] = [
+			{"name": "Vector2.x", "type": "Vector2", "value": Vector2(nonfinite, 1.0)},
+			{"name": "Vector2.y", "type": "Vector2", "value": Vector2(1.0, nonfinite)},
+			{"name": "Vector3.x", "type": "Vector3", "value": Vector3(nonfinite, 1.0, 2.0)},
+			{"name": "Vector3.y", "type": "Vector3", "value": Vector3(1.0, nonfinite, 2.0)},
+			{"name": "Vector3.z", "type": "Vector3", "value": Vector3(1.0, 2.0, nonfinite)},
+			{"name": "Color.r", "type": "Color", "value": Color(nonfinite, 0.25, 0.5, 1.0)},
+			{"name": "Color.g", "type": "Color", "value": Color(0.25, nonfinite, 0.5, 1.0)},
+			{"name": "Color.b", "type": "Color", "value": Color(0.25, 0.5, nonfinite, 1.0)},
+			{"name": "Color.a", "type": "Color", "value": Color(0.25, 0.5, 1.0, nonfinite)},
+			{"name": "Rect2.x", "type": "Rect2", "value": Rect2(nonfinite, 1.0, 2.0, 3.0)},
+			{"name": "Rect2.y", "type": "Rect2", "value": Rect2(1.0, nonfinite, 2.0, 3.0)},
+			{"name": "Rect2.width", "type": "Rect2", "value": Rect2(1.0, 2.0, nonfinite, 3.0)},
+			{"name": "Rect2.height", "type": "Rect2", "value": Rect2(1.0, 2.0, 3.0, nonfinite)},
+		]
+		for case in cases:
+			var serialized: Dictionary = TypeParse.serialize_variant(case.value)
+			if serialized.get("$type") != "UnknownVariant" or serialized.get("variantType") != case.type:
+				failures.append("%s with %s must serialize as UnknownVariant: %s" % [case.name, str(nonfinite), serialized])
 	if not failures.is_empty():
 		for failure in failures:
 			push_error(failure)

@@ -30,6 +30,6 @@ func _run() -> void:
 			break
 		await process_frame
 	_check(tcp.get_status() != StreamPeerTCP.STATUS_CONNECTED, "plugin without token must not open a listener")
-	EditorInterface.set_plugin_enabled(plugin_path, false)
-	print("PASS missing token disables plugin listener")
+	_check(EditorInterface.is_plugin_enabled(plugin_path), "missing-token smoke must leave the plugin enabled for the lifecycle smoke")
+	print("PASS missing token disables listener and leaves plugin enabled")
 	quit(0 if failures.is_empty() else 1)

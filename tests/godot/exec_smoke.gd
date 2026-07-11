@@ -28,6 +28,30 @@ func _init() -> void:
 	assert(capped.result.truncated)
 	assert(capped.result.stdout.to_utf8_buffer().size() <= 5)
 	assert(capped.result.stdout == "éé")
+	var exact_logger := Exec.CaptureLogger.new()
+	exact_logger.cap_bytes = 4
+	var exact_capture := exact_logger._append_bounded("AéZ")
+	assert(exact_capture == "AéZ")
+	assert(exact_capture.to_utf8_buffer().size() == 4 and exact_logger.used_bytes == 4)
+	assert(not exact_logger.truncated)
+	var partial_logger := Exec.CaptureLogger.new()
+	partial_logger.cap_bytes = 2
+	var partial_capture := partial_logger._append_bounded("AéZ")
+	assert(partial_capture == "A")
+	assert(partial_capture.to_utf8_buffer().size() == 1 and partial_logger.used_bytes == 1)
+	assert(partial_logger.truncated)
+	var redaction_logger := Exec.CaptureLogger.new()
+	for preserved in ["res://addons/example.gd", "user://cache/example.log", "/root/Main/Camera3D", "https://example.com/home/user", "res://home/example.gd", "user://tmp/example.log"]:
+		assert(redaction_logger._redact(preserved) == preserved)
+	var globalized_project_file := ProjectSettings.globalize_path("res://addons/example.gd")
+	assert(redaction_logger._redact(globalized_project_file) == "res://addons/example.gd")
+	for host_path in ["C:\\Users\\secret\\example.gd", "D:/work/private/example.gd", "\\\\server\\share\\example.gd", "/Users/secret/example.gd", "/home/secret/example.gd", "/tmp/secret/example.gd", "/var/secret/example.gd", "/private/secret/example.gd"]:
+		assert(redaction_logger._redact(host_path) == "[host-path]")
+	var large_logger := Exec.CaptureLogger.new()
+	large_logger.cap_bytes = 4097
+	var large_capture := large_logger._append_bounded("é".repeat(200000))
+	assert(large_capture.to_utf8_buffer().size() == 4096 and large_logger.used_bytes == 4096)
+	assert(large_logger.truncated)
 	var stress_logger := Exec.CaptureLogger.new()
 	stress_logger.cap_bytes = 4096
 	stress_logger._log_error("fn", "/home/secret/project/x.gd", 1, "", "/home/secret/token", false, 0, [])

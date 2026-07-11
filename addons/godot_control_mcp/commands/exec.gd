@@ -17,16 +17,18 @@ class CaptureLogger extends Logger:
 	var mutex := Mutex.new()
 
 	func _append_bounded(text: String) -> String:
-		var output := ""
-		for character in text:
-			var size := character.to_utf8_buffer().size()
-			if used_bytes + size > cap_bytes:
-				truncated = true
-				break
-			output += character
-			used_bytes += size
-		if output.length() < text.length(): truncated = true
-		return output
+		var bytes := text.to_utf8_buffer()
+		var remaining := maxi(0, cap_bytes - used_bytes)
+		if bytes.size() <= remaining:
+			used_bytes += bytes.size()
+			return text
+		truncated = true
+		var end := remaining
+		while end > 0 and (bytes[end] & 0xc0) == 0x80:
+			end -= 1
+		if end == 0: return ""
+		used_bytes += end
+		return bytes.slice(0, end).get_string_from_utf8()
 
 	func _log_message(message: String, error: bool) -> void:
 		var normalized := _redact(message)
@@ -51,12 +53,16 @@ class CaptureLogger extends Logger:
 
 	func _redact(text: String) -> String:
 		var project_path := ProjectSettings.globalize_path("res://").trim_suffix("/").trim_suffix("\\")
-		var redacted := text.replace(project_path, "res://") if not project_path.is_empty() else text
-		var windows_path := RegEx.create_from_string("[A-Za-z]:[\\\\/][^\\s]+")
+		var redacted := text
+		if not project_path.is_empty():
+			redacted = redacted.replace(project_path + "/", "res://")
+			redacted = redacted.replace(project_path + "\\", "res://")
+			if redacted == project_path: redacted = "res://"
+		var windows_path := RegEx.create_from_string("(?<![A-Za-z0-9_])[A-Za-z]:[\\\\/][^\\s]+")
 		redacted = windows_path.sub(redacted, "[host-path]", true)
-		var unc_path := RegEx.create_from_string("\\\\\\\\[^\\s\\\\]+\\\\[^\\s]+")
+		var unc_path := RegEx.create_from_string("(?<![A-Za-z0-9_:])(?:\\\\\\\\|//)[^\\s\\\\/]+[\\\\/][^\\s]+")
 		redacted = unc_path.sub(redacted, "[host-path]", true)
-		var unix_path := RegEx.create_from_string("/(?:Users|home|tmp|var|private|root)/[^\\s]+")
+		var unix_path := RegEx.create_from_string("(?<![A-Za-z0-9_:/])/(?:Users|home|tmp|var|private)(?=/|\\s|$)[^\\s]*")
 		return unix_path.sub(redacted, "[host-path]", true)
 
 static func _finish(result: Dictionary, started: int) -> Dictionary:
