@@ -19,6 +19,7 @@ const CONNECT_TIMEOUT_MS = 10_000;
 const TERMINATE_TIMEOUT_MS = 5_000;
 const RECONNECT_TIMEOUT_MS = 20_000;
 const LIVE_TEST_TIMEOUT_MS = liveTimeoutBudget({ attempts: LAUNCH_ATTEMPTS, connectMs: CONNECT_TIMEOUT_MS, terminateMs: TERMINATE_TIMEOUT_MS, reconnectMs: RECONNECT_TIMEOUT_MS, marginMs: 5_000 });
+const TOKEN = "0123456789abcdef0123456789abcdef";
 
 async function freePort(): Promise<number> {
   const server = createServer();
@@ -43,7 +44,7 @@ interface GodotProcess { child: ChildProcess; capture: OutputCapture; port: numb
 
 function launchGodot(projectPath: string, port: number): GodotProcess {
   const child = spawn(godotPath!, ["--headless", "--editor", "--path", projectPath], {
-    env: { ...process.env, GODOT_MCP_PORT: String(port) },
+    env: { ...process.env, GODOT_MCP_PORT: String(port), GODOT_MCP_TOKEN: TOKEN },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
@@ -88,7 +89,7 @@ liveDescribe("live Godot editor round trip (set GODOT_PATH to enable)", () => {
         attempts: LAUNCH_ATTEMPTS,
         allocatePort: freePort,
         launch: (port) => {
-          client = new JsonRpcClient({ url: `ws://127.0.0.1:${port}`, logger: createLogger("error"), heartbeatIntervalMs: 250, heartbeatTimeoutMs: 250 });
+          client = new JsonRpcClient({ url: `ws://127.0.0.1:${port}`, token: TOKEN, logger: createLogger("error"), heartbeatIntervalMs: 250, heartbeatTimeoutMs: 250 });
           client.start();
           return launchGodot(projectPath, port);
         },

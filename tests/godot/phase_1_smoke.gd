@@ -5,6 +5,7 @@ const Server = preload("../../addons/godot_control_mcp/ws_server.gd")
 const Core = preload("../../addons/godot_control_mcp/commands/core.gd")
 const Plugin = preload("../../addons/godot_control_mcp/plugin.gd")
 const PORT := 19200
+const TOKEN := "0123456789abcdef0123456789abcdef"
 
 var failures: Array[String] = []
 
@@ -50,7 +51,7 @@ func _run() -> void:
 
 	var server = Server.new()
 	root.add_child(server)
-	_check(server.start(PORT, router) == OK, "server must listen")
+	_check(server.start(PORT, router, TOKEN) == OK, "server must listen")
 	var client := WebSocketPeer.new()
 	_check(client.connect_to_url("ws://127.0.0.1:%d" % PORT) == OK, "client must connect")
 	for ignored in range(120):
@@ -59,6 +60,8 @@ func _run() -> void:
 			break
 		await process_frame
 	_check(client.get_ready_state() == WebSocketPeer.STATE_OPEN, "websocket must open")
+	var auth := await _request(client, '{"jsonrpc":"2.0","id":"auth-id","method":"auth.authenticate","params":{"token":"%s"}}' % TOKEN)
+	_check(auth.id == "auth-id" and auth.result.authenticated == true, "client must authenticate")
 
 	var ping := await _request(client, '{"jsonrpc":"2.0","id":"ping-id","method":"core.ping","params":{}}')
 	_check(ping.id == "ping-id" and ping.result.pong == true, "ping must echo id and pong")

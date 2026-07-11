@@ -20,17 +20,53 @@ function harness(options: Record<string, unknown> = {}) {
   const sockets: FakeSocket[] = [];
   const log = logger();
   const client = new JsonRpcClient({
-    url: "ws://127.0.0.1:9080", logger: log,
+    url: "ws://127.0.0.1:9080", token: "0123456789abcdef0123456789abcdef", logger: log,
     webSocketFactory: () => { const socket = new FakeSocket(); sockets.push(socket); return socket; },
     heartbeatIntervalMs: 30_000, heartbeatTimeoutMs: 5_000, ...options,
   });
   return { client, sockets, log };
 }
 function request(socket: FakeSocket, index = -1) { return JSON.parse(socket.sent.at(index)!); }
+function authenticate(socket: FakeSocket) {
+  socket.open();
+  socket.message(JSON.stringify({ jsonrpc: "2.0", id: 0, result: { authenticated: true } }));
+}
 
 afterEach(() => { vi.useRealTimers(); });
 
 describe("JsonRpcClient", () => {
+  it("authenticates before becoming connected or allowing command calls", async () => {
+    const { client, sockets } = harness();
+    client.start(); sockets[0]!.open();
+    expect(client.getStatus().state).toBe("connecting");
+    expect(request(sockets[0]!)).toEqual({
+      jsonrpc: "2.0", id: 0, method: "auth.authenticate",
+      params: { token: "0123456789abcdef0123456789abcdef" },
+    });
+    await expect(client.call("core.ping")).rejects.toMatchObject({ code: "not_connected" });
+    sockets[0]!.message(JSON.stringify({ jsonrpc: "2.0", id: 0, result: { authenticated: true } }));
+    expect(client.getStatus().state).toBe("connected");
+    client.stop();
+  });
+
+  it("closes and reconnects when authentication is rejected", async () => {
+    const { client, sockets } = harness();
+    client.start(); sockets[0]!.open();
+    sockets[0]!.message(JSON.stringify({ jsonrpc: "2.0", id: 0, error: { code: -32001, message: "Authentication failed" } }));
+    expect(sockets[0]!.readyState).toBe(3);
+    expect(client.getStatus()).toMatchObject({ state: "reconnecting" });
+    client.stop();
+  });
+
+  it("closes and reconnects when authentication receives no response", async () => {
+    vi.useFakeTimers();
+    const { client, sockets } = harness({ heartbeatTimeoutMs: 50 });
+    client.start(); sockets[0]!.open();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(sockets[0]!.readyState).toBe(3);
+    expect(client.getStatus()).toMatchObject({ state: "reconnecting", lastError: "Editor authentication timed out" });
+    client.stop();
+  });
   it("unrefs call, heartbeat, heartbeat-call, and reconnect timers when supported", async () => {
     const timeoutCallbacks: Array<() => void> = [];
     const intervalCallbacks: Array<() => void> = [];
@@ -42,7 +78,7 @@ describe("JsonRpcClient", () => {
     vi.spyOn(globalThis, "setInterval").mockImplementation(((callback: () => void) => {
       intervalCallbacks.push(callback); const unref = vi.fn(); intervalUnrefs.push(unref); return { unref };
     }) as typeof setInterval);
-    const { client, sockets } = harness(); client.start(); sockets[0]!.open();
+    const { client, sockets } = harness(); client.start(); authenticate(sockets[0]!);
     const userCall = client.call("work");
     expect(intervalUnrefs[0]).toHaveBeenCalledOnce();
     expect(timeoutUnrefs[0]).toHaveBeenCalledOnce();
@@ -55,10 +91,10 @@ describe("JsonRpcClient", () => {
   });
 
   it("uses strict requests with increasing IDs and correlates out of order", async () => {
-    const { client, sockets } = harness(); client.start(); sockets[0]!.open();
+    const { client, sockets } = harness(); client.start(); authenticate(sockets[0]!);
     const first = client.call<string>("first", { x: 1 });
     const second = client.call<string>("second");
-    expect(sockets[0]!.sent.map(JSON.parse)).toEqual([
+    expect(sockets[0]!.sent.slice(1).map(JSON.parse)).toEqual([
       { jsonrpc: "2.0", id: 1, method: "first", params: { x: 1 } },
       { jsonrpc: "2.0", id: 2, method: "second" },
     ]);
@@ -68,14 +104,14 @@ describe("JsonRpcClient", () => {
   });
 
   it("decodes ws text frames delivered as buffers", async () => {
-    const { client, sockets } = harness(); client.start(); sockets[0]!.open();
+    const { client, sockets } = harness(); client.start(); authenticate(sockets[0]!);
     const pending = client.call<string>("buffered");
     sockets[0]!.rawText(JSON.stringify({ jsonrpc: "2.0", id: 1, result: "ok" }));
     await expect(pending).resolves.toBe("ok"); client.stop();
   });
 
   it("ignores malformed, binary, notifications and unknown IDs with warnings", async () => {
-    const { client, sockets, log } = harness(); client.start(); sockets[0]!.open();
+    const { client, sockets, log } = harness(); client.start(); authenticate(sockets[0]!);
     const pending = client.call("work");
     sockets[0]!.message("garbage"); sockets[0]!.message(Buffer.from("{}"));
     sockets[0]!.message(JSON.stringify({ jsonrpc: "2.0", method: "notice" }));
@@ -86,7 +122,7 @@ describe("JsonRpcClient", () => {
   });
 
   it("maps JSON-RPC errors and call timeouts to stable errors with cleanup", async () => {
-    vi.useFakeTimers(); const { client, sockets } = harness(); client.start(); sockets[0]!.open();
+    vi.useFakeTimers(); const { client, sockets } = harness(); client.start(); authenticate(sockets[0]!);
     const remote = client.call("bad");
     sockets[0]!.message(JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32602, message: "bad args", data: { hint: "fix it" } } }));
     await expect(remote).rejects.toMatchObject({ name: "GodotMcpError", code: "godot_error", message: "bad args", hint: "fix it" });
@@ -100,14 +136,14 @@ describe("JsonRpcClient", () => {
   it("rejects calls when disconnected and every pending call once on close", async () => {
     const { client, sockets } = harness();
     await expect(client.call("nope")).rejects.toBeInstanceOf(GodotMcpError);
-    client.start(); sockets[0]!.open(); const a = client.call("a"); const b = client.call("b");
+    client.start(); authenticate(sockets[0]!); const a = client.call("a"); const b = client.call("b");
     const aa = expect(a).rejects.toMatchObject({ code: "not_connected" });
     const bb = expect(b).rejects.toMatchObject({ code: "not_connected" });
     sockets[0]!.close(); await aa; await bb; client.stop();
   });
 
   it("settles once when response, timeout, and duplicate close compete", async () => {
-    vi.useFakeTimers(); const { client, sockets } = harness(); client.start(); sockets[0]!.open();
+    vi.useFakeTimers(); const { client, sockets } = harness(); client.start(); authenticate(sockets[0]!);
     let settlements = 0;
     const call = client.call<string>("race", undefined, { timeoutMs: 20 }).then(
       (value) => { settlements++; return value; },
@@ -122,7 +158,7 @@ describe("JsonRpcClient", () => {
 
   it("ignores error and close events from a stale replaced socket", async () => {
     vi.useFakeTimers(); const { client, sockets } = harness(); client.start(); sockets[0]!.fail();
-    await vi.advanceTimersByTimeAsync(1000); sockets[1]!.open();
+    await vi.advanceTimersByTimeAsync(1000); authenticate(sockets[1]!);
     const call = client.call<string>("current");
     sockets[0]!.emit("error", new Error("stale")); sockets[0]!.emit("close");
     expect(client.getStatus()).toMatchObject({ state: "connected", lastError: undefined });
@@ -146,7 +182,7 @@ describe("JsonRpcClient", () => {
   it("resets reconnect attempts after open and reports status snapshots", async () => {
     vi.useFakeTimers(); const { client, sockets } = harness(); client.start(); sockets[0]!.fail();
     expect(client.getStatus()).toMatchObject({ state: "reconnecting", reconnectAttempt: 1, url: "ws://127.0.0.1:9080" });
-    await vi.advanceTimersByTimeAsync(1000); sockets[1]!.open();
+    await vi.advanceTimersByTimeAsync(1000); authenticate(sockets[1]!);
     expect(client.getStatus()).toMatchObject({ state: "connected", reconnectAttempt: 0, lastError: undefined });
     expect(client.getStatus().connectedSince).toEqual(expect.any(String));
     sockets[1]!.close(); await vi.advanceTimersByTimeAsync(999); expect(sockets).toHaveLength(2);
@@ -155,16 +191,16 @@ describe("JsonRpcClient", () => {
 
   it("uses non-overlapping core.ping calls for heartbeat and accepts success", async () => {
     vi.useFakeTimers(); const { client, sockets } = harness({ heartbeatIntervalMs: 100, heartbeatTimeoutMs: 40 });
-    client.start(); sockets[0]!.open(); await vi.advanceTimersByTimeAsync(100);
+    client.start(); authenticate(sockets[0]!); await vi.advanceTimersByTimeAsync(100);
     expect(request(sockets[0]!).method).toBe("core.ping");
-    await vi.advanceTimersByTimeAsync(20); expect(sockets[0]!.sent).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(20); expect(sockets[0]!.sent).toHaveLength(2);
     sockets[0]!.message(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { pong: true } }));
-    await vi.advanceTimersByTimeAsync(80); expect(sockets[0]!.sent).toHaveLength(2); client.stop();
+    await vi.advanceTimersByTimeAsync(80); expect(sockets[0]!.sent).toHaveLength(3); client.stop();
   });
 
   it("closes and reconnects after a missed heartbeat, while stop prevents reconnect", async () => {
     vi.useFakeTimers(); const { client, sockets } = harness({ heartbeatIntervalMs: 100, heartbeatTimeoutMs: 40 });
-    client.start(); sockets[0]!.open(); await vi.advanceTimersByTimeAsync(140);
+    client.start(); authenticate(sockets[0]!); await vi.advanceTimersByTimeAsync(140);
     expect(sockets[0]!.readyState).toBe(3); expect(client.getStatus().state).toBe("reconnecting");
     client.stop(); await vi.advanceTimersByTimeAsync(60_000); expect(sockets).toHaveLength(1); expect(vi.getTimerCount()).toBe(0);
   });

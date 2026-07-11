@@ -30,10 +30,11 @@ async function freePort() {
 
 try {
   await run(["--headless", "--path", root, "--script", "tests/godot/phase_1_smoke.gd"]);
+  await run(["--headless", "--path", root, "--script", "tests/godot/phase_2_auth_smoke.gd"]);
   await cp(resolve(root, "addons/godot_control_mcp"), fixtureAddon, { recursive: true });
   const lifecyclePort = process.env.GODOT_MCP_SMOKE_PORT ?? String(await freePort());
   if (!/^\d+$/.test(lifecyclePort) || Number(lifecyclePort) < 1 || Number(lifecyclePort) > 65535) throw new Error("GODOT_MCP_SMOKE_PORT must be an integer from 1 to 65535");
-  await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/editor_plugin_lifecycle_smoke.gd")], { ...process.env, GODOT_MCP_PORT: lifecyclePort });
+  await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/editor_plugin_lifecycle_smoke.gd")], { ...process.env, GODOT_MCP_PORT: lifecyclePort, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" });
 } finally {
   await rm(resolve(root, "tests/fixtures/godot_project/addons"), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   await rm(resolve(root, "tests/fixtures/godot_project/.godot"), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });

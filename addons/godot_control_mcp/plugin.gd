@@ -30,6 +30,11 @@ static func port_from_environment() -> int:
 		push_warning("Invalid GODOT_MCP_PORT '%s'; expected an integer from 1 to 65535. Using 9200." % raw)
 	return port
 
+static func token_from_environment() -> String:
+	if not OS.has_environment("GODOT_MCP_TOKEN"):
+		return ""
+	return OS.get_environment("GODOT_MCP_TOKEN")
+
 func _enter_tree() -> void:
 	var router := Router.new()
 	router.register_command("core.ping", Core.ping)
@@ -37,7 +42,11 @@ func _enter_tree() -> void:
 	_server = Server.new()
 	add_child(_server)
 	var port := port_from_environment()
-	var listen_error: Error = _server.start(port, router)
+	var token := token_from_environment()
+	if token.length() < 32:
+		push_error("GODOT_MCP_TOKEN must be a high-entropy secret of at least 32 characters; transport disabled.")
+		return
+	var listen_error: Error = _server.start(port, router, token)
 	if listen_error != OK:
 		push_error("Godot Control MCP could not listen on 127.0.0.1:%d (error %d)" % [port, listen_error])
 

@@ -4,6 +4,7 @@ import path from "node:path";
 export type SafetyMode = "full" | "read_only" | "confirm_destructive";
 
 export interface ResolvedConfig {
+  token: string;
   godotPath?: string;
   projectPath?: string;
   editorHost: "127.0.0.1";
@@ -73,6 +74,10 @@ export function resolveConfig(
   platform: NodeJS.Platform,
   pathValue: string | ResolveConfigProbes = env.PATH ?? "",
 ): ResolvedConfig {
+  const token = env.GODOT_MCP_TOKEN;
+  if (token === undefined || token.length < 32) {
+    throw new Error("GODOT_MCP_TOKEN must be a high-entropy secret of at least 32 characters");
+  }
   const probes = typeof pathValue === "string" ? { pathValue } : pathValue;
   const pathApi = platform === "win32" ? path.win32 : path.posix;
   const isFile = probes.isFile ?? ((candidate: string) => fs.statSync(candidate, { throwIfNoEntry: false })?.isFile() === true);
@@ -82,6 +87,7 @@ export function resolveConfig(
     : undefined;
   const discoveredProject = env.GODOT_PROJECT_PATH === undefined ? findProject(cwd, isFile, pathApi) : undefined;
   const config: ResolvedConfig = {
+    token,
     editorHost: "127.0.0.1",
     editorPort: readPort(env, "GODOT_MCP_PORT", 9200),
     lspPort: readPort(env, "GODOT_LSP_PORT", 6005),

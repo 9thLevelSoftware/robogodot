@@ -28,7 +28,7 @@ export interface RunServerDependencies {
 export async function runServer(dependencies: RunServerDependencies = {}): Promise<void> {
   const config = resolveConfig(process.env, process.cwd(), process.platform);
   const logger = createLogger(config.debug ? "debug" : "info");
-  const bridge = dependencies.bridge ?? new JsonRpcClient({ url: `ws://${config.editorHost}:${config.editorPort}`, logger });
+  const bridge = dependencies.bridge ?? new JsonRpcClient({ url: `ws://${config.editorHost}:${config.editorPort}`, token: config.token, logger });
   const server = dependencies.server ?? createServer({ bridge });
   const transport = dependencies.transport ?? new StdioServerTransport();
   const signals = dependencies.signals ?? process;

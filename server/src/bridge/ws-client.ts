@@ -24,6 +24,7 @@ interface SocketLike {
 }
 export interface JsonRpcClientOptions {
   url: string;
+  token: string;
   logger: Logger;
   webSocketFactory?: (url: string) => SocketLike;
   heartbeatIntervalMs?: number;
@@ -57,6 +58,8 @@ export class JsonRpcClient extends EventEmitter {
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   private heartbeatPending = false;
+  private authenticationId: number | undefined;
+  private authenticationTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly pending = new Map<number, Pending>();
 
   constructor(options: JsonRpcClientOptions) {
@@ -75,6 +78,7 @@ export class JsonRpcClient extends EventEmitter {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
     this.clearHeartbeat();
+    this.clearAuthentication();
     const socket = this.socket;
     this.socket = undefined;
     this.rejectPending("Editor connection stopped.");
@@ -125,9 +129,14 @@ export class JsonRpcClient extends EventEmitter {
     if (socket !== this.socket || this.stopped) return;
     this.reconnectAttempt = 0;
     this.lastError = undefined;
-    this.connectedSince = new Date().toISOString();
-    this.setState("connected");
-    this.heartbeatTimer = unrefTimer(setInterval(() => this.heartbeat(), this.options.heartbeatIntervalMs));
+    const id = 0;
+    this.authenticationId = id;
+    socket.send(JSON.stringify({ jsonrpc: "2.0", id, method: "auth.authenticate", params: { token: this.options.token } }));
+    this.authenticationTimer = unrefTimer(setTimeout(() => {
+      if (socket !== this.socket || this.authenticationId !== id) return;
+      this.lastError = "Editor authentication timed out";
+      socket.close();
+    }, this.options.heartbeatTimeoutMs));
   }
 
   private handleMessage(socket: SocketLike, data: unknown, isBinary: boolean): void {
@@ -138,6 +147,18 @@ export class JsonRpcClient extends EventEmitter {
     const response = parseJsonRpcResponse(text);
     if (!response) { this.options.logger.warn("Ignoring malformed JSON-RPC response"); return; }
     const pending = this.pending.get(response.id);
+    if (response.id === this.authenticationId) {
+      this.clearAuthentication();
+      if ("result" in response && typeof response.result === "object" && response.result !== null && "authenticated" in response.result && response.result.authenticated === true) {
+        this.connectedSince = new Date().toISOString();
+        this.setState("connected");
+        this.heartbeatTimer = unrefTimer(setInterval(() => this.heartbeat(), this.options.heartbeatIntervalMs));
+      } else {
+        this.lastError = "Editor authentication failed";
+        socket.close();
+      }
+      return;
+    }
     if (!pending) { this.options.logger.warn("Ignoring JSON-RPC response with unknown id", { id: response.id }); return; }
     this.pending.delete(response.id); clearTimeout(pending.timer);
     if ("result" in response) pending.resolve(response.result);
@@ -149,6 +170,7 @@ export class JsonRpcClient extends EventEmitter {
   private handleClose(socket: SocketLike): void {
     if (socket !== this.socket) return;
     this.socket = undefined;
+    this.clearAuthentication();
     this.connectedSince = undefined;
     this.clearHeartbeat();
     this.rejectPending("Godot editor connection closed.");
@@ -180,6 +202,12 @@ export class JsonRpcClient extends EventEmitter {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = undefined;
     this.heartbeatPending = false;
+  }
+
+  private clearAuthentication(): void {
+    if (this.authenticationTimer) clearTimeout(this.authenticationTimer);
+    this.authenticationTimer = undefined;
+    this.authenticationId = undefined;
   }
 
   private rejectPending(message: string): void {
