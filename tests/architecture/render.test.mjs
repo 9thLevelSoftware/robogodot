@@ -7,6 +7,7 @@ import {
   ARCHIVE_SHA256,
   CLI_VERSION,
   EXPORT_MAP,
+  VIEW_ID_CONTRACTS,
   buildManifest,
   buildNpxInvocation,
   collectAtlasIds,
@@ -94,6 +95,39 @@ test("pins the renderer and declares eleven exports", () => {
   assert.equal(CLI_VERSION, "11.16.0");
   assert.equal(ARCHIVE_SHA256, "0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229");
   assert.equal(Object.values(EXPORT_MAP).flat().length, 11);
+});
+
+test("declares the exact phase-dependency view ID contract", () => {
+  assert.deepEqual(VIEW_ID_CONTRACTS["03-phase-dependencies.md"], [
+    "PHASE-00-RESEARCH",
+    "PHASE-00-MASTER",
+    "PHASE-01",
+    "PHASE-02",
+    "PHASE-03",
+    "PHASE-04",
+    "PHASE-05",
+    "PHASE-06",
+    "PHASE-07",
+    "PHASE-08",
+    "FLOW-PH-001",
+    "FLOW-PH-002",
+    "FLOW-PH-003",
+    "FLOW-PH-004",
+    "FLOW-PH-005",
+    "FLOW-PH-006",
+    "FLOW-PH-007",
+    "FLOW-PH-008",
+    "FLOW-PH-009",
+    "FLOW-PH-010",
+    "FLOW-PH-011",
+    "FLOW-PH-012",
+    "FLOW-PH-013",
+    "FLOW-PH-014",
+    "FLOW-PH-015",
+    "FLOW-PH-016",
+    "FLOW-PH-017",
+    "FLOW-PH-018",
+  ]);
 });
 
 test("builds a shell-free Windows npx invocation with opaque paths", () => {

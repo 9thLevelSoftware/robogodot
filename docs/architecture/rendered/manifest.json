@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-11T01:22:06.118Z",
+  "generatedAt": "2026-07-11T01:39:30.992Z",
   "renderer": "@mermaid-js/mermaid-cli@11.16.0",
   "sourceArchive": {
     "path": "C:\\Users\\dasbl\\Downloads\\files.zip",
@@ -15,6 +15,11 @@
     {
       "output": "02-container-channels.svg",
       "source": "02-container-channels.md",
+      "block": 1
+    },
+    {
+      "output": "03-phase-dependencies.svg",
+      "source": "03-phase-dependencies.md",
       "block": 1
     }
   ]

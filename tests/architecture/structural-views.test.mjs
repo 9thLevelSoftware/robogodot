@@ -51,6 +51,58 @@ const channelIds = [
   "FLOW-CH-012",
 ];
 
+const phaseIds = [
+  "PHASE-00-RESEARCH",
+  "PHASE-00-MASTER",
+  "PHASE-01",
+  "PHASE-02",
+  "PHASE-03",
+  "PHASE-04",
+  "PHASE-05",
+  "PHASE-06",
+  "PHASE-07",
+  "PHASE-08",
+  "FLOW-PH-001",
+  "FLOW-PH-002",
+  "FLOW-PH-003",
+  "FLOW-PH-004",
+  "FLOW-PH-005",
+  "FLOW-PH-006",
+  "FLOW-PH-007",
+  "FLOW-PH-008",
+  "FLOW-PH-009",
+  "FLOW-PH-010",
+  "FLOW-PH-011",
+  "FLOW-PH-012",
+  "FLOW-PH-013",
+  "FLOW-PH-014",
+  "FLOW-PH-015",
+  "FLOW-PH-016",
+  "FLOW-PH-017",
+  "FLOW-PH-018",
+];
+
+const phaseEdges = new Map([
+  ["FLOW-PH-001", 'PHASE_00_RESEARCH -->|"adopted research guardrails"| PHASE_01'],
+  ["FLOW-PH-002", 'PHASE_00_MASTER -->|"standards + phase plan"| PHASE_01'],
+  ["FLOW-PH-003", 'PHASE_01 -->|"JsonRpcClient.call · registerTool · godot_compat.gd"| PHASE_02'],
+  ["FLOW-PH-004", 'PHASE_01 -->|"transport · registerTool · errors"| PHASE_03'],
+  ["FLOW-PH-005", 'PHASE_02 -->|"TypeParser · IntrospectionService"| PHASE_03'],
+  ["FLOW-PH-006", 'PHASE_01 -->|"config · logger · errors"| PHASE_04'],
+  ["FLOW-PH-007", 'PHASE_02 -.->|"? unresolved · Q-002"| PHASE_04'],
+  ["FLOW-PH-008", 'PHASE_01 -->|"transport · config · log · errors"| PHASE_05'],
+  ["FLOW-PH-009", 'PHASE_02 -->|"execution contract"| PHASE_05'],
+  ["FLOW-PH-010", 'PHASE_01 -->|"config · logger · errors"| PHASE_06'],
+  ["FLOW-PH-011", 'PHASE_02 -.->|"? unresolved · Q-002"| PHASE_06'],
+  ["FLOW-PH-012", 'PHASE_01 -->|"JsonRpcClient.call"| PHASE_07'],
+  ["FLOW-PH-013", 'PHASE_02 -->|"execution guard"| PHASE_07'],
+  ["FLOW-PH-014", 'PHASE_03 -->|"Tier A tools"| PHASE_07'],
+  ["FLOW-PH-015", 'PHASE_04 -->|"LSP tools"| PHASE_07'],
+  ["FLOW-PH-016", 'PHASE_05 -->|"runtime + debug tools"| PHASE_07'],
+  ["FLOW-PH-017", 'PHASE_06 -->|"FsGuard + batch/fs/uid tools"| PHASE_07'],
+  ["FLOW-PH-018", 'PHASE_07 -->|"SafetyPolicy · RequestQueue · Cache · Health · AuditLog"| PHASE_08'],
+]);
+
 test("system context has the complete accessible local-control model", async () => {
   await assertView("01-system-context.md", {
     ids: contextIds,
@@ -100,6 +152,39 @@ test("container view has exactly the five source-defined channels", async () => 
 
   const channelAnchors = markdown.match(/%% atlas-node: CH-[A-Z0-9-]+/g) ?? [];
   assert.equal(channelAnchors.length, 5, "02-container-channels.md: top-level channel count");
+});
+
+test("phase dependency view maps the exact work-order contracts", async () => {
+  const markdown = await assertView("03-phase-dependencies.md", {
+    ids: phaseIds,
+    tokens: [
+      ARCHIVE_SHA256,
+      "flowchart TB",
+      "JsonRpcClient.call",
+      "registerTool",
+      "godot_compat.gd",
+      "TypeParser",
+      "IntrospectionService",
+      "SafetyPolicy",
+      "RequestQueue",
+      "Cache",
+      "Health",
+      "AuditLog",
+      "Objective",
+      "Consumes",
+      "Produces",
+      "Isolation stub",
+      "Acceptance evidence",
+    ],
+  });
+
+  const [block] = extractMermaidBlocks(markdown);
+  const lines = block.split(/\r?\n/);
+  for (const [flowId, edge] of phaseEdges) {
+    const anchor = lines.findIndex((line) => line.trim() === `%% atlas-flow: ${flowId}`);
+    assert.notEqual(anchor, -1, `03-phase-dependencies.md: ${flowId} anchor`);
+    assert.equal(lines[anchor + 1].trim(), edge, `03-phase-dependencies.md: ${flowId} edge`);
+  }
 });
 
 test("system context keeps the engineer and MCP-client role inside the workstation", async () => {
