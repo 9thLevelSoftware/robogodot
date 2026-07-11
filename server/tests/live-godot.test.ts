@@ -110,6 +110,16 @@ liveDescribe("live Godot editor round trip (set GODOT_PATH to enable)", () => {
       });
       expect(execResult.errors).toEqual([]);
       expect(execResult).toMatchObject({ ok: true, returnValue: { $type: "Color", r: 1, g: 0.5, b: 0.25, a: 1 } });
+      const classes = await connectedClient.call<{ classes: string[]; total: number; hasMore: boolean }>("introspection.list_classes", { offset: 0, limit: 10 });
+      expect(classes.classes).toHaveLength(10);
+      expect(classes.total).toBeGreaterThan(10);
+      expect(classes.hasMore).toBe(true);
+      const node = await connectedClient.call<Record<string, unknown>>("introspection.describe_class", { class: "Node" });
+      expect(node).toMatchObject({ class: "Node", inherits: "Object" });
+      expect(node).toHaveProperty("methods");
+      const mesh = await connectedClient.call<{ results: Array<{ class: string }> }>("introspection.search", { query: "mesh", limit: 20 });
+      expect(mesh.results.some((result) => result.class.toLowerCase().includes("mesh"))).toBe(true);
+      await expect(connectedClient.call("introspection.describe_class", { class: "DefinitelyNotAGodotClass" })).rejects.toMatchObject({ code: "godot_error" });
 
       await terminate(godotProcess);
       godotProcess = undefined;

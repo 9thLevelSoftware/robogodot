@@ -17,6 +17,7 @@
 - `godot_script_run` annotations are `readOnlyHint:false`, `destructiveHint:true`, `idempotentHint:false`, `openWorldHint:true`.
 - Block editor-script execution in `read_only` and `confirm_destructive`. In `full`, always require `allowDangerous:true`. Authorization is source-independent and uses no deny-list or source heuristic. Return `blocked_by_policy` for mode/capability rejection.
 - Keep version-sensitive ClassDB/editor-help access behind `godot_compat.gd`.
+- Godot 4.6 does not expose integrated documentation text through supported GDScript/GDExtension read APIs. Use the approved deterministic offline index generated from official Godot `4.6.2-stable` commit `001aa128b1cd80dc4e47e823c360bccf45ed6bad`; verify the source archive and generator hashes, require a live Godot 4.6.x version match, and perform no runtime network access. This supersedes the infeasible native-bridge proposal without permitting private ABI or patched-engine coupling.
 - Target Godot 4.6.x and preserve stdout exclusively for MCP.
 - Follow TDD and commit every task independently.
 
@@ -58,10 +59,10 @@
 
 **Files:** Create plugin `commands/introspection.gd`, extend `godot_compat.gd`, and add live/canned tests.
 
-**Interfaces:** Produce `introspection.list_classes`, `describe_class`, `search`, and `class_doc`.
+**Interfaces:** Produce plugin `introspection.list_classes`, `describe_class`, and `search`; produce server-side `class_doc` from the pinned official index.
 
 - [ ] Write failing fixture and Godot 4.6 tests for Node metadata, inheritance, members, nonempty official docs, mesh search, unknown class/member errors.
-- [ ] Implement normalized ClassDB results and compatibility-shim documentation lookup.
+- [ ] Implement normalized ClassDB results plus deterministic pinned documentation generation, manifest verification, and server-side version-gated lookup.
 - [ ] Run canned and live tests; commit `feat: add Godot API introspection`.
 
 ### Task 5: MCP tools, regression harness, CI, and docs

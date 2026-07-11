@@ -3,6 +3,7 @@ extends SceneTree
 const Router = preload("../../addons/godot_control_mcp/command_router.gd")
 const Server = preload("../../addons/godot_control_mcp/ws_server.gd")
 const Core = preload("../../addons/godot_control_mcp/commands/core.gd")
+const Introspection = preload("../../addons/godot_control_mcp/commands/introspection.gd")
 const TOKEN := "0123456789abcdef0123456789abcdef"
 const PORT := 19201
 var failures: Array[String] = []
@@ -53,6 +54,9 @@ func _wait_peer_count(server: Node, expected: int, timeout_msec: int) -> void:
 func _run() -> void:
 	var router := Router.new()
 	router.register_command("core.ping", Core.ping)
+	router.register_command("introspection.list_classes", Introspection.list_classes)
+	router.register_command("introspection.describe_class", Introspection.describe_class)
+	router.register_command("introspection.search", Introspection.search)
 	var server = Server.new()
 	root.add_child(server)
 	_check(server.start(PORT, router, "short") == ERR_INVALID_PARAMETER, "server must reject a short configured token")
@@ -127,6 +131,11 @@ func _run() -> void:
 	_check(authenticated.get("result", {}).get("authenticated") == true, "correct token must authenticate; got %s" % authenticated)
 	var ping := await _request(owner, {"jsonrpc":"2.0", "id":5, "method":"core.ping", "params":{}})
 	_check(ping.get("result", {}).get("pong") == true, "authenticated owner must dispatch commands; got %s" % ping)
+	var classes := await _request(owner, {"jsonrpc":"2.0", "id":52, "method":"introspection.list_classes", "params":{"limit":3}})
+	_check(classes.get("result", {}).get("classes", []).size() == 3, "authenticated owner must dispatch bounded introspection; got %s" % classes)
+	var mesh := await _request(owner, {"jsonrpc":"2.0", "id":53, "method":"introspection.search", "params":{"query":"mesh", "limit":10}})
+	_check(mesh.get("result", {}).get("results", []).size() > 0, "authenticated mesh search must return results; got %s" % mesh)
+	_check(JSON.stringify(mesh).to_utf8_buffer().size() <= Server.MAX_REQUEST_FRAME_BYTES, "introspection response must remain below protocol cap")
 	var owner_pending: Array[WebSocketPeer] = []
 	for ignored in Server.MAX_PENDING_PEERS:
 		owner_pending.append(await _connect())

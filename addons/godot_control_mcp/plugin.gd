@@ -6,6 +6,7 @@ const Router = preload("command_router.gd")
 const Server = preload("ws_server.gd")
 const Core = preload("commands/core.gd")
 const Exec = preload("commands/exec.gd")
+const Introspection = preload("commands/introspection.gd")
 var _server: Node
 
 static func parse_port(value: String) -> int:
@@ -41,6 +42,9 @@ func _enter_tree() -> void:
 	router.register_command("core.ping", Core.ping)
 	router.register_command("core.get_version", Core.get_version)
 	router.register_command("exec.run", Exec.run)
+	router.register_command("introspection.list_classes", Introspection.list_classes)
+	router.register_command("introspection.describe_class", Introspection.describe_class)
+	router.register_command("introspection.search", Introspection.search)
 	_server = Server.new()
 	add_child(_server)
 	var port := port_from_environment()
