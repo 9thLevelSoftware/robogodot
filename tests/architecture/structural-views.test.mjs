@@ -103,6 +103,60 @@ const phaseEdges = new Map([
   ["FLOW-PH-018", 'PHASE_07 -->|"SafetyPolicy · RequestQueue · Cache · Health · AuditLog"| PHASE_08'],
 ]);
 
+const componentIds = [
+  "CMP-MCP-BOOTSTRAP",
+  "CMP-REGISTRY",
+  "CMP-SCHEMA-CONTRACTS",
+  "CMP-TOOL-FAMILIES",
+  "CMP-RESOURCE-PROMPT-SURFACES",
+  "CMP-SAFETY",
+  "CMP-REQUEST-QUEUE",
+  "CMP-READ-CACHE",
+  "CMP-AUDIT",
+  "CMP-HEALTH",
+  "CMP-SEMANTIC-SERVICES",
+  "CMP-TRANSPORT-ADAPTERS",
+  "CMP-WS-SERVER",
+  "CMP-COMMAND-ROUTER",
+  "CMP-CORE-COMMANDS",
+  "CMP-INTROSPECTION-COMMANDS",
+  "CMP-EXEC-COMMANDS",
+  "CMP-EDIT-COMMANDS",
+  "CMP-EDIT-CONTROLLER",
+  "CMP-GODOT-COMPAT",
+  "CMP-RUNTIME-AUTOLOADS",
+  "SYS-EDITOR-APIS",
+  "SYS-CLASSDB-DOCS",
+  "SYS-UNDO-REDO",
+  ...Array.from({ length: 23 }, (_, index) => `FLOW-CMP-${String(index + 1).padStart(3, "0")}`),
+];
+
+const componentEdges = new Map([
+  ["FLOW-CMP-001", 'CMP_MCP_BOOTSTRAP -->|"register surfaces"| CMP_REGISTRY'],
+  ["FLOW-CMP-002", 'CMP_REGISTRY -->|"validate structured I/O"| CMP_SCHEMA_CONTRACTS'],
+  ["FLOW-CMP-003", 'CMP_REGISTRY -->|"apply policy gate"| CMP_SAFETY'],
+  ["FLOW-CMP-004", 'CMP_SAFETY -->|"serialize mutations"| CMP_REQUEST_QUEUE'],
+  ["FLOW-CMP-005", 'CMP_SAFETY -->|"cache read-only calls"| CMP_READ_CACHE'],
+  ["FLOW-CMP-006", 'CMP_REGISTRY -->|"record calls"| CMP_AUDIT'],
+  ["FLOW-CMP-007", 'CMP_AUDIT -->|"report status"| CMP_HEALTH'],
+  ["FLOW-CMP-008", 'CMP_REGISTRY -->|"dispatch tools"| CMP_TOOL_FAMILIES'],
+  ["FLOW-CMP-009", 'CMP_REGISTRY -->|"serve resources + prompts"| CMP_RESOURCE_PROMPT_SURFACES'],
+  ["FLOW-CMP-010", 'CMP_TOOL_FAMILIES -->|"parse + introspect"| CMP_SEMANTIC_SERVICES'],
+  ["FLOW-CMP-011", 'CMP_TOOL_FAMILIES -->|"select execution channel"| CMP_TRANSPORT_ADAPTERS'],
+  ["FLOW-CMP-012", 'CMP_TRANSPORT_ADAPTERS -->|"WebSocket + JSON-RPC 2.0"| CMP_WS_SERVER'],
+  ["FLOW-CMP-013", 'CMP_WS_SERVER -->|"dispatch command"| CMP_COMMAND_ROUTER'],
+  ["FLOW-CMP-014", 'CMP_COMMAND_ROUTER -->|"route core"| CMP_CORE_COMMANDS'],
+  ["FLOW-CMP-015", 'CMP_COMMAND_ROUTER -->|"route introspection"| CMP_INTROSPECTION_COMMANDS'],
+  ["FLOW-CMP-016", 'CMP_COMMAND_ROUTER -->|"route Tier B execution"| CMP_EXEC_COMMANDS'],
+  ["FLOW-CMP-017", 'CMP_COMMAND_ROUTER -->|"route Tier A edits"| CMP_EDIT_COMMANDS'],
+  ["FLOW-CMP-018", 'CMP_EDIT_COMMANDS -->|"delegate mutations"| CMP_EDIT_CONTROLLER'],
+  ["FLOW-CMP-019", 'CMP_EDIT_CONTROLLER -->|"create + commit actions"| SYS_UNDO_REDO'],
+  ["FLOW-CMP-020", 'CMP_INTROSPECTION_COMMANDS -->|"query API + documentation"| SYS_CLASSDB_DOCS'],
+  ["FLOW-CMP-021", 'CMP_COMMAND_ROUTER -->|"isolate version-sensitive calls"| CMP_GODOT_COMPAT'],
+  ["FLOW-CMP-022", 'CMP_GODOT_COMPAT -->|"invoke editor services"| SYS_EDITOR_APIS'],
+  ["FLOW-CMP-023", 'CMP_TRANSPORT_ADAPTERS -->|"sequenced runtime IPC"| CMP_RUNTIME_AUTOLOADS'],
+]);
+
 test("system context has the complete accessible local-control model", async () => {
   await assertView("01-system-context.md", {
     ids: contextIds,
@@ -184,6 +238,42 @@ test("phase dependency view maps the exact work-order contracts", async () => {
     const anchor = lines.findIndex((line) => line.trim() === `%% atlas-flow: ${flowId}`);
     assert.notEqual(anchor, -1, `03-phase-dependencies.md: ${flowId} anchor`);
     assert.equal(lines[anchor + 1].trim(), edge, `03-phase-dependencies.md: ${flowId} edge`);
+  }
+});
+
+test("server component view maps the exact grouped code boundaries", async () => {
+  const markdown = await assertView("04-server-components.md", {
+    ids: componentIds,
+    tokens: [
+      ARCHIVE_SHA256,
+      "flowchart TB",
+      "MCP surface",
+      "TypeScript server",
+      "GDScript editor plugin",
+      "Godot services / runtime",
+      "Tier A",
+      "Tier B",
+      "TypeParser",
+      "WebSocket",
+      "LSP",
+      "DAP",
+      "ProcessRunner",
+      "runtime IPC",
+      "HeadlessRunner",
+      "FsGuard",
+      "UID/export",
+      "optional AssetProvider",
+    ],
+  });
+
+  const [block] = extractMermaidBlocks(markdown);
+  const lines = block.split(/\r?\n/);
+  for (const [flowId, edge] of componentEdges) {
+    const anchors = lines
+      .map((line, index) => line.trim() === `%% atlas-flow: ${flowId}` ? index : -1)
+      .filter((index) => index >= 0);
+    assert.equal(anchors.length, 1, `04-server-components.md: ${flowId} anchor count`);
+    assert.equal(lines[anchors[0] + 1].trim(), edge, `04-server-components.md: ${flowId} edge`);
   }
 });
 

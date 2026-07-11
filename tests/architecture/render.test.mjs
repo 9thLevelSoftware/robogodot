@@ -130,6 +130,58 @@ test("declares the exact phase-dependency view ID contract", () => {
   ]);
 });
 
+test("declares the exact server-component view ID contract", () => {
+  assert.deepEqual(VIEW_ID_CONTRACTS["04-server-components.md"], [
+    "CMP-MCP-BOOTSTRAP",
+    "CMP-REGISTRY",
+    "CMP-SCHEMA-CONTRACTS",
+    "CMP-TOOL-FAMILIES",
+    "CMP-RESOURCE-PROMPT-SURFACES",
+    "CMP-SAFETY",
+    "CMP-REQUEST-QUEUE",
+    "CMP-READ-CACHE",
+    "CMP-AUDIT",
+    "CMP-HEALTH",
+    "CMP-SEMANTIC-SERVICES",
+    "CMP-TRANSPORT-ADAPTERS",
+    "CMP-WS-SERVER",
+    "CMP-COMMAND-ROUTER",
+    "CMP-CORE-COMMANDS",
+    "CMP-INTROSPECTION-COMMANDS",
+    "CMP-EXEC-COMMANDS",
+    "CMP-EDIT-COMMANDS",
+    "CMP-EDIT-CONTROLLER",
+    "CMP-GODOT-COMPAT",
+    "CMP-RUNTIME-AUTOLOADS",
+    "SYS-EDITOR-APIS",
+    "SYS-CLASSDB-DOCS",
+    "SYS-UNDO-REDO",
+    "FLOW-CMP-001",
+    "FLOW-CMP-002",
+    "FLOW-CMP-003",
+    "FLOW-CMP-004",
+    "FLOW-CMP-005",
+    "FLOW-CMP-006",
+    "FLOW-CMP-007",
+    "FLOW-CMP-008",
+    "FLOW-CMP-009",
+    "FLOW-CMP-010",
+    "FLOW-CMP-011",
+    "FLOW-CMP-012",
+    "FLOW-CMP-013",
+    "FLOW-CMP-014",
+    "FLOW-CMP-015",
+    "FLOW-CMP-016",
+    "FLOW-CMP-017",
+    "FLOW-CMP-018",
+    "FLOW-CMP-019",
+    "FLOW-CMP-020",
+    "FLOW-CMP-021",
+    "FLOW-CMP-022",
+    "FLOW-CMP-023",
+  ]);
+});
+
 test("builds a shell-free Windows npx invocation with opaque paths", () => {
   const execPath = String.raw`C:\Tools\Node & 100%^!\node.exe`;
   assert.deepEqual(buildNpxInvocation("win32", execPath), {
