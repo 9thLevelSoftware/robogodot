@@ -6,20 +6,15 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { buildDocsIndex, DOC_SOURCE, DOC_SOURCE_URL, verifyDocsManifest } from "../dist/docs/class-docs.js";
-import { validateArchiveEntries } from "../dist/docs/archive-policy.js";
+import { inspectTarGz, validateArchiveEntries } from "../dist/docs/archive-policy.js";
+import { computeCompositeHash } from "../dist/docs/generator-integrity.js";
 
 const exec = promisify(execFile);
 const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const output = resolve(serverRoot, "assets/godot-4.6.2-class-docs.json");
 const check = process.argv.includes("--check");
 const archiveArgument = process.argv.find((value) => value.startsWith("--archive="));
-const compositeInputs = [
-  fileURLToPath(import.meta.url), resolve(serverRoot, "src/docs/class-docs.ts"),
-  resolve(serverRoot, "docs-generator-config.json"), resolve(serverRoot, "package-lock.json"),
-];
-const composite = createHash("sha256");
-for (const path of compositeInputs) composite.update(relative(serverRoot, path).replaceAll("\\", "/")).update("\0").update(await readFile(path)).update("\0");
-const generatorSha256 = composite.digest("hex");
+const generatorSha256 = await computeCompositeHash((path) => readFile(resolve(serverRoot, path)), createHash);
 const workspace = await mkdtemp(join(tmpdir(), "godot-docs-"));
 
 async function walk(directory) {
@@ -58,9 +53,7 @@ try {
   const archiveBytes = await readFile(archive);
   const actualHash = createHash("sha256").update(archiveBytes).digest("hex");
   if (actualHash !== DOC_SOURCE.sourceArchiveSha256) throw new Error(`Archive SHA-256 mismatch: expected ${DOC_SOURCE.sourceArchiveSha256}, got ${actualHash}`);
-  const { stdout: archiveList } = await exec("tar", ["-tzf", archive], { maxBuffer: 16 * 1024 * 1024 });
-  const listedEntries = archiveList.split(/\r?\n/).filter(Boolean).map((path) => ({ path, size: 0 }));
-  validateArchiveEntries(listedEntries);
+  await inspectTarGz(archiveBytes);
   await exec("tar", ["-xzf", archive, "-C", workspace]);
   const topLevel = (await readdir(workspace, { withFileTypes: true })).find((entry) => entry.isDirectory() && entry.name.startsWith("godot-"));
   if (!topLevel) throw new Error("Pinned archive did not contain the expected source directory");
