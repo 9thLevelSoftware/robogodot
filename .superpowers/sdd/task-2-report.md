@@ -65,16 +65,28 @@ Final verification:
 - `npm run build`: exit 0.
 - `git diff --check`: exit 0 (line-ending conversion warning only).
 
-## Files currently uncommitted
+## Review hardening
 
-- `tests/fixtures/variant-vectors.json`
-- `server/tests/type-parser.test.ts`
-- `tests/godot/variant_parity_smoke.gd`
-- `server/src/util/type-parser.ts`
-- `addons/godot_control_mcp/util/type_parse.gd`
-- `.superpowers/sdd/task-2-report.md`
+The follow-up review added identical traversal limits in both runtimes: maximum depth 32 with the root at depth 0, and maximum 10,000 visited nodes/elements. Parse overflow is `invalid_args`. Serialization uses path-scoped container identity tracking so cycles become canonical `UnknownVariant` descriptions while repeated noncyclic references remain ordinary values; depth and node overflow are also described rather than recursed into.
 
-Task 1 authentication files were not edited. Full typecheck/build/smokes, self-review, and commit were not performed because the mandatory parity gate blocked.
+The shared fixture now covers 17 valid and 17 invalid vectors, including escaped NodePaths, numeric grammar, exact tagged fields, and nonfinite values. Focused generated tests cover exact depth/node boundaries and overflow, prototype-sensitive dictionary keys, Array/Dictionary cycles, repeated references, Object/Node/Resource descriptions, and unsupported Variant fallback.
+
+Process supervision was extracted to `tests/godot/process-runner.mjs`. Windows cleanup uses `taskkill /T` with its own five-second deadline and preserves the original timeout on taskkill error/hang. Unix children start in a dedicated process group and timeout cleanup signals only that negative group PID.
+
+Review RED evidence:
+
+- `npx vitest run tests/type-parser.test.ts`: 2 failures; missing depth rejection and `RangeError: Maximum call stack size exceeded` on a cyclic Array.
+- Real Godot parity after the first new tests: rejected malformed number grammar incorrectly and could not produce a Node path while running in constructor-time `_init()`.
+- Process-runner race test: expected the original timeout but received `Godot exited with code 1` when tree termination emitted child exit before cleanup completed.
+
+Review GREEN evidence:
+
+- `npx vitest run tests/type-parser.test.ts`: 38 tests passed.
+- Real Godot parity: exit 0; 17 valid and 17 invalid shared vectors plus runtime serializer checks passed.
+- `node --test tests/godot/process-runner.test.mjs`: 4 tests passed.
+- `node tests/godot/run-smoke.mjs`: all five Godot smokes passed.
+- Full server: 12 files passed; 114 tests passed.
+- `npm run typecheck`, `npm run build`, and `git diff --check`: exit 0.
 
 ## Concerns
 

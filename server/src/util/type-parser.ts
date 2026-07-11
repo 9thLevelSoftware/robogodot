@@ -9,6 +9,8 @@ export class VariantLiteralError extends Error {
 
 type JsonObject = { [key: string]: unknown };
 const TAG = "$type";
+export const MAX_VARIANT_DEPTH = 32;
+export const MAX_VARIANT_NODES = 10_000;
 const CONSTRUCTOR_ARITIES: Record<string, readonly number[]> = {
   Vector2: [2],
   Vector3: [3],
@@ -68,14 +70,23 @@ function parseTagged(value: JsonObject): unknown {
   return invalid(`unknown tagged Variant '${type}'`);
 }
 
-function parseStructured(value: unknown): unknown {
+type TraversalState = { nodes: number };
+
+function countParseNode(state: TraversalState, depth: number): void {
+  if (depth > MAX_VARIANT_DEPTH) invalid(`Variant literal exceeds maximum depth ${MAX_VARIANT_DEPTH}`);
+  state.nodes += 1;
+  if (state.nodes > MAX_VARIANT_NODES) invalid(`Variant literal exceeds node budget ${MAX_VARIANT_NODES}`);
+}
+
+function parseStructured(value: unknown, state: TraversalState, depth = 0): unknown {
+  countParseNode(state, depth);
   if (value === null || typeof value === "boolean" || typeof value === "string") return value;
   if (typeof value === "number") return finite(value, "JSON number");
-  if (Array.isArray(value)) return value.map(parseStructured);
+  if (Array.isArray(value)) return value.map((item) => parseStructured(item, state, depth + 1));
   if (typeof value === "object") {
     const object = value as JsonObject;
     if (Object.prototype.hasOwnProperty.call(object, TAG)) return parseTagged(object);
-    return Object.fromEntries(Object.entries(object).map(([key, item]) => [key, parseStructured(item)]));
+    return Object.fromEntries(Object.entries(object).map(([key, item]) => [key, parseStructured(item, state, depth + 1)]));
   }
   return invalid(`unsupported Variant literal value of type ${typeof value}`);
 }
@@ -109,7 +120,8 @@ function parseConstructor(text: string): unknown {
 }
 
 export function parseVariantLiteral(value: unknown): unknown {
-  if (typeof value !== "string") return parseStructured(value);
+  const state = { nodes: 0 };
+  if (typeof value !== "string") return parseStructured(value, state);
   const text = value.trim();
   if (text.startsWith("(")) invalid("ambiguous tuple syntax; use an explicit Vector2 or other constructor");
   if (text.startsWith("#")) {
@@ -120,7 +132,7 @@ export function parseVariantLiteral(value: unknown): unknown {
   }
   if (/^[A-Za-z_]/.test(text) && text.includes("(")) return parseConstructor(text);
   try {
-    return parseStructured(JSON.parse(text));
+    return parseStructured(JSON.parse(text), state);
   } catch (error) {
     if (error instanceof VariantLiteralError) throw error;
     invalid("invalid JSON or unknown constructor Variant literal");
@@ -131,23 +143,45 @@ function canonicalColor(value: number): number {
   return Number(value.toFixed(7));
 }
 
-export function serializeVariant(value: unknown): unknown {
+function unknownVariant(variantType: string, value: string): JsonObject {
+  return { [TAG]: "UnknownVariant", variantType, value };
+}
+
+function serializeStructured(value: unknown, state: TraversalState, depth: number, ancestors: Set<object>): unknown {
+  if (depth > MAX_VARIANT_DEPTH) return unknownVariant("depth overflow", `maximum depth ${MAX_VARIANT_DEPTH}`);
+  state.nodes += 1;
+  if (state.nodes > MAX_VARIANT_NODES) return unknownVariant("node budget overflow", `maximum nodes ${MAX_VARIANT_NODES}`);
   if (value === null || typeof value === "boolean" || typeof value === "string") return value;
-  if (typeof value === "number") return Number.isFinite(value) ? value : { [TAG]: "UnknownVariant", variantType: "nonfinite number", value: String(value) };
-  if (Array.isArray(value)) return value.map(serializeVariant);
+  if (typeof value === "number") return Number.isFinite(value) ? value : unknownVariant("nonfinite number", String(value));
+  if (typeof value === "object" && ancestors.has(value)) return unknownVariant("cycle", Array.isArray(value) ? "Array" : "Dictionary");
+  if (Array.isArray(value)) {
+    ancestors.add(value);
+    const output = value.map((item) => serializeStructured(item, state, depth + 1, ancestors));
+    ancestors.delete(value);
+    return output;
+  }
   if (typeof value === "object") {
     const object = value as JsonObject;
+    ancestors.add(object);
+    let output: unknown;
     if (typeof object[TAG] === "string") {
-      if (object[TAG] === "Color") return { [TAG]: "Color", r: canonicalColor(finite(object.r, "Color.r")), g: canonicalColor(finite(object.g, "Color.g")), b: canonicalColor(finite(object.b, "Color.b")), a: canonicalColor(finite(object.a, "Color.a")) };
-      if (["Vector2", "Vector3", "NodePath", "Rect2"].includes(object[TAG])) return Object.fromEntries(Object.entries(object).map(([key, item]) => [key, key === TAG ? item : serializeVariant(item)]));
+      if (object[TAG] === "Color") output = { [TAG]: "Color", r: canonicalColor(finite(object.r, "Color.r")), g: canonicalColor(finite(object.g, "Color.g")), b: canonicalColor(finite(object.b, "Color.b")), a: canonicalColor(finite(object.a, "Color.a")) };
+      else if (["Vector2", "Vector3", "NodePath", "Rect2"].includes(object[TAG])) output = Object.fromEntries(Object.entries(object).map(([key, item]) => [key, key === TAG ? item : serializeStructured(item, state, depth + 1, ancestors)]));
     }
     const prototype = Object.getPrototypeOf(object);
-    if (prototype === Object.prototype || prototype === null && Object.prototype.toString.call(object) === "[object Object]") {
-      return Object.fromEntries(Object.entries(object).map(([key, item]) => [key, serializeVariant(item)]));
+    if (output === undefined && (prototype === Object.prototype || prototype === null && Object.prototype.toString.call(object) === "[object Object]")) {
+      output = Object.fromEntries(Object.entries(object).map(([key, item]) => [key, serializeStructured(item, state, depth + 1, ancestors)]));
     }
-    const rendered = Object.prototype.toString.call(object);
-    const variantType = rendered.slice(8, -1);
-    return { [TAG]: "UnknownVariant", variantType, value: rendered };
+    if (output === undefined) {
+      const rendered = Object.prototype.toString.call(object);
+      output = unknownVariant(rendered.slice(8, -1), rendered);
+    }
+    ancestors.delete(object);
+    return output;
   }
-  return { [TAG]: "UnknownVariant", variantType: typeof value, value: String(value) };
+  return unknownVariant(typeof value, String(value));
+}
+
+export function serializeVariant(value: unknown): unknown {
+  return serializeStructured(value, { nodes: 0 }, 0, new Set());
 }

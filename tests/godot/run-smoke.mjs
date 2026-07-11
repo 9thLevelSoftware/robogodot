@@ -1,9 +1,9 @@
 import { cp, rm } from "node:fs/promises";
-import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:net";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runBounded } from "./process-runner.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const godot = process.env.GODOT_PATH;
@@ -11,27 +11,7 @@ if (!godot) throw new Error("GODOT_PATH is required");
 const fixtureAddon = resolve(root, "tests/fixtures/godot_project/addons/godot_control_mcp");
 
 function run(args, env = process.env) {
-  return new Promise((resolveRun, reject) => {
-    const child = spawn(godot, args, { cwd: root, env, stdio: "inherit", windowsHide: true });
-    const timeout = setTimeout(async () => {
-      if (process.platform === "win32") {
-        const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
-        await once(killer, "exit");
-      } else {
-        child.kill("SIGKILL");
-      }
-      reject(new Error(`Godot timed out after 30 seconds: ${args.join(" ")}`));
-    }, 30_000);
-    child.once("error", (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-    child.once("exit", (code) => {
-      clearTimeout(timeout);
-      if (code === 0) resolveRun();
-      else reject(new Error(`Godot exited with code ${code}`));
-    });
-  });
+  return runBounded(godot, args, { cwd: root, env });
 }
 
 async function freePort() {

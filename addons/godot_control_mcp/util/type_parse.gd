@@ -2,6 +2,8 @@ class_name GodotMCPTypeParse
 extends RefCounted
 
 const TAG := "$type"
+const MAX_VARIANT_DEPTH := 32
+const MAX_VARIANT_NODES := 10000
 
 static func _error(message: String) -> Dictionary:
 	return {"ok": false, "code": "invalid_args", "error": message}
@@ -16,7 +18,8 @@ static func _finite(value: Variant, context: String) -> Dictionary:
 
 static func _number(text: String, context: String) -> Dictionary:
 	var cleaned := text.strip_edges()
-	if cleaned.is_empty() or not cleaned.is_valid_float():
+	var number_pattern := RegEx.create_from_string("^[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$")
+	if cleaned.is_empty() or number_pattern.search(cleaned) == null:
 		return _error("%s must be a finite number" % context)
 	var value := cleaned.to_float()
 	if not is_finite(value):
@@ -74,7 +77,15 @@ static func _parse_tagged(value: Dictionary) -> Dictionary:
 		return _ok(Rect2(values[0], values[1], values[2], values[3]))
 	return _error("unknown tagged Variant '%s'" % type)
 
-static func _parse_structured(value: Variant) -> Dictionary:
+static func _count_parse(state: Dictionary, depth: int) -> Dictionary:
+	if depth > MAX_VARIANT_DEPTH: return _error("Variant literal exceeds maximum depth %d" % MAX_VARIANT_DEPTH)
+	state.nodes += 1
+	if state.nodes > MAX_VARIANT_NODES: return _error("Variant literal exceeds node budget %d" % MAX_VARIANT_NODES)
+	return _ok(null)
+
+static func _parse_structured(value: Variant, state := {"nodes": 0}, depth := 0) -> Dictionary:
+	var counted := _count_parse(state, depth)
+	if not counted.ok: return counted
 	if value == null or value is bool or value is String:
 		return _ok(value)
 	if value is int or value is float:
@@ -82,7 +93,7 @@ static func _parse_structured(value: Variant) -> Dictionary:
 	if value is Array:
 		var output: Array = []
 		for item in value:
-			var parsed := _parse_structured(item)
+			var parsed := _parse_structured(item, state, depth + 1)
 			if not parsed.ok: return parsed
 			output.append(parsed.value)
 		return _ok(output)
@@ -90,7 +101,7 @@ static func _parse_structured(value: Variant) -> Dictionary:
 		if value.has(TAG): return _parse_tagged(value)
 		var output := {}
 		for key in value:
-			var parsed := _parse_structured(value[key])
+			var parsed := _parse_structured(value[key], state, depth + 1)
 			if not parsed.ok: return parsed
 			output[key] = parsed.value
 		return _ok(output)
@@ -126,7 +137,8 @@ static func _constructor(text: String) -> Dictionary:
 		_: return _ok(Color(numbers[0], numbers[1], numbers[2], numbers[3] if numbers.size() == 4 else 1.0))
 
 static func parse_variant_literal(value: Variant) -> Dictionary:
-	if not value is String: return _parse_structured(value)
+	var state := {"nodes": 0}
+	if not value is String: return _parse_structured(value, state)
 	var text: String = value.strip_edges()
 	if text.begins_with("("): return _error("ambiguous tuple syntax; use an explicit Vector2 or other constructor")
 	if text.begins_with("#"):
@@ -139,17 +151,30 @@ static func parse_variant_literal(value: Variant) -> Dictionary:
 	if open > 0 and (text[0].to_lower() != text[0] or text[0] == "_"): return _constructor(text)
 	var json := JSON.new()
 	if json.parse(text) != OK: return _error("invalid JSON or unknown constructor Variant literal")
-	return _parse_structured(json.data)
+	return _parse_structured(json.data, state)
 
 static func _color_number(value: float) -> float:
 	return float("%.7f" % value)
 
-static func serialize_variant(value: Variant) -> Variant:
+static func _unknown(variant_type: String, value: String) -> Dictionary:
+	return {TAG: "UnknownVariant", "variantType": variant_type, "value": value}
+
+static func _is_ancestor(value: Variant, ancestors: Array) -> bool:
+	for ancestor in ancestors:
+		if is_same(ancestor, value): return true
+	return false
+
+static func _serialize(value: Variant, state: Dictionary, depth: int, ancestors: Array) -> Variant:
+	if depth > MAX_VARIANT_DEPTH: return _unknown("depth overflow", "maximum depth %d" % MAX_VARIANT_DEPTH)
+	state.nodes += 1
+	if state.nodes > MAX_VARIANT_NODES: return _unknown("node budget overflow", "maximum nodes %d" % MAX_VARIANT_NODES)
+	if (value is Array or value is Dictionary) and _is_ancestor(value, ancestors):
+		return _unknown("cycle", "Array" if value is Array else "Dictionary")
 	match typeof(value):
 		TYPE_NIL, TYPE_BOOL, TYPE_INT, TYPE_STRING:
 			return value
 		TYPE_FLOAT:
-			return value if is_finite(value) else {TAG: "UnknownVariant", "variantType": "nonfinite number", "value": str(value)}
+			return value if is_finite(value) else _unknown("nonfinite number", str(value))
 		TYPE_VECTOR2:
 			return {TAG: "Vector2", "x": value.x, "y": value.y}
 		TYPE_VECTOR3:
@@ -161,12 +186,16 @@ static func serialize_variant(value: Variant) -> Variant:
 		TYPE_RECT2:
 			return {TAG: "Rect2", "x": value.position.x, "y": value.position.y, "width": value.size.x, "height": value.size.y}
 		TYPE_ARRAY:
+			ancestors.append(value)
 			var output: Array = []
-			for item in value: output.append(serialize_variant(item))
+			for item in value: output.append(_serialize(item, state, depth + 1, ancestors))
+			ancestors.pop_back()
 			return output
 		TYPE_DICTIONARY:
+			ancestors.append(value)
 			var output := {}
-			for key in value: output[str(key)] = serialize_variant(value[key])
+			for key in value: output[str(key)] = _serialize(value[key], state, depth + 1, ancestors)
+			ancestors.pop_back()
 			return output
 		TYPE_OBJECT:
 			if not is_instance_valid(value): return {TAG: "Object", "class": "<freed>", "instanceId": 0}
@@ -178,4 +207,7 @@ static func serialize_variant(value: Variant) -> Variant:
 				if uid != ResourceUID.INVALID_ID: description.uid = ResourceUID.id_to_text(uid)
 			return description
 		_:
-			return {TAG: "UnknownVariant", "variantType": type_string(typeof(value)), "value": str(value)}
+			return _unknown(type_string(typeof(value)), str(value))
+
+static func serialize_variant(value: Variant) -> Variant:
+	return _serialize(value, {"nodes": 0}, 0, [])

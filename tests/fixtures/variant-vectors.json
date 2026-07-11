@@ -20,6 +20,8 @@
     { "name": "color hex rgb", "input": "#3366CC", "expected": { "$type": "Color", "r": 0.2, "g": 0.4, "b": 0.8, "a": 1 } },
     { "name": "color hex rgba", "input": "#3366CC80", "expected": { "$type": "Color", "r": 0.2, "g": 0.4, "b": 0.8, "a": 0.5019608 } },
     { "name": "node path", "input": "NodePath(\"/root/Main/Camera3D\")", "expected": { "$type": "NodePath", "path": "/root/Main/Camera3D" } },
+    { "name": "node path escapes unicode", "input": "NodePath(\"/root/\\\"quoted\\\"/back\\\\slash/\\u03bb\")", "expected": { "$type": "NodePath", "path": "/root/\"quoted\"/back\\slash/λ" } },
+    { "name": "constructor exponent and signs", "input": "Vector3(+1.5e+2, -1.25E-1, 2.)", "expected": { "$type": "Vector3", "x": 150, "y": -0.125, "z": 2 } },
     { "name": "rect2", "input": "Rect2(1, 2, 3.5, 4)", "expected": { "$type": "Rect2", "x": 1, "y": 2, "width": 3.5, "height": 4 } },
     { "name": "json nested collection", "input": "[null,true,{\"label\":\"ok\",\"items\":[1,2]}]", "expected": [null, true, { "label": "ok", "items": [1, 2] }] },
     { "name": "tagged nested collection", "input": [{ "$type": "Vector2", "x": 1, "y": 2 }, { "color": { "$type": "Color", "r": 1, "g": 0, "b": 0, "a": 0.5 } }], "expected": [{ "$type": "Vector2", "x": 1, "y": 2 }, { "color": { "$type": "Color", "r": 1, "g": 0, "b": 0, "a": 0.5 } }] }
@@ -33,7 +35,14 @@
     { "name": "trailing junk", "input": "Vector3(1,2,3) nope", "contains": "trailing" },
     { "name": "unknown constructor", "input": "Transform3D(1,2,3)", "contains": "unknown constructor" },
     { "name": "unquoted node path", "input": "NodePath(/root/Main)", "contains": "quoted JSON string" },
+    { "name": "malformed quoted node path", "input": "NodePath(\"unterminated)", "contains": "quoted JSON string" },
+    { "name": "constructor missing exponent", "input": "Vector2(1e,2)", "contains": "finite" },
+    { "name": "constructor doubled sign", "input": "Vector2(--1,2)", "contains": "finite" },
+    { "name": "constructor internal whitespace", "input": "Vector2(1 2,3)", "contains": "finite" },
     { "name": "bad hex", "input": "#12345", "contains": "6 or 8" },
-    { "name": "unknown tag", "input": { "$type": "Basis", "values": [] }, "contains": "unknown tagged Variant" }
+    { "name": "unknown tag", "input": { "$type": "Basis", "values": [] }, "contains": "unknown tagged Variant" },
+    { "name": "tag missing field", "input": { "$type": "Vector2", "x": 1 }, "contains": "exactly" },
+    { "name": "tag extra field", "input": { "$type": "Vector2", "x": 1, "y": 2, "z": 3 }, "contains": "exactly" },
+    { "name": "tag nonfinite string", "input": { "$type": "Vector2", "x": "Infinity", "y": 2 }, "contains": "finite" }
   ]
 }
