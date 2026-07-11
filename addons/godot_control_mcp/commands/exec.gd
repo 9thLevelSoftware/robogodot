@@ -2,6 +2,8 @@
 extends RefCounted
 
 const DEFAULT_OUTPUT_CAP_BYTES := 262144
+const MAX_ERROR_ENTRIES := 128
+const MAX_RESULT_JSON_BYTES := 261888
 const TYPE_PARSE_PATH := "res://addons/godot_control_mcp/util/type_parse.gd"
 
 class CaptureLogger extends Logger:
@@ -10,6 +12,7 @@ class CaptureLogger extends Logger:
 	var cap_bytes := DEFAULT_OUTPUT_CAP_BYTES
 	var used_bytes := 0
 	var truncated := false
+	var saw_error := false
 	var mutex := Mutex.new()
 
 	func _append_bounded(text: String) -> String:
@@ -25,18 +28,44 @@ class CaptureLogger extends Logger:
 		return output
 
 	func _log_message(message: String, error: bool) -> void:
+		var normalized := _redact(message)
+		if not normalized.ends_with("\n"): normalized += "\n"
 		mutex.lock()
-		var captured := _append_bounded(message + "\n")
-		if error: errors.append(captured)
+		if error: saw_error = true
+		var captured := _append_bounded(normalized)
+		if error and not captured.is_empty() and errors.size() < MAX_ERROR_ENTRIES: errors.append(captured)
+		elif error and errors.size() >= MAX_ERROR_ENTRIES: truncated = true
 		else: stdout += captured
 		mutex.unlock()
 
 	func _log_error(function: String, file: String, line: int, code: String, rationale: String, _editor_notify: bool, _error_type: int, _script_backtraces: Array[ScriptBacktrace]) -> void:
+		var detail := _redact(rationale if not rationale.is_empty() else code)
+		var location := "%s:%d" % [file.get_file(), line] if not file.is_empty() else function
 		mutex.lock()
-		var detail := rationale if not rationale.is_empty() else code
-		var location := "%s:%d" % [file, line] if not file.is_empty() else function
-		errors.append(_append_bounded("%s: %s" % [location, detail]))
+		saw_error = true
+		var captured := _append_bounded("%s: %s" % [location, detail])
+		if not captured.is_empty() and errors.size() < MAX_ERROR_ENTRIES: errors.append(captured)
+		elif errors.size() >= MAX_ERROR_ENTRIES: truncated = true
 		mutex.unlock()
+
+	func _redact(text: String) -> String:
+		var project_path := ProjectSettings.globalize_path("res://").trim_suffix("/").trim_suffix("\\")
+		var redacted := text.replace(project_path, "res://") if not project_path.is_empty() else text
+		var windows_path := RegEx.create_from_string("[A-Za-z]:[\\\\/][^\\s]+")
+		redacted = windows_path.sub(redacted, "[host-path]", true)
+		var unix_path := RegEx.create_from_string("/(?:Users|home|tmp|var|private|root)/[^\\s]+")
+		return unix_path.sub(redacted, "[host-path]", true)
+
+static func _finish(result: Dictionary, started: int) -> Dictionary:
+	result.elapsedMs = (Time.get_ticks_usec() - started) / 1000.0
+	if JSON.stringify(result).to_utf8_buffer().size() > MAX_RESULT_JSON_BYTES:
+		result.returnValue = null
+		result.truncated = true
+	while JSON.stringify(result).to_utf8_buffer().size() > MAX_RESULT_JSON_BYTES and not result.errors.is_empty():
+		result.errors.pop_back()
+	while JSON.stringify(result).to_utf8_buffer().size() > MAX_RESULT_JSON_BYTES and not result.stdout.is_empty():
+		result.stdout = result.stdout.left(maxi(0, result.stdout.length() - 256))
+	return {"ok": true, "result": result}
 
 static func run(params: Dictionary) -> Dictionary:
 	var started := Time.get_ticks_usec()
@@ -44,24 +73,24 @@ static func run(params: Dictionary) -> Dictionary:
 	var source: Variant = params.get("source")
 	if not source is String or source.is_empty():
 		result.errors = ["source must be a nonempty string defining func __run(args):"]
-		return {"ok": true, "result": result}
+		return _finish(result, started)
 	var contract := RegEx.create_from_string("(?m)^\\s*func\\s+__run\\s*\\(\\s*args\\s*\\)\\s*(?:->[^:]*)?:")
 	if contract.search(source) == null:
 		result.errors = ["source must define func __run(args):"]
-		return {"ok": true, "result": result}
+		return _finish(result, started)
 	var cap: Variant = params.get("outputCapBytes", DEFAULT_OUTPUT_CAP_BYTES)
-	if not (cap is int or cap is float) or not is_finite(float(cap)) or cap < 0 or floor(float(cap)) != float(cap):
-		result.errors = ["outputCapBytes must be a nonnegative integer"]
-		return {"ok": true, "result": result}
+	if not (cap is int or cap is float) or not is_finite(float(cap)) or cap < 0 or cap > DEFAULT_OUTPUT_CAP_BYTES or floor(float(cap)) != float(cap):
+		result.errors = ["outputCapBytes must be an integer from 0 to 262144"]
+		return _finish(result, started)
 	cap = int(cap)
 	var type_parse: Script = load(TYPE_PARSE_PATH)
 	if type_parse == null:
 		result.errors = ["Variant parser is unavailable"]
-		return {"ok": true, "result": result}
+		return _finish(result, started)
 	var parsed: Dictionary = type_parse.parse_variant_literal(params.get("args", null))
 	if not parsed.ok:
 		result.errors = [parsed.error]
-		return {"ok": true, "result": result}
+		return _finish(result, started)
 
 	var capture := CaptureLogger.new()
 	capture.cap_bytes = cap
@@ -69,17 +98,19 @@ static func run(params: Dictionary) -> Dictionary:
 	var script := GDScript.new()
 	script.source_code = source if source.lstrip(" \t\r\n").begins_with("@tool") else "@tool\n" + source
 	var reload_error := script.reload()
+	var return_value: Variant = null
 	if reload_error == OK and script.can_instantiate():
 		var instance: Variant = script.new()
 		if instance != null and instance.has_method("__run"):
-			var value: Variant = instance.call("__run", parsed.value)
-			result.returnValue = type_parse.serialize_variant(value)
+			return_value = instance.call("__run", parsed.value)
 		else:
-			capture.errors.append("source must define func __run(args):")
+			capture.saw_error = true
+			if capture.errors.size() < MAX_ERROR_ENTRIES: capture.errors.append("source must define func __run(args):")
 	OS.remove_logger(capture)
+	if reload_error == OK and not capture.saw_error:
+		result.returnValue = type_parse.serialize_variant(return_value)
 	result.stdout = capture.stdout
 	result.errors = capture.errors
 	result.truncated = capture.truncated
-	result.elapsedMs = (Time.get_ticks_usec() - started) / 1000.0
-	result.ok = reload_error == OK and result.errors.is_empty()
-	return {"ok": true, "result": result}
+	result.ok = reload_error == OK and not capture.saw_error and result.errors.is_empty()
+	return _finish(result, started)

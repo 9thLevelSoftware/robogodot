@@ -94,8 +94,8 @@ func _run() -> void:
 	await _wait_peer_count(server, 0, Server.HARD_CLOSE_TIMEOUT_MSEC + 500)
 
 	var preauth := await _connect()
-	var denied := await _request(preauth, {"jsonrpc":"2.0", "id":1, "method":"core.ping", "params":{}})
-	_check(denied.get("error", {}).get("code") == -32002, "commands before authentication must be rejected; got %s" % denied)
+	var denied := await _request(preauth, {"jsonrpc":"2.0", "id":1, "method":"exec.run", "params":{"source":"func __run(args):\n\treturn 1"}})
+	_check(denied.get("error", {}).get("code") == -32002, "direct exec.run before authentication must be rejected; got %s" % denied)
 	await _wait_closed(preauth)
 	_check(preauth.get_ready_state() == WebSocketPeer.STATE_CLOSED, "pre-auth command peer must close")
 

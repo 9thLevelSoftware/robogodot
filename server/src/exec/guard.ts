@@ -24,30 +24,29 @@ export interface RpcCaller {
   call<T>(method: string, params?: unknown, options?: { timeoutMs?: number }): Promise<T>;
 }
 
-const DANGEROUS_PATTERNS = [
-  /\bOS\s*\.\s*(?:execute|execute_with_pipe|create_process)\s*\(/i,
-  /\bDirAccess\s*\.\s*(?:remove_absolute|rename_absolute)\s*\(\s*["'](?:res:\/\/|\.\/)?["']/i,
-  /\b(?:remove|erase)\s*\(\s*["']res:\/\/["']/i,
-] as const;
-
 function blocked(message: string, hint: string): never {
   throw new GodotMcpError("blocked_by_policy", message, hint);
 }
 
 export function validateExecutionPolicy(request: EditorScriptRequest): void {
+  if (!(["full", "read_only", "confirm_destructive"] as unknown[]).includes(request.mode)) {
+    throw new GodotMcpError("invalid_args", "Invalid execution mode.", "Use read_only, confirm_destructive, or full.");
+  }
   if (request.mode === "read_only") {
-    blocked("Editor-script execution is blocked in read_only mode.", "Switch to confirm_destructive or full mode before executing editor code.");
+    blocked("Editor-script execution is blocked in read_only mode.", "Switch to full mode and explicitly set allowDangerous true.");
   }
-  if (request.mode === "confirm_destructive" && request.confirmed !== true) {
-    blocked("Editor-script execution requires explicit confirmation.", "Confirm this individual request; allowDangerous does not count as confirmation.");
+  if (request.mode === "confirm_destructive") {
+    blocked("Editor-script execution is blocked in confirm_destructive mode; switch to full mode.", "Switch to full mode and explicitly set allowDangerous true.");
   }
-  const dangerous = DANGEROUS_PATTERNS.some((pattern) => pattern.test(request.source));
-  if (dangerous && !(request.mode === "full" && request.allowDangerous === true)) {
-    blocked("Dangerous shell-out or recursive project deletion source is blocked.", "Dangerous execution requires mode full and allowDangerous true.");
+  if (request.allowDangerous !== true) {
+    blocked("Editor-script execution requires allowDangerous true.", "Set allowDangerous true for every execution in full mode after reviewing the source.");
   }
 }
 
 export async function executeEditorScript(client: RpcCaller, request: EditorScriptRequest): Promise<EditorExecutionResult> {
+  if (request.outputCapBytes !== undefined && (!Number.isInteger(request.outputCapBytes) || request.outputCapBytes < 0 || request.outputCapBytes > DEFAULT_OUTPUT_CAP_BYTES)) {
+    throw new GodotMcpError("invalid_args", "outputCapBytes must be an integer from 0 to 262144.", "Reduce outputCapBytes to the supported range.");
+  }
   validateExecutionPolicy(request);
   const { mode: _mode, confirmed: _confirmed, allowDangerous: _allowDangerous, ...params } = request;
   try {
