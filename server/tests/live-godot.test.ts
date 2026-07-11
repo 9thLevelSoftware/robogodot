@@ -78,13 +78,13 @@ liveDescribe("live Godot editor round trip (set GODOT_PATH to enable)", () => {
   test("round trips ping/version and reconnects after an actual editor restart", async () => {
     const projectPath = await mkdtemp(join(tmpdir(), "godot-control-mcp-live-"));
     let client: JsonRpcClient | undefined;
-    let process: GodotProcess | undefined;
+    let godotProcess: GodotProcess | undefined;
     try {
       await mkdir(join(projectPath, "addons"), { recursive: true });
       await cp(join(repositoryRoot, "addons", "godot_control_mcp"), join(projectPath, "addons", "godot_control_mcp"), { recursive: true });
       await writeFile(join(projectPath, "project.godot"), '[application]\nconfig/name="Godot Control MCP Live"\n[editor_plugins]\nenabled=PackedStringArray("res://addons/godot_control_mcp/plugin.cfg")\n');
 
-      process = await launchWithPortRetry({
+      godotProcess = await launchWithPortRetry({
         attempts: LAUNCH_ATTEMPTS,
         allocatePort: freePort,
         launch: (port) => {
@@ -97,24 +97,24 @@ liveDescribe("live Godot editor round trip (set GODOT_PATH to enable)", () => {
         diagnostics: (failed) => failed.capture.diagnostics(),
         shouldRetry: (_error, failed) => /address already in use|ERR_ALREADY_IN_USE|could not listen[^\n]*error 22/i.test(failed.capture.diagnostics()),
       });
-      const port = process.port;
+      const port = godotProcess.port;
       const connectedClient = client!;
       expect(await connectedClient.call("core.ping")).toEqual({ pong: true });
       const version = await connectedClient.call<Record<string, unknown>>("core.get_version");
       expect(version).toMatchObject({ plugin: "0.1.0", connected: true });
       expect(version.projectPath).toBe(`${projectPath.replaceAll("\\", "/")}/`);
 
-      await terminate(process);
-      process = undefined;
+      await terminate(godotProcess);
+      godotProcess = undefined;
       await waitFor(() => connectedClient.getStatus().state !== "connected", "Client did not observe editor termination");
       await expect(connectedClient.call("core.ping")).rejects.toMatchObject<Partial<GodotMcpError>>({ code: "not_connected" });
 
-      process = launchGodot(projectPath, port);
-      await waitForProcessConnection({ child: process.child, isConnected: () => connectedClient.getStatus().state === "connected", diagnostics: () => process!.capture.diagnostics(), timeoutMs: RECONNECT_TIMEOUT_MS });
+      godotProcess = launchGodot(projectPath, port);
+      await waitForProcessConnection({ child: godotProcess.child, isConnected: () => connectedClient.getStatus().state === "connected", diagnostics: () => godotProcess!.capture.diagnostics(), timeoutMs: RECONNECT_TIMEOUT_MS });
       await expect(connectedClient.call("core.ping")).resolves.toEqual({ pong: true });
     } finally {
       client?.stop();
-      await terminate(process);
+      await terminate(godotProcess);
       await rm(projectPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
     }
   }, LIVE_TEST_TIMEOUT_MS);

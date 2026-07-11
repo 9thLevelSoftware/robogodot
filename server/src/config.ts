@@ -57,7 +57,7 @@ function findProject(cwd: string, isFile: (candidate: string) => boolean): strin
 
 function findGodot(platform: NodeJS.Platform, pathValue: string, isExecutable: (candidate: string) => boolean): string | undefined {
   const names = platform === "win32" ? WINDOWS_EXECUTABLES : UNIX_EXECUTABLES;
-  const delimiter = platform === "win32" ? ";" : path.delimiter;
+  const delimiter = platform === "win32" ? ";" : ":";
   for (const directory of pathValue.split(delimiter).filter(Boolean)) {
     for (const name of names) {
       const candidate = path.normalize(path.join(directory, name));

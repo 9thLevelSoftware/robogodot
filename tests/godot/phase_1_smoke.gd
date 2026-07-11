@@ -26,6 +26,11 @@ func _request(peer: WebSocketPeer, payload: String) -> Dictionary:
 	return {}
 
 func _run() -> void:
+	_check(Server.is_open_state(WebSocketPeer.STATE_OPEN), "open peers must be processable")
+	_check(not Server.is_open_state(WebSocketPeer.STATE_CONNECTING), "connecting peers must not be processed")
+	_check(not Server.is_open_state(WebSocketPeer.STATE_CLOSING), "closing peers must not be processed")
+	_check(not Server.is_open_state(WebSocketPeer.STATE_CLOSED), "closed peers must not be processed")
+	print("PASS websocket state gate")
 	_check(Plugin.parse_port("09200") == 9200, "alternate integer spelling must parse")
 	_check(Plugin.is_valid_port_value("09200"), "alternate integer spelling must be valid")
 	_check(not Plugin.is_valid_port_value("0"), "out-of-range port must be invalid")

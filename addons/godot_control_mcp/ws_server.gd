@@ -5,6 +5,9 @@ var _tcp_server := TCPServer.new()
 var _peers: Array[WebSocketPeer] = []
 var _router: Variant
 
+static func is_open_state(state: int) -> bool:
+	return state == WebSocketPeer.STATE_OPEN
+
 func start(port: int, router: Variant) -> Error:
 	_router = router
 	return _tcp_server.listen(port, "127.0.0.1")
@@ -38,6 +41,8 @@ func _process(_delta: float) -> void:
 		peer.poll()
 		if peer.get_ready_state() == WebSocketPeer.STATE_CLOSED:
 			_peers.remove_at(index)
+			continue
+		if not is_open_state(peer.get_ready_state()):
 			continue
 		while peer.get_available_packet_count() > 0:
 			var packet := peer.get_packet()

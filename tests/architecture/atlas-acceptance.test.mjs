@@ -98,8 +98,13 @@ test("README is the complete atlas entry point in the required order", async () 
   ]) assert.ok(markdown.includes(token), `README missing: ${token}`);
 });
 
-test("the pinned source archive hash matches the actual ZIP", async () => {
-  const archive = await readFile("C:\\Users\\dasbl\\Downloads\\files.zip");
+test("the pinned source archive hash matches the actual ZIP when supplied", async (context) => {
+  const archivePath = process.env.GODOT_MCP_SOURCE_ARCHIVE;
+  if (!archivePath) {
+    context.skip("set GODOT_MCP_SOURCE_ARCHIVE to verify the external source archive");
+    return;
+  }
+  const archive = await readFile(archivePath);
   assert.equal(createHash("sha256").update(archive).digest("hex").toUpperCase(), ARCHIVE_SHA256);
 });
 

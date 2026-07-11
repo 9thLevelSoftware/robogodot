@@ -37,6 +37,16 @@ describe("resolveConfig", () => {
     expect(resolveConfig({}, "C:\\repo", "win32", probes([], [executable])).godotPath).toBe(executable);
   });
 
+  it("uses the target platform delimiter when resolving a Unix PATH on Windows", () => {
+    const executable = path.normalize("/opt/godot/bin/godot4");
+    const injected = {
+      pathValue: "/usr/local/bin:/opt/godot/bin",
+      isFile: () => false,
+      isExecutable: (candidate: string) => candidate === executable,
+    };
+    expect(resolveConfig({}, "/repo", "linux", injected).godotPath).toBe(executable);
+  });
+
   it.each(["0", "65536", "2.5", "nope"])("rejects invalid port %s", (value) => {
     expect(() => resolveConfig({ GODOT_MCP_PORT: value }, "C:\\repo", "win32", probes())).toThrow(/GODOT_MCP_PORT/);
   });
