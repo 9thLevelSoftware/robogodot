@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This work-order view shows the implementation prerequisites and the contract each phase makes available to later work. Solid arrows are source-explicit handoffs. The two dotted Phase 2 arrows preserve the unresolved `Q-002` disagreement: the master plan calls Phase 2 the spine for Phases 3–6, while the Phase 4 and Phase 6 dependency headers consume only Phase 1. Phase 5 remains a solid Phase 2 dependency because its own plan explicitly consumes Phase 2 execution.
+This work-order view shows the implementation prerequisites and the contract each phase makes available to later work. Solid arrows are source-explicit handoffs. The two dotted Phase 2 arrows preserve the unresolved [Q-002](open-questions.md#architecture-open-questions) disagreement: the master plan calls Phase 2 the spine for Phases 3–6, while the Phase 4 and Phase 6 dependency headers consume only Phase 1. Phase 5 remains a solid Phase 2 dependency because its own plan explicitly consumes Phase 2 execution.
 
 ## Source baseline
 
