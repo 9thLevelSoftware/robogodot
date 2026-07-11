@@ -14,3 +14,13 @@ test("composite hash covers every centralized executable and config input", asyn
     expect(changed, path).not.toBe(hash);
   }
 });
+
+test("composite hash is stable across LF and CRLF checkouts", async () => {
+  const lf = Object.fromEntries(compositeInputPaths.map((path) => [path, `first:${path}\nsecond\n`]));
+  const crlf = Object.fromEntries(compositeInputPaths.map((path) => [path, lf[path]!.replaceAll("\n", "\r\n")]));
+
+  const lfHash = await computeCompositeHash(async (path) => Buffer.from(lf[path]!), createHash);
+  const crlfHash = await computeCompositeHash(async (path) => Buffer.from(crlf[path]!), createHash);
+
+  expect(crlfHash).toBe(lfHash);
+});
