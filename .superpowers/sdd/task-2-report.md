@@ -58,3 +58,48 @@ Observed: exit 0, including `PASS phase 3 edit controller foundation`, `PASS pha
 
 - The Mono editor reports a missing .NET 8.0.28 SDK and renderer/object leak warnings on shutdown; these are environment noise already present in the suite and do not affect exit status.
 - Later lifecycle scans can report a pre-existing global script-class cache collision (`GodotMCPTypeParse hides a global script class`) after repeatedly copying the addon in one runner invocation. The isolated Task 2 editor smoke compiles and passes, and the runner exits 0.
+
+## Review remediation RED/GREEN
+
+RED command:
+
+`cd server && npm test -- --run tests/phase3-node-tools.test.ts`
+
+Observed: exit 1; 2 failed, 4 passed. A 256-byte property name was rejected before dispatch (expected one call, received zero), and `NaN` was dispatched (expected two calls, received three). These failures directly demonstrated the incorrect 255-byte property bound and permissive `z.unknown()` Variant input.
+
+Godot integration RED:
+
+`$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; node tests/godot/run-smoke.mjs`
+
+Observed: exit 1 in the expanded node smoke. Canonical comparison initially used the editor-internal scene-tree path rather than the external `/root/<edited-scene>` namespace, causing valid add/rename operations to fail. `_path` was corrected to canonicalize relative to the edited scene root.
+
+GREEN focused server command:
+
+`cd server && npm test -- --run tests/phase3-node-tools.test.ts tests/type-parser.test.ts && npm run typecheck && npm run build`
+
+Observed: exit 0; 2 files passed, 46 tests passed; typecheck and build passed.
+
+GREEN full server command:
+
+`cd server && npm test -- --run`
+
+Observed: exit 0; 19 files passed, 1 skipped; 160 tests passed, 1 skipped.
+
+GREEN focused Godot command used a clean fixture addon copy and fresh port with `phase_3_node_smoke.gd`.
+
+Observed: exit 0 with `PASS phase 3 undoable node tools`. The smoke asserts exact forward/history/undo/redo behavior for add, rename, property, duplicate, reparent, and delete; subtree/owner/index/global-transform restoration; invalid primitive and object property types; invalid initial properties; traversal rejection; and bounded hierarchical stale hints.
+
+GREEN full Godot command:
+
+`$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; $env:GODOT_MCP_SMOKE_PORT='19223'; node tests/godot/run-smoke.mjs`
+
+Observed: exit 0 in 29.4 seconds, including all prior pass markers and `PASS phase 3 undoable node tools`.
+
+Review implementation notes:
+
+- Shared `variantLiteralSchema = z.json()` now rejects non-JSON/cyclic/non-finite inputs before bridge dispatch while accepting Phase 2 typed JSON representations and literal strings.
+- Property and method names have independent 256-byte schemas; node names remain 255 bytes.
+- Each RPC has an exact strict response schema and plugin results no longer contain redundant inner `ok` fields.
+- All parsed properties are checked against the live descriptor type and object class before any undo action is created.
+- External paths require exact canonical resolution; stale hints contain a bounded hierarchy (64 nodes, 2048 characters).
+- New EditorInterface version-sensitive access is isolated in `godot_compat.gd`.

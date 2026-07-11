@@ -1,3 +1,7 @@
+import { z } from "zod";
+
+export const variantLiteralSchema = z.json();
+
 export class VariantLiteralError extends Error {
   readonly code = "invalid_args" as const;
 

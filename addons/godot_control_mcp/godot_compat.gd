@@ -41,6 +41,9 @@ static func variant_type_name(type_id: int) -> String:
 static func editor_undo_redo() -> EditorUndoRedoManager:
 	return EditorInterface.get_editor_undo_redo()
 
+static func edited_scene_root() -> Node:
+	return EditorInterface.get_edited_scene_root()
+
 static func undo_history_version(undo: EditorUndoRedoManager, target: Object) -> int:
 	var history_id := undo.get_object_history_id(target)
 	return undo.get_history_undo_redo(history_id).get_version()
