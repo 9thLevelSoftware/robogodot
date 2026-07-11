@@ -75,8 +75,9 @@ export function resolveConfig(
   pathValue: string | ResolveConfigProbes = env.PATH ?? "",
 ): ResolvedConfig {
   const token = env.GODOT_MCP_TOKEN;
-  if (token === undefined || token.length < 32) {
-    throw new Error("GODOT_MCP_TOKEN must be a high-entropy secret of at least 32 characters");
+  const tokenBytes = token === undefined ? 0 : Buffer.byteLength(token, "utf8");
+  if (token === undefined || tokenBytes < 32 || tokenBytes > 256) {
+    throw new Error("GODOT_MCP_TOKEN must contain between 32 and 256 UTF-8 bytes");
   }
   const probes = typeof pathValue === "string" ? { pathValue } : pathValue;
   const pathApi = platform === "win32" ? path.win32 : path.posix;

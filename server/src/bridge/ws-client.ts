@@ -127,7 +127,6 @@ export class JsonRpcClient extends EventEmitter {
 
   private handleOpen(socket: SocketLike): void {
     if (socket !== this.socket || this.stopped) return;
-    this.reconnectAttempt = 0;
     this.lastError = undefined;
     const id = 0;
     this.authenticationId = id;
@@ -150,6 +149,7 @@ export class JsonRpcClient extends EventEmitter {
     if (response.id === this.authenticationId) {
       this.clearAuthentication();
       if ("result" in response && typeof response.result === "object" && response.result !== null && "authenticated" in response.result && response.result.authenticated === true) {
+        this.reconnectAttempt = 0;
         this.connectedSince = new Date().toISOString();
         this.setState("connected");
         this.heartbeatTimer = unrefTimer(setInterval(() => this.heartbeat(), this.options.heartbeatIntervalMs));

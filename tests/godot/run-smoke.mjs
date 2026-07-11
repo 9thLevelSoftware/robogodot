@@ -34,6 +34,9 @@ try {
   await cp(resolve(root, "addons/godot_control_mcp"), fixtureAddon, { recursive: true });
   const lifecyclePort = process.env.GODOT_MCP_SMOKE_PORT ?? String(await freePort());
   if (!/^\d+$/.test(lifecyclePort) || Number(lifecyclePort) < 1 || Number(lifecyclePort) > 65535) throw new Error("GODOT_MCP_SMOKE_PORT must be an integer from 1 to 65535");
+  const missingTokenEnv = { ...process.env, GODOT_MCP_PORT: lifecyclePort };
+  delete missingTokenEnv.GODOT_MCP_TOKEN;
+  await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/editor_plugin_missing_token_smoke.gd")], missingTokenEnv);
   await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/editor_plugin_lifecycle_smoke.gd")], { ...process.env, GODOT_MCP_PORT: lifecyclePort, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" });
 } finally {
   await rm(resolve(root, "tests/fixtures/godot_project/addons"), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });

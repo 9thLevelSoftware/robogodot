@@ -58,6 +58,23 @@ describe("JsonRpcClient", () => {
     client.stop();
   });
 
+  it("advances capped reconnect backoff across repeated authentication rejection", async () => {
+    vi.useFakeTimers();
+    const { client, sockets } = harness();
+    client.start();
+    for (const [delay, attempt] of [[1000, 1], [2000, 2], [4000, 3]] as const) {
+      sockets.at(-1)!.open();
+      sockets.at(-1)!.message(JSON.stringify({ jsonrpc: "2.0", id: 0, error: { code: -32001, message: "Authentication failed" } }));
+      const count = sockets.length;
+      expect(client.getStatus()).toMatchObject({ state: "reconnecting", reconnectAttempt: attempt });
+      await vi.advanceTimersByTimeAsync(delay - 1); expect(sockets).toHaveLength(count);
+      await vi.advanceTimersByTimeAsync(1); expect(sockets).toHaveLength(count + 1);
+    }
+    client.stop();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(4);
+  });
+
   it("closes and reconnects when authentication receives no response", async () => {
     vi.useFakeTimers();
     const { client, sockets } = harness({ heartbeatTimeoutMs: 50 });
@@ -65,6 +82,20 @@ describe("JsonRpcClient", () => {
     await vi.advanceTimersByTimeAsync(50);
     expect(sockets[0]!.readyState).toBe(3);
     expect(client.getStatus()).toMatchObject({ state: "reconnecting", lastError: "Editor authentication timed out" });
+    client.stop();
+  });
+
+  it("advances reconnect backoff across repeated authentication timeouts", async () => {
+    vi.useFakeTimers();
+    const { client, sockets } = harness({ heartbeatTimeoutMs: 50 });
+    client.start();
+    for (const delay of [1000, 2000, 4000]) {
+      sockets.at(-1)!.open();
+      await vi.advanceTimersByTimeAsync(50);
+      const count = sockets.length;
+      await vi.advanceTimersByTimeAsync(delay - 1); expect(sockets).toHaveLength(count);
+      await vi.advanceTimersByTimeAsync(1); expect(sockets).toHaveLength(count + 1);
+    }
     client.stop();
   });
   it("unrefs call, heartbeat, heartbeat-call, and reconnect timers when supported", async () => {

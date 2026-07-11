@@ -22,6 +22,11 @@ describe("resolveConfig", () => {
       .toThrow(/GODOT_MCP_TOKEN/);
   });
 
+  it("rejects a token exceeding the editor authentication bound", () => {
+    expect(() => resolveConfig({ GODOT_MCP_TOKEN: "x".repeat(257) }, "C:\\repo", "win32", probes()))
+      .toThrow(/GODOT_MCP_TOKEN/);
+  });
+
   it("applies environment overrides", () => {
     const config = resolveConfig({ ...TOKEN_ENV, GODOT_MCP_PORT: "9300", GODOT_LSP_PORT: "7005", GODOT_DAP_PORT: "7006", GODOT_MCP_MODE: "read_only", DEBUG: "true", GODOT_PROJECT_PATH: "C:\\game" }, "C:\\repo", "win32", probes());
     expect(config).toMatchObject({ editorPort: 9300, lspPort: 7005, dapPort: 7006, mode: "read_only", debug: true, projectPath: "C:\\game" });

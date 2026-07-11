@@ -43,8 +43,9 @@ func _enter_tree() -> void:
 	add_child(_server)
 	var port := port_from_environment()
 	var token := token_from_environment()
-	if token.length() < 32:
-		push_error("GODOT_MCP_TOKEN must be a high-entropy secret of at least 32 characters; transport disabled.")
+	var token_size := token.to_utf8_buffer().size()
+	if token_size < Server.MIN_TOKEN_BYTES or token_size > Server.MAX_TOKEN_BYTES:
+		push_error("GODOT_MCP_TOKEN must contain between 32 and 256 UTF-8 bytes; transport disabled.")
 		return
 	var listen_error: Error = _server.start(port, router, token)
 	if listen_error != OK:
