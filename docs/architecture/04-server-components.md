@@ -17,7 +17,7 @@ This component view assigns MCP registration, shared policy, semantic support, e
 ```mermaid
 flowchart TB
   accTitle: Godot Control MCP server, plugin, and Godot component boundaries
-  accDescr: A top-to-bottom component view with four groups. The MCP surface registers schemas, tools, resources, and prompts. The TypeScript server applies one middleware band and delegates through semantic services or grouped adapters. The GDScript plugin dispatches editor commands. Godot services provide editor APIs, ClassDB documentation, UndoRedo, and runtime autoload execution.
+  accDescr: A top-to-bottom component view with four groups. The MCP surface registers schemas, tools, resources, and prompts. The TypeScript server applies one middleware band and delegates through semantic services or grouped adapters. The GDScript plugin dispatches editor commands. Godot provides live ClassDB metadata while the server supplies pinned offline documentation after a live version gate.
 
   subgraph MCP_SURFACE["MCP surface"]
     direction TB
@@ -63,7 +63,7 @@ flowchart TB
     %% atlas-node: CMP-CORE-COMMANDS
     CMP_CORE_COMMANDS["CMP-CORE-COMMANDS<br/>version + ping"]
     %% atlas-node: CMP-INTROSPECTION-COMMANDS
-    CMP_INTROSPECTION_COMMANDS["CMP-INTROSPECTION-COMMANDS<br/>live API + documentation queries"]
+    CMP_INTROSPECTION_COMMANDS["CMP-INTROSPECTION-COMMANDS<br/>live API + docs version gate"]
     %% atlas-node: CMP-EXEC-COMMANDS
     CMP_EXEC_COMMANDS["CMP-EXEC-COMMANDS<br/>Tier B editor-script execution"]
     %% atlas-node: CMP-EDIT-COMMANDS
@@ -74,12 +74,12 @@ flowchart TB
     CMP_GODOT_COMPAT["CMP-GODOT-COMPAT<br/>version-sensitive shim<br/>godot_compat.gd"]
   end
 
-  subgraph GODOT_SERVICES_RUNTIME["Godot services / runtime"]
+  subgraph GODOT_SERVICES_RUNTIME["Godot editor/runtime + pinned knowledge services"]
     direction LR
     %% atlas-node: SYS-EDITOR-APIS
     SYS_EDITOR_APIS["SYS-EDITOR-APIS<br/>EditorInterface services"]
     %% atlas-node: SYS-CLASSDB-DOCS
-    SYS_CLASSDB_DOCS["SYS-CLASSDB-DOCS<br/>ClassDB + integrated docs"]
+    SYS_CLASSDB_DOCS["SYS-CLASSDB-DOCS<br/>live ClassDB + server-side<br/>immutable 4.6.2 docs artifact"]
     %% atlas-node: SYS-UNDO-REDO
     SYS_UNDO_REDO["SYS-UNDO-REDO<br/>EditorUndoRedoManager"]
     %% atlas-node: CMP-RUNTIME-AUTOLOADS
@@ -125,7 +125,7 @@ flowchart TB
   %% atlas-flow: FLOW-CMP-019
   CMP_EDIT_CONTROLLER -->|"create + commit actions"| SYS_UNDO_REDO
   %% atlas-flow: FLOW-CMP-020
-  CMP_INTROSPECTION_COMMANDS -->|"query API + documentation"| SYS_CLASSDB_DOCS
+  CMP_INTROSPECTION_COMMANDS -->|"query ClassDB + core.get_version-gated offline docs"| SYS_CLASSDB_DOCS
   %% atlas-flow: FLOW-CMP-021
   CMP_COMMAND_ROUTER -->|"isolate version-sensitive calls"| CMP_GODOT_COMPAT
   %% atlas-flow: FLOW-CMP-022

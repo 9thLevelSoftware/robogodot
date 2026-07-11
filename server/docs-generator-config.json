@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 2,
+  "sourceCommit": "001aa128b1cd80dc4e47e823c360bccf45ed6bad",
+  "sourceArchiveSha256": "146a0af84fa4b11670ee5574d98d0a508f047db626407909121b38984531f3d1",
+  "maxArchiveEntries": 20000,
+  "maxExpandedBytes": 600000000,
+  "xmlPolicy": "fast-xml-parser-5.10.0;no-dtd;no-entities;explicit-godot-schema"
+}

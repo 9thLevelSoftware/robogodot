@@ -1,5 +1,6 @@
 export const PHASE_1_ERROR_CODES = ["not_connected", "editor_required", "invalid_args", "godot_error", "timeout"] as const;
-export type GodotMcpErrorCode = (typeof PHASE_1_ERROR_CODES)[number];
+export const ERROR_CODES = [...PHASE_1_ERROR_CODES, "blocked_by_policy", "feature_disabled"] as const;
+export type GodotMcpErrorCode = (typeof ERROR_CODES)[number];
 
 export interface ToolErrorPayload {
   code: GodotMcpErrorCode;

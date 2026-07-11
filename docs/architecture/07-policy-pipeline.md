@@ -32,7 +32,7 @@ flowchart TD
     %% atlas-node: CMP-PATH-GUARD
     PATH_GUARD{"CMP-PATH-GUARD<br/>canonical path · root jail<br/>Q-009 export roots"}
     %% atlas-node: CMP-EXEC-GUARD
-    EXEC_GUARD{"CMP-EXEC-GUARD<br/>deny-list · timeout · output cap<br/>Q-006 headless classification"}
+    EXEC_GUARD{"CMP-EXEC-GUARD<br/>mode + allowDangerous · output cap<br/>TS 15s deadline · no cancellation"}
   end
 
   subgraph WORK_BAND["2 · Distinct read and mutation lanes"]
@@ -111,7 +111,7 @@ The node inventory is exhaustive for this view and indexed in the [Traceability 
 | `CMP-REGISTRY` | Wraps every registered tool in one ordered middleware band so no handler can bypass policy. | Explicit | Phase 7 | `server/registry.ts` registry-assembly boundary. | Phase 7 §§3–6 · [trace](traceability.md#architecture-atlas-traceability) |
 | `CMP-MODE-GATE` | Resolves `full`, `read_only`, or `confirm_destructive` and evaluates MCP annotations plus confirmation. | Explicit | Phase 7 | `mw/safety.ts` mode and annotation policy boundary. | Phase 7 §§2, 5, 7–8 · [Q-006](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
 | `CMP-PATH-GUARD` | Canonicalizes guarded paths, enforces the project-root jail, and rejects traversal or disallowed roots. | Explicit | Phases 6 and 7 | `FsGuard` canonical filesystem/export boundary. | Phase 6 §§5–9; Phase 7 §§1–4 · [Q-009](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
-| `CMP-EXEC-GUARD` | Applies deny-list, wall-clock timeout, output cap, and dangerous-execution override rules. | Explicit | Phases 2 and 7 | `exec/guard.ts` arbitrary-execution boundary. | Phase 2 §§2, 4–9; Phase 7 §§1–8 · [Q-006](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
+| `CMP-EXEC-GUARD` | Applies source-independent mode plus per-call `allowDangerous:true`, output bounds, and the TypeScript-owned 15-second response deadline. It makes no in-process cancellation claim. | Explicit | Phases 2 and 7 | `exec/guard.ts` and TypeScript bridge timeout boundary. | ADR 0002; Phase 2 §§2, 4–9; Phase 7 §§1–8 · [trace](traceability.md#architecture-atlas-traceability) |
 | `CMP-REQUEST-CLASSIFIER` | Uses annotations and mutation metadata to select the concurrent read lane or serialized mutation lane. | Explicit | Phase 7 | Registry metadata and middleware-routing boundary. | Phase 7 §§1–8 · [Q-006](open-questions.md#architecture-open-questions) · [Q-008](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
 | `CMP-READ-CACHE` | Serves only read-only requests from a keyed TTL cache and tags entries for later invalidation. | Explicit | Phase 7 | `mw/cache.ts` concurrent read-cache boundary. | Phase 7 §§2, 4–9 · [Q-008](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
 | `CMP-REQUEST-QUEUE` | Serializes mutations in one FIFO lane with timeout, fairness, backpressure, and watchdog controls. | Explicit | Phase 7 | `mw/queue.ts` in-process mutation scheduling boundary. | Phase 7 §§2, 4–9 · [Q-008](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
@@ -148,9 +148,9 @@ The node inventory is exhaustive for this view and indexed in the [Traceability 
 
 ## Policy, concurrency, and consistency risks
 
-- Mode semantics are source-defined: `full` is the local default; `read_only` blocks mutating and destructive tools plus editor-script execution; `confirm_destructive` requires `confirm:true` or client approval for destructive tools and editor-script execution. The safety classification for arbitrary headless GDScript remains unresolved under [Q-006](open-questions.md#architecture-open-questions), so this view does not invent a classification.
+- For arbitrary editor-script execution, `read_only` and `confirm_destructive` block; `full` additionally requires `allowDangerous:true` on every call. Authorization is source-independent: regexes, deny-lists, and source heuristics are not a security boundary. [Q-006](open-questions.md#architecture-open-questions) separately tracks headless GDScript classification.
 - `CMP-PATH-GUARD` preserves the canonical project-root jail. Allowed export output paths remain unresolved under [Q-009](open-questions.md#architecture-open-questions); the allowed branch does not silently authorize a temp or external root.
-- `CMP-EXEC-GUARD` applies the source-defined deny-list, timeout, output cap, and `full` plus `allowDangerous` override. A guard rejection maps to `blocked_by_policy` and the structured-error fields `{code, message, hint}`.
+- `CMP-EXEC-GUARD` applies the mode/capability gate and output cap. TypeScript owns the 15-second response timeout; a blocked Godot editor thread is not cancelled in-process and may require an editor restart. A guard rejection maps to `blocked_by_policy` and the structured-error fields `{code, message, hint}`.
 - The queue is not a rollback transaction. FIFO serialization controls when mutations start; undo, compensation, and partial-failure semantics remain the handler's channel-specific responsibility.
 - Concurrent reads may observe in-progress mutation state. Reads intentionally proceed during a long mutation, while TTL and affected-tag invalidation happen outside a snapshot-isolation contract; [Q-008](open-questions.md#architecture-open-questions) tracks cached pre-state, partial live state, and stale repopulation risks.
 - FIFO, timeout, fairness, backpressure, and watchdog are queue liveness controls. They do not guarantee rollback, atomicity, or read consistency.

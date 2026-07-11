@@ -17,8 +17,9 @@ beforeAll(async () => {
 });
 
 describe("freshly built stdio server", () => {
-  it("emits only complete MCP JSON frames and lists exactly three probes while Godot is absent", async () => {
-    const child = spawn(process.execPath, [artifact], { cwd: process.cwd(), stdio: ["pipe", "pipe", "pipe"] });
+  const childEnv = { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" };
+  it("emits only complete MCP JSON frames and lists exactly eight Phase 1 and Phase 2 tools while Godot is absent", async () => {
+    const child = spawn(process.execPath, [artifact], { cwd: process.cwd(), env: childEnv, stdio: ["pipe", "pipe", "pipe"] });
     const messages: Array<Record<string, any>> = [];
     let buffer = "";
     let parseFailure: Error | undefined;
@@ -51,12 +52,13 @@ describe("freshly built stdio server", () => {
     expect(parseFailure).toBeUndefined();
     expect(buffer).toBe("");
     expect(messages.find((message) => message.id === 2)?.result.tools.map((tool: { name: string }) => tool.name)).toEqual([
-      "godot_connection_status", "godot_get_version", "godot_ping",
+      "godot_connection_status", "godot_get_version", "godot_ping", "godot_script_run",
+      "godot_api_list_classes", "godot_api_describe_class", "godot_api_search", "godot_api_class_doc",
     ]);
   });
 
   it("exits promptly and successfully when its stdio host closes stdin", async () => {
-    const child = spawn(process.execPath, [artifact], { cwd: process.cwd(), stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(process.execPath, [artifact], { cwd: process.cwd(), env: childEnv, stdio: ["pipe", "pipe", "pipe"] });
     child.stdin.end();
     const result = await Promise.race([
       new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.once("exit", (code, signal) => resolve({ code, signal }))),

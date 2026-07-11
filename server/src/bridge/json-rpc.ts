@@ -8,6 +8,12 @@ export type JsonRpcResponse =
   | { jsonrpc: "2.0"; id: number; result: unknown }
   | { jsonrpc: "2.0"; id: number; error: JsonRpcErrorObject };
 
+export function serializeJsonRpcRequest(id: number, method: string, params?: unknown): string {
+  const request: Record<string, unknown> = { jsonrpc: "2.0", id, method };
+  if (params !== undefined) request.params = params;
+  return JSON.stringify(request);
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -171,7 +171,7 @@ Required elements:
 
 - MCP client to TypeScript server over MCP/stdio;
 - editor mutation through the Godot editor plugin over WebSocket plus JSON-RPC 2.0 on default port `9200`;
-- live introspection through that plugin transport into `ClassDB` and integrated class-reference documentation;
+- live metadata introspection through that plugin transport into `ClassDB`, plus server-side official class-reference text from the immutable Godot 4.6.2 offline artifact after a live `core.get_version` 4.6.x gate (GDScript does not read the editor's integrated documentation);
 - Godot LSP over TCP on default port `6005`;
 - runtime and debug through process control, Godot DAP on default TCP port `6006`, and a bridge using correlated `user://` file IPC, with a local socket marked as a preferred but unspecified alternative;
 - headless, batch, filesystem, UID, export, and asset operations, showing process-spawn and guarded file-access mechanisms inside this channel;

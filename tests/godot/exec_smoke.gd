@@ -1,0 +1,97 @@
+extends SceneTree
+
+const Exec = preload("res://addons/godot_control_mcp/commands/exec.gd")
+const Router = preload("res://addons/godot_control_mcp/command_router.gd")
+
+func _init() -> void:
+	var typed := Exec.run({"source": "func __run(args):\n\tprint(\"hello\")\n\treturn Vector2(args.x, 2)", "args": {"x": 1}, "outputCapBytes": 262144})
+	assert(typed.ok and typed.result.ok)
+	assert(typed.result.returnValue == {"$type": "Vector2", "x": 1.0, "y": 2.0})
+	assert("hello" in typed.result.stdout)
+	assert(typed.result.errors.is_empty())
+	assert(not typed.result.truncated)
+	assert(typed.result.elapsedMs >= 0)
+	assert(typed.result.keys().size() == 6)
+	for key in ["ok", "returnValue", "stdout", "errors", "elapsedMs", "truncated"]: assert(typed.result.has(key))
+	var invalid_cap := Exec.run({"source": "func __run(args):\n\treturn null", "outputCapBytes": 262145})
+	assert(not invalid_cap.result.ok and invalid_cap.result.elapsedMs >= 0)
+	var missing_contract := Exec.run({"source": "func __run(value):\n\treturn value", "args": {}})
+	assert(not missing_contract.result.ok)
+	assert(missing_contract.result.errors.any(func(value): return "func __run(args):" in value))
+	var compile_error := Exec.run({"source": "func __run(args):\n\treturn (", "args": {}})
+	assert(compile_error.ok and not compile_error.result.ok)
+	assert(not compile_error.result.errors.is_empty())
+	var runtime_error := Exec.run({"source": "func __run(args):\n\tpush_error(\"boom\")\n\treturn 1", "args": {}})
+	assert(runtime_error.ok and not runtime_error.result.ok)
+	assert(runtime_error.result.errors.any(func(value): return "boom" in value))
+	var capped := Exec.run({"source": "func __run(args):\n\tprint(\"éééé\")", "args": {}, "outputCapBytes": 5})
+	assert(capped.result.truncated)
+	assert(capped.result.stdout.to_utf8_buffer().size() <= 5)
+	assert(capped.result.stdout == "éé")
+	var exact_logger := Exec.CaptureLogger.new()
+	exact_logger.cap_bytes = 4
+	var exact_capture := exact_logger._append_bounded("AéZ")
+	assert(exact_capture == "AéZ")
+	assert(exact_capture.to_utf8_buffer().size() == 4 and exact_logger.used_bytes == 4)
+	assert(not exact_logger.truncated)
+	var partial_logger := Exec.CaptureLogger.new()
+	partial_logger.cap_bytes = 2
+	var partial_capture := partial_logger._append_bounded("AéZ")
+	assert(partial_capture == "A")
+	assert(partial_capture.to_utf8_buffer().size() == 1 and partial_logger.used_bytes == 1)
+	assert(partial_logger.truncated)
+	var redaction_logger := Exec.CaptureLogger.new()
+	for preserved in ["res://addons/example.gd", "res://My Project/example.gd", "user://cache/example.log", "user://My Project/example.log", "/root/Main/Camera3D", "/root/My Project/Camera3D", "https://example.com/home/user", "res://home/example.gd", "user://tmp/example.log"]:
+		assert(redaction_logger._redact(preserved) == preserved)
+	var globalized_project_file := ProjectSettings.globalize_path("res://addons/example.gd")
+	assert(redaction_logger._redact(globalized_project_file) == "res://addons/example.gd")
+	var globalized_spaced_project_file := ProjectSettings.globalize_path("res://My Project/example.gd")
+	assert(redaction_logger._redact(globalized_spaced_project_file) == "res://My Project/example.gd")
+	for host_path in ["C:\\Users\\secret\\example.gd", "D:/work/private/example.gd", "\\\\server\\share\\example.gd", "/Users/secret/example.gd", "/home/secret/example.gd", "/tmp/secret/example.gd", "/var/secret/example.gd", "/private/secret/example.gd"]:
+		assert(redaction_logger._redact(host_path) == "[host-path]")
+	var spaced_path_cases: Array[Dictionary] = [
+		{"input": "C:\\Users\\me\\My Project\\secret.gd", "expected": "[host-path]"},
+		{"input": "load \"C:\\Users\\me\\My Project\\secret.gd\" next", "expected": "load \"[host-path]\" next"},
+		{"input": "at C:\\Users\\me\\My Project\\secret.gd unquoted suffix", "expected": "at [host-path]"},
+		{"input": "at C:\\Users\\me\\My Project\\secret.gd\n/root/Main", "expected": "at [host-path]\n/root/Main"},
+		{"input": "\\\\server\\share\\My Project\\secret.gd", "expected": "[host-path]"},
+		{"input": "source='\\\\server\\share\\My Project\\secret.gd' next", "expected": "source='[host-path]' next"},
+		{"input": "/Users/me/My Project/secret.gd", "expected": "[host-path]"},
+		{"input": "load \"/home/me/My Project/secret.gd\" next", "expected": "load \"[host-path]\" next"},
+		{"input": "at /tmp/My Project/secret.gd\r\nuser://cache.log", "expected": "at [host-path]\r\nuser://cache.log"},
+	]
+	for case in spaced_path_cases:
+		var actual: String = redaction_logger._redact(case.input)
+		if actual != case.expected:
+			push_error("space-containing host path redaction mismatch: %s != %s" % [actual, case.expected])
+			quit(1)
+			return
+	var large_logger := Exec.CaptureLogger.new()
+	large_logger.cap_bytes = 4097
+	var large_capture := large_logger._append_bounded("é".repeat(200000))
+	assert(large_capture.to_utf8_buffer().size() == 4096 and large_logger.used_bytes == 4096)
+	assert(large_logger.truncated)
+	var stress_logger := Exec.CaptureLogger.new()
+	stress_logger.cap_bytes = 4096
+	stress_logger._log_error("fn", "/home/secret/project/x.gd", 1, "", "/home/secret/token", false, 0, [])
+	stress_logger._log_error("fn", "\\\\server\\share\\x.gd", 1, "", "\\\\server\\share\\token", false, 0, [])
+	for index in 400: stress_logger._log_error("fn", "C:\\secret\\project\\x.gd", index, "", "error-%d-%s" % [index, "x".repeat(1000)], false, 0, [])
+	stress_logger._log_message("after-cap", false)
+	var stressed_result := {"ok": false, "returnValue": {"huge": "z".repeat(262144)}, "stdout": stress_logger.stdout, "errors": stress_logger.errors, "elapsedMs": 0, "truncated": stress_logger.truncated}
+	var many_errors := Exec._finish(stressed_result, Time.get_ticks_usec())
+	assert(many_errors.result.truncated)
+	assert(many_errors.result.errors.size() <= 128)
+	assert(many_errors.result.errors.all(func(value): return not value.is_empty() and not "secret" in value and not "server" in value))
+	assert(JSON.stringify({"jsonrpc": "2.0", "id": 1, "result": many_errors.result}).to_utf8_buffer().size() <= 262144)
+	var after_error := Exec.run({"source": "func __run(args):\n\tprint(\"fresh\")\n\treturn 7", "args": {}})
+	assert(after_error.result.ok and "fresh\n" in after_error.result.stdout and not "boom" in after_error.result.stdout)
+	assert(after_error.result.errors.is_empty())
+	var router := Router.new()
+	assert(router.register_command("exec.run", Exec.run))
+	var boundary_id := "i".repeat(Router.MAX_REQUEST_ID_BYTES)
+	var boundary_response := router.dispatch({"jsonrpc": "2.0", "id": boundary_id, "method": "exec.run", "params": {"source": "func __run(args):\n\treturn {\"huge\": \"z\".repeat(300000)}"}})
+	assert(boundary_response.id == boundary_id)
+	assert(JSON.stringify(boundary_response).to_utf8_buffer().size() <= 262144)
+	var oversized_id := router.dispatch({"jsonrpc": "2.0", "id": "é".repeat((Router.MAX_REQUEST_ID_BYTES / 2) + 1), "method": "exec.run", "params": {}})
+	assert(oversized_id.id == null and oversized_id.error.code == -32600)
+	quit()

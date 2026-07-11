@@ -1,6 +1,7 @@
 extends SceneTree
 
 const Plugin = preload("../fixtures/godot_project/addons/godot_control_mcp/plugin.gd")
+const TOKEN := "0123456789abcdef0123456789abcdef"
 var failures: Array[String] = []
 
 func _port() -> int:
@@ -49,6 +50,14 @@ func _run() -> void:
 	EditorInterface.set_plugin_enabled(plugin_path, true)
 	var second := await _connect()
 	_check(second.get_ready_state() == WebSocketPeer.STATE_OPEN, "re-enabled plugin must accept connections")
+	_check(second.send_text('{"jsonrpc":"2.0","id":8,"method":"auth.authenticate","params":{"token":"%s"}}' % TOKEN) == OK, "lifecycle authentication send must succeed")
+	for ignored in range(120):
+		second.poll()
+		if second.get_available_packet_count() > 0:
+			break
+		await process_frame
+	var authentication: Dictionary = JSON.parse_string(second.get_packet().get_string_from_utf8())
+	_check(authentication.id == 8 and authentication.result.authenticated, "re-enabled plugin must authenticate")
 	_check(second.send_text('{"jsonrpc":"2.0","id":9,"method":"core.ping","params":{}}') == OK, "lifecycle ping send must succeed")
 	for ignored in range(120):
 		second.poll()

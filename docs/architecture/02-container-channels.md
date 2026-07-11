@@ -48,7 +48,7 @@ flowchart LR
     %% atlas-node: CNT-EDITOR-PLUGIN
     CNT_EDITOR_PLUGIN["CNT-EDITOR-PLUGIN<br/>Godot editor plugin<br/>shared localhost endpoint"]
     %% atlas-node: SYS-CLASSDB-DOCS
-    SYS_CLASSDB_DOCS["SYS-CLASSDB-DOCS<br/>ClassDB + integrated<br/>class-reference docs"]
+    SYS_CLASSDB_DOCS["SYS-CLASSDB-DOCS<br/>live ClassDB metadata + pinned<br/>server-side 4.6.2 docs artifact"]
     %% atlas-node: CNT-GODOT-LSP
     CNT_GODOT_LSP["CNT-GODOT-LSP<br/>Godot language server"]
     %% atlas-node: CNT-GODOT-DAP
@@ -90,7 +90,7 @@ flowchart LR
   %% atlas-flow: FLOW-CH-004
   CNT_TYPESCRIPT_SERVER -->|"route live introspection"| CH_INTROSPECTION
   %% atlas-flow: FLOW-CH-005
-  CNT_EDITOR_PLUGIN -->|"query ClassDB and integrated documentation"| SYS_CLASSDB_DOCS
+  CNT_EDITOR_PLUGIN -->|"query ClassDB + gate offline docs by core.get_version"| SYS_CLASSDB_DOCS
   %% atlas-flow: FLOW-CH-006
   CH_CODE_INTELLIGENCE -->|"LSP JSON-RPC over TCP 6005"| CNT_GODOT_LSP
   %% atlas-flow: FLOW-CH-007
@@ -119,7 +119,7 @@ flowchart LR
 | `CH-RUNTIME-DEBUG` | Carries process control, output, DAP, and runtime-bridge operations. | Server-owned channel | Phase 5 |
 | `CH-HEADLESS-BATCH-FS` | Carries headless execution, batch, filesystem, UID, export, and asset work. | Server-owned channel | Phase 6 |
 | `CNT-EDITOR-PLUGIN` | Exposes the shared local editor mutation/introspection endpoint. | Godot editor process | Phase 1 |
-| `SYS-CLASSDB-DOCS` | Supplies authoritative engine API metadata and class-reference text. | Godot editor knowledge surface | Phase 2 |
+| `SYS-CLASSDB-DOCS` | Supplies live ClassDB metadata plus official class-reference text from the server's immutable Godot 4.6.2 offline artifact, gated to a connected 4.6.x editor. | Split editor/server knowledge surface | Phase 2 |
 | `CNT-GODOT-LSP` | Implements Godot language-server protocol behavior. | Godot editor service | Phase 4 |
 | `CNT-GODOT-DAP` | Implements Godot debug-adapter protocol behavior. | Godot editor service | Phase 5 |
 | `CNT-RUNNING-GAME` | Executes the launched project and emits process output. | Child process | Phase 5 |
@@ -136,7 +136,7 @@ flowchart LR
 | `FLOW-CH-002` | Server → Editor mutation: route editor mutation. | `00-master-architecture-and-standards.md` — “2. The five channels” | Explicit | Phases 2–3 | Editor writes use the editor-aware mutation lane. |
 | `FLOW-CH-003` | TypeScript server → plugin: shared editor-channel WebSocket + JSON-RPC 2.0 on `localhost:9200`. | `phase-01-foundation-and-transport.md` — “4. Architecture” | Explicit | Phase 1 | Both editor channels reuse one local plugin transport and lifecycle. |
 | `FLOW-CH-004` | Server → Introspection / API knowledge: route live introspection. | `00-master-architecture-and-standards.md` — “2. The five channels” | Explicit | Phase 2 | Live reads enter the same editor-aware control boundary as mutation. |
-| `FLOW-CH-005` | Plugin → ClassDB/docs: query ClassDB and integrated documentation. | `phase-02-introspection-and-universal-primitive.md` — “4. Architecture” | Explicit | Phase 2 | API answers remain coupled to the active Godot version. |
+| `FLOW-CH-005` | Plugin/server → ClassDB/docs: query live ClassDB metadata and gate the server-side pinned 4.6.2 docs artifact with `core.get_version`. | ADR 0002; `phase-02-introspection-and-universal-primitive.md` — “4. Architecture” | Explicit | Phase 2 | GDScript does not read integrated docs; a non-4.6 editor receives `feature_disabled`. |
 | `FLOW-CH-006` | Code intelligence → Godot LSP: LSP JSON-RPC over TCP `6005`. | `phase-04-code-intelligence-lsp.md` — “4. Architecture” | Explicit | Phase 4 | The server adapts Godot LSP rather than reimplementing language intelligence. |
 | `FLOW-CH-007` | Runtime / debug → game: spawn and control the game process. | `phase-05-runtime-and-debug.md` — “4. Architecture” | Explicit | Phase 5 | Process ownership provides PID, output, stop, and cleanup control. |
 | `FLOW-CH-008` | Runtime / debug → Godot DAP: DAP over TCP `6006`. | `phase-05-runtime-and-debug.md` — “4. Architecture” | Explicit | Phase 5 | Debug features depend on Godot's adapter and may degrade independently. |
