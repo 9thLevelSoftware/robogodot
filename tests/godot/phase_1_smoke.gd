@@ -16,7 +16,7 @@ func _check(condition: bool, message: String) -> void:
 		push_error(message)
 
 func _request(peer: WebSocketPeer, payload: String) -> Dictionary:
-	peer.send_text(payload)
+	_check(peer.send_text(payload) == OK, "send_text must succeed")
 	for ignored in range(120):
 		peer.poll()
 		if peer.get_available_packet_count() > 0:
@@ -29,8 +29,13 @@ func _run() -> void:
 	_check(router.register_command("core.ping", Core.ping), "first registration must succeed")
 	_check(not router.register_command("core.ping", Core.ping), "duplicate registration must fail")
 	_check(router.register_command("core.get_version", Core.get_version), "version registration must succeed")
+	_check(router.register_command("test.fail", func(_params): return {"ok": false, "hint": "deliberate smoke failure"}), "failure registration must succeed")
 	var unknown: Dictionary = router.dispatch({"jsonrpc":"2.0", "id":1, "method":"missing", "params":{}})
 	_check(unknown.error.code == -32601, "unknown command must return -32601")
+	var invalid_id: Dictionary = router.dispatch({"jsonrpc":"2.0", "id":true, "method":"core.ping", "params":{}})
+	_check(invalid_id.error.code == -32600 and invalid_id.id == null, "invalid ids must return -32600 with null id")
+	var invalid_params: Dictionary = router.dispatch({"jsonrpc":"2.0", "id":3, "method":"core.ping", "params":[]})
+	_check(invalid_params.error.code == -32602, "non-object params must return -32602")
 	print("PASS router")
 
 	var server = Server.new()
@@ -55,6 +60,35 @@ func _run() -> void:
 	var malformed := await _request(client, "not json")
 	_check(malformed.error.code == -32700, "malformed JSON must return parse error")
 	print("PASS malformed request")
+	var internal := await _request(client, '{"jsonrpc":"2.0","id":4,"method":"test.fail","params":{}}')
+	_check(internal.error.code == -32603 and internal.error.data.hint == "deliberate smoke failure", "explicit command failure must map to -32603")
+	await process_frame
+	client.poll()
+	_check(client.get_available_packet_count() == 0, "each request packet must receive exactly one response")
+	print("PASS internal error")
+
+	var binary_client := WebSocketPeer.new()
+	_check(binary_client.connect_to_url("ws://127.0.0.1:%d" % PORT) == OK, "binary client must connect")
+	for ignored in range(120):
+		binary_client.poll()
+		if binary_client.get_ready_state() == WebSocketPeer.STATE_OPEN:
+			break
+		await process_frame
+	_check(binary_client.send("binary".to_utf8_buffer(), WebSocketPeer.WRITE_MODE_BINARY) == OK, "binary send must succeed")
+	for ignored in range(120):
+		binary_client.poll()
+		if binary_client.get_ready_state() == WebSocketPeer.STATE_CLOSED:
+			break
+		await process_frame
+	_check(binary_client.get_close_code() == 1003, "binary caller must close with 1003")
+	client.close()
+	for ignored in range(120):
+		client.poll()
+		if server.peer_count() == 0:
+			break
+		await process_frame
+	_check(server.peer_count() == 0, "disconnected peers must be removed")
+	print("PASS websocket framing")
 
 	server.stop()
 	await process_frame

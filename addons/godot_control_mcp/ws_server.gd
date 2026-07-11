@@ -1,4 +1,4 @@
-class_name GodotControlWebSocketServer
+@tool
 extends Node
 
 var _tcp_server := TCPServer.new()
@@ -11,6 +11,9 @@ func start(port: int, router: Variant) -> Error:
 
 func is_listening() -> bool:
 	return _tcp_server.is_listening()
+
+func peer_count() -> int:
+	return _peers.size()
 
 func stop() -> void:
 	_tcp_server.stop()
@@ -25,8 +28,11 @@ func _exit_tree() -> void:
 func _process(_delta: float) -> void:
 	while _tcp_server.is_connection_available():
 		var peer := WebSocketPeer.new()
-		peer.accept_stream(_tcp_server.take_connection())
-		_peers.append(peer)
+		var accept_error := peer.accept_stream(_tcp_server.take_connection())
+		if accept_error == OK:
+			_peers.append(peer)
+		else:
+			push_warning("Godot Control MCP rejected a WebSocket stream (error %d)." % accept_error)
 	for index in range(_peers.size() - 1, -1, -1):
 		var peer := _peers[index]
 		peer.poll()
