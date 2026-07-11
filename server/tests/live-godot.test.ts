@@ -104,6 +104,12 @@ liveDescribe("live Godot editor round trip (set GODOT_PATH to enable)", () => {
       const version = await connectedClient.call<Record<string, unknown>>("core.get_version");
       expect(version).toMatchObject({ plugin: "0.1.0", connected: true });
       expect(version.projectPath).toBe(`${projectPath.replaceAll("\\", "/")}/`);
+      const execResult = await connectedClient.call<Record<string, unknown>>("exec.run", {
+        source: "func __run(args):\n\treturn Color(args.r, 0.5, 0.25, 1.0)",
+        args: { r: 1 }, outputCapBytes: 262_144,
+      });
+      expect(execResult.errors).toEqual([]);
+      expect(execResult).toMatchObject({ ok: true, returnValue: { $type: "Color", r: 1, g: 0.5, b: 0.25, a: 1 } });
 
       await terminate(godotProcess);
       godotProcess = undefined;

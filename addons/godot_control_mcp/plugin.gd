@@ -5,6 +5,7 @@ const DEFAULT_PORT := 9200
 const Router = preload("command_router.gd")
 const Server = preload("ws_server.gd")
 const Core = preload("commands/core.gd")
+const Exec = preload("commands/exec.gd")
 var _server: Node
 
 static func parse_port(value: String) -> int:
@@ -39,6 +40,7 @@ func _enter_tree() -> void:
 	var router := Router.new()
 	router.register_command("core.ping", Core.ping)
 	router.register_command("core.get_version", Core.get_version)
+	router.register_command("exec.run", Exec.run)
 	_server = Server.new()
 	add_child(_server)
 	var port := port_from_environment()

@@ -1,0 +1,26 @@
+extends SceneTree
+
+const Exec = preload("res://addons/godot_control_mcp/commands/exec.gd")
+
+func _init() -> void:
+	var typed := Exec.run({"source": "func __run(args):\n\tprint(\"hello\")\n\treturn Vector2(args.x, 2)", "args": {"x": 1}, "outputCapBytes": 262144})
+	assert(typed.ok and typed.result.ok)
+	assert(typed.result.returnValue == {"$type": "Vector2", "x": 1.0, "y": 2.0})
+	assert("hello" in typed.result.stdout)
+	assert(typed.result.errors.is_empty())
+	assert(not typed.result.truncated)
+	assert(typed.result.elapsedMs >= 0)
+	var missing_contract := Exec.run({"source": "func __run(value):\n\treturn value", "args": {}})
+	assert(not missing_contract.result.ok)
+	assert(missing_contract.result.errors.any(func(value): return "func __run(args):" in value))
+	var compile_error := Exec.run({"source": "func __run(args):\n\treturn (", "args": {}})
+	assert(compile_error.ok and not compile_error.result.ok)
+	assert(not compile_error.result.errors.is_empty())
+	var runtime_error := Exec.run({"source": "func __run(args):\n\tpush_error(\"boom\")\n\treturn 1", "args": {}})
+	assert(runtime_error.ok and not runtime_error.result.ok)
+	assert(runtime_error.result.errors.any(func(value): return "boom" in value))
+	var capped := Exec.run({"source": "func __run(args):\n\tprint(\"éééé\")", "args": {}, "outputCapBytes": 5})
+	assert(capped.result.truncated)
+	assert(capped.result.stdout.to_utf8_buffer().size() <= 5)
+	assert(capped.result.stdout == "éé")
+	quit()
