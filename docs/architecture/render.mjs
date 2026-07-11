@@ -316,7 +316,9 @@ const TRACEABILITY_DIVIDER = "|---|---|---|---|---|---|---|---|---|";
 const ATLAS_ANCHOR_PATTERN = /^\s*%% atlas-(node|flow): ((?:ACT|SYS|CNT|CMP|CH|PHASE|STATE|FLOW)-[A-Z0-9-]+)\s*$/;
 
 export function extractMermaidBlocks(markdown) {
-  return [...markdown.matchAll(/```mermaid\s*\r?\n([\s\S]*?)```/g)].map((match) => match[1].trim());
+  return [...markdown.matchAll(/```mermaid\s*\r?\n([\s\S]*?)```/g)].map((match) =>
+    match[1].replaceAll("\r\n", "\n").trim(),
+  );
 }
 
 export function collectAtlasIds(blocks) {

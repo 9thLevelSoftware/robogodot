@@ -80,6 +80,13 @@ test("extracts Mermaid blocks", () => {
   assert.equal(extractMermaidBlocks(sample).length, 1);
 });
 
+test("extracts canonical Mermaid blocks independent of checkout line endings", () => {
+  const lf = "```mermaid\nflowchart LR\n  A --> B\n```\n";
+  const crlf = lf.replaceAll("\n", "\r\n");
+  assert.deepEqual(extractMermaidBlocks(crlf), extractMermaidBlocks(lf));
+  assert.equal(extractMermaidBlocks(crlf)[0], "flowchart LR\n  A --> B");
+});
+
 test("collects semantic IDs from Mermaid source", () => {
   assert.deepEqual(
     [...collectAtlasIds(extractMermaidBlocks(sample))].sort(),
@@ -658,11 +665,11 @@ test("renderAtlas enforces exact per-view ID contracts", async (t) => {
     const original = await readFile(new URL(`../../docs/architecture/${source}`, import.meta.url), "utf8");
     const markdown = original
       .replace(
-        '    %% atlas-node: SYS-ASSET-PROVIDER\n    SYS_ASSET_PROVIDER["SYS-ASSET-PROVIDER<br/>Optional asset provider<br/>feature + credential boundary"]\n',
+        /    %% atlas-node: SYS-ASSET-PROVIDER\r?\n    SYS_ASSET_PROVIDER\["SYS-ASSET-PROVIDER<br\/>Optional asset provider<br\/>feature \+ credential boundary"\]\r?\n/,
         "",
       )
       .replace(
-        '  %% atlas-flow: FLOW-CTX-006\n  SYS_GODOT_CONTROL_MCP -->|"optionally requests generated assets"| SYS_ASSET_PROVIDER\n',
+        /  %% atlas-flow: FLOW-CTX-006\r?\n  SYS_GODOT_CONTROL_MCP -->\|"optionally requests generated assets"\| SYS_ASSET_PROVIDER\r?\n/,
         "",
       );
     assert.notEqual(markdown, original, "missing-ID fixture mutation");
