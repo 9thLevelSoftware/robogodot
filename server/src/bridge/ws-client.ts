@@ -37,6 +37,14 @@ interface Pending {
 
 const BACKOFF = [1000, 2000, 4000, 8000, 16000, 32000, 60000] as const;
 
+function unrefTimer<T>(timer: T): T {
+  if ((typeof timer === "object" && timer !== null) || typeof timer === "function") {
+    const unref = (timer as { unref?: unknown }).unref;
+    if (typeof unref === "function") unref.call(timer);
+  }
+  return timer;
+}
+
 export class JsonRpcClient extends EventEmitter {
   private readonly options: Required<Omit<JsonRpcClientOptions, "webSocketFactory">> & Pick<JsonRpcClientOptions, "webSocketFactory">;
   private socket: SocketLike | undefined;
@@ -89,10 +97,10 @@ export class JsonRpcClient extends EventEmitter {
     const request: Record<string, unknown> = { jsonrpc: "2.0", id, method };
     if (params !== undefined) request.params = params;
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = unrefTimer(setTimeout(() => {
         this.pending.delete(id);
         reject(new GodotMcpError("timeout", `JSON-RPC call '${method}' timed out.`, "Check the editor connection and try again."));
-      }, opts.timeoutMs ?? 10_000);
+      }, opts.timeoutMs ?? 10_000));
       this.pending.set(id, { resolve: (value) => resolve(value as T), reject, timer });
       try { this.socket!.send(JSON.stringify(request)); }
       catch (error) {
@@ -119,7 +127,7 @@ export class JsonRpcClient extends EventEmitter {
     this.lastError = undefined;
     this.connectedSince = new Date().toISOString();
     this.setState("connected");
-    this.heartbeatTimer = setInterval(() => this.heartbeat(), this.options.heartbeatIntervalMs);
+    this.heartbeatTimer = unrefTimer(setInterval(() => this.heartbeat(), this.options.heartbeatIntervalMs));
   }
 
   private handleMessage(socket: SocketLike, data: unknown, isBinary: boolean): void {
@@ -153,7 +161,7 @@ export class JsonRpcClient extends EventEmitter {
     const delay = BACKOFF[Math.min(this.reconnectAttempt, BACKOFF.length - 1)]!;
     this.reconnectAttempt++;
     this.setState("reconnecting");
-    this.reconnectTimer = setTimeout(() => { this.reconnectTimer = undefined; this.connect(); }, delay);
+    this.reconnectTimer = unrefTimer(setTimeout(() => { this.reconnectTimer = undefined; this.connect(); }, delay));
   }
 
   private heartbeat(): void {
