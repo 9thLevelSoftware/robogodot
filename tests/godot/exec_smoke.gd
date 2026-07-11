@@ -41,12 +41,31 @@ func _init() -> void:
 	assert(partial_capture.to_utf8_buffer().size() == 1 and partial_logger.used_bytes == 1)
 	assert(partial_logger.truncated)
 	var redaction_logger := Exec.CaptureLogger.new()
-	for preserved in ["res://addons/example.gd", "user://cache/example.log", "/root/Main/Camera3D", "https://example.com/home/user", "res://home/example.gd", "user://tmp/example.log"]:
+	for preserved in ["res://addons/example.gd", "res://My Project/example.gd", "user://cache/example.log", "user://My Project/example.log", "/root/Main/Camera3D", "/root/My Project/Camera3D", "https://example.com/home/user", "res://home/example.gd", "user://tmp/example.log"]:
 		assert(redaction_logger._redact(preserved) == preserved)
 	var globalized_project_file := ProjectSettings.globalize_path("res://addons/example.gd")
 	assert(redaction_logger._redact(globalized_project_file) == "res://addons/example.gd")
+	var globalized_spaced_project_file := ProjectSettings.globalize_path("res://My Project/example.gd")
+	assert(redaction_logger._redact(globalized_spaced_project_file) == "res://My Project/example.gd")
 	for host_path in ["C:\\Users\\secret\\example.gd", "D:/work/private/example.gd", "\\\\server\\share\\example.gd", "/Users/secret/example.gd", "/home/secret/example.gd", "/tmp/secret/example.gd", "/var/secret/example.gd", "/private/secret/example.gd"]:
 		assert(redaction_logger._redact(host_path) == "[host-path]")
+	var spaced_path_cases: Array[Dictionary] = [
+		{"input": "C:\\Users\\me\\My Project\\secret.gd", "expected": "[host-path]"},
+		{"input": "load \"C:\\Users\\me\\My Project\\secret.gd\" next", "expected": "load \"[host-path]\" next"},
+		{"input": "at C:\\Users\\me\\My Project\\secret.gd unquoted suffix", "expected": "at [host-path]"},
+		{"input": "at C:\\Users\\me\\My Project\\secret.gd\n/root/Main", "expected": "at [host-path]\n/root/Main"},
+		{"input": "\\\\server\\share\\My Project\\secret.gd", "expected": "[host-path]"},
+		{"input": "source='\\\\server\\share\\My Project\\secret.gd' next", "expected": "source='[host-path]' next"},
+		{"input": "/Users/me/My Project/secret.gd", "expected": "[host-path]"},
+		{"input": "load \"/home/me/My Project/secret.gd\" next", "expected": "load \"[host-path]\" next"},
+		{"input": "at /tmp/My Project/secret.gd\r\nuser://cache.log", "expected": "at [host-path]\r\nuser://cache.log"},
+	]
+	for case in spaced_path_cases:
+		var actual: String = redaction_logger._redact(case.input)
+		if actual != case.expected:
+			push_error("space-containing host path redaction mismatch: %s != %s" % [actual, case.expected])
+			quit(1)
+			return
 	var large_logger := Exec.CaptureLogger.new()
 	large_logger.cap_bytes = 4097
 	var large_capture := large_logger._append_bounded("é".repeat(200000))

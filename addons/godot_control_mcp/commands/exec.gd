@@ -58,11 +58,11 @@ class CaptureLogger extends Logger:
 			redacted = redacted.replace(project_path + "/", "res://")
 			redacted = redacted.replace(project_path + "\\", "res://")
 			if redacted == project_path: redacted = "res://"
-		var windows_path := RegEx.create_from_string("(?<![A-Za-z0-9_])[A-Za-z]:[\\\\/][^\\s]+")
+		var windows_path := RegEx.create_from_string("(?<![A-Za-z0-9_])[A-Za-z]:[\\\\/][^\\r\\n\"']*")
 		redacted = windows_path.sub(redacted, "[host-path]", true)
-		var unc_path := RegEx.create_from_string("(?<![A-Za-z0-9_:])(?:\\\\\\\\|//)[^\\s\\\\/]+[\\\\/][^\\s]+")
+		var unc_path := RegEx.create_from_string("(?<![A-Za-z0-9_:])(?:\\\\\\\\|//)[^\\r\\n\"'\\\\/]+[\\\\/][^\\r\\n\"']*")
 		redacted = unc_path.sub(redacted, "[host-path]", true)
-		var unix_path := RegEx.create_from_string("(?<![A-Za-z0-9_:/])/(?:Users|home|tmp|var|private)(?=/|\\s|$)[^\\s]*")
+		var unix_path := RegEx.create_from_string("(?<![A-Za-z0-9_:/])/(?:Users|home|tmp|var|private)(?=/|\\s|$)[^\\r\\n\"']*")
 		return unix_path.sub(redacted, "[host-path]", true)
 
 static func _finish(result: Dictionary, started: int) -> Dictionary:
