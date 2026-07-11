@@ -1,0 +1,6 @@
+[application]
+config/name="Godot Control MCP Smoke"
+run/main_scene="res://test_scene.tscn"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
