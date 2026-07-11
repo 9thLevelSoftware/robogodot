@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-11T00:50:18.893Z",
+  "renderer": "@mermaid-js/mermaid-cli@11.16.0",
+  "sourceArchive": {
+    "path": "C:\\Users\\dasbl\\Downloads\\files.zip",
+    "sha256": "0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229"
+  },
+  "exports": [
+    {
+      "output": "01-system-context.svg",
+      "source": "01-system-context.md",
+      "block": 1
+    },
+    {
+      "output": "02-container-channels.svg",
+      "source": "02-container-channels.md",
+      "block": 1
+    }
+  ]
+}

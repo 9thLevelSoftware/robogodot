@@ -68,6 +68,12 @@ export function mergeManifestEntries(existing, next) {
     .sort((left, right) => left.output.localeCompare(right.output));
 }
 
+export function buildNpxInvocation(platform = process.platform) {
+  return platform === "win32"
+    ? { executable: "cmd.exe", argsPrefix: ["/d", "/s", "/c", "npx.cmd"] }
+    : { executable: "npx", argsPrefix: [] };
+}
+
 function parseArgs(argv) {
   const onlyIndex = argv.indexOf("--only");
   return {
@@ -115,8 +121,9 @@ export async function renderAtlas({ check = false, only = null, root = ROOT } = 
       const input = path.join(tempDir, `${job.output}.mmd`);
       const output = path.join(renderedDir, job.output);
       await writeFile(input, `${job.definition}\n`, "utf8");
-      const executable = process.platform === "win32" ? "npx.cmd" : "npx";
+      const { executable, argsPrefix } = buildNpxInvocation();
       const result = spawnSync(executable, [
+        ...argsPrefix,
         "--yes",
         `@mermaid-js/mermaid-cli@${CLI_VERSION}`,
         "-i", input,

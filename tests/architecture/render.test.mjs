@@ -5,6 +5,7 @@ import {
   CLI_VERSION,
   EXPORT_MAP,
   buildManifest,
+  buildNpxInvocation,
   collectAtlasIds,
   diffTraceability,
   extractMermaidBlocks,
@@ -51,6 +52,18 @@ test("pins the renderer and declares eleven exports", () => {
   assert.equal(CLI_VERSION, "11.16.0");
   assert.equal(ARCHIVE_SHA256, "0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229");
   assert.equal(Object.values(EXPORT_MAP).flat().length, 11);
+});
+
+test("routes Windows npm command shims through cmd.exe", () => {
+  assert.equal(typeof buildNpxInvocation, "function", "renderer exports its launcher contract");
+  assert.deepEqual(buildNpxInvocation("win32"), {
+    executable: "cmd.exe",
+    argsPrefix: ["/d", "/s", "/c", "npx.cmd"],
+  });
+  assert.deepEqual(buildNpxInvocation("linux"), {
+    executable: "npx",
+    argsPrefix: [],
+  });
 });
 
 test("builds detached export provenance", () => {
