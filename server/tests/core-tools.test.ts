@@ -64,4 +64,20 @@ describe("core MCP tools", () => {
       expect(result.structuredContent).toMatchObject({ code: "not_connected", hint: expect.stringMatching(/open Godot.*enable the plugin/i) });
     } finally { await close(); }
   });
+
+  it.each([
+    ["godot_get_version", { engine: "not-an-object", plugin: "0.1.0", projectPath: "C:/game", connected: true }],
+    ["godot_ping", { pong: false }],
+  ])("converts invalid remote payload from %s to stable godot_error", async (name, payload) => {
+    const { client, close } = await harness({ getStatus: () => disconnected, call: vi.fn().mockResolvedValue(payload) });
+    try {
+      const result = await client.callTool({ name, arguments: {} });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toEqual({
+        code: "godot_error",
+        message: "Godot returned an invalid response for the requested core command.",
+        hint: "Check that the Godot plugin and MCP server versions are compatible.",
+      });
+    } finally { await close(); }
+  });
 });
