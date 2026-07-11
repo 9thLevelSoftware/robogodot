@@ -2,9 +2,8 @@
 <class name="Node" inherits="Object" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <brief_description>A fixture node.</brief_description>
   <description>Base fixture [b]node[/b] description.</description>
-  <methods><method name="add_child"><return type="void" /><param index="0" name="node" type="Node" /><description>Adds a child fixture.</description></method></methods>
+  <methods><method name="add_child"><return type="void" /><param index="0" name="node" type="Node" /><description>Adds a child fixture.</description></method><method name="add_child"><return type="void" /><param index="0" name="name" type="String" /><description>Adds by fixture name.</description></method></methods>
   <members><member name="process_mode" type="int" setter="set_process_mode" getter="get_process_mode">Controls processing.</member></members>
   <signals><signal name="ready"><description>Emitted when ready.</description></signal></signals>
-  <constants><constant name="NOTIFICATION_READY" value="13">Ready notification.</constant></constants>
-  <enums><enum name="ProcessMode"><description>Fixture process modes.</description></enum></enums>
+  <constants><constant name="NOTIFICATION_READY" value="13">Ready notification.</constant><constant name="PROCESS_MODE_INHERIT" value="0" enum="ProcessMode">Inherits processing.</constant><constant name="PROCESS_MODE_DISABLED" value="4" enum="ProcessMode">Disables processing.</constant></constants>
 </class>

@@ -16,7 +16,7 @@ Accepted — 2026-07-11
 
 Godot 4.6's supported GDScript and GDExtension APIs cannot read integrated class-reference text. `ScriptEditor.goto_help()` only navigates, the extension interface only loads XML, and the official Windows binary does not export private `EditorHelp`, `DocTools`, or `get_doc_data` symbols. A proposed narrow native bridge was therefore rejected at its feasibility gate: it would require a patched engine/private ABI.
 
-The approved fallback bundles only the normalized class and member descriptions needed by `class_doc`, not an engine source tree or binary. Generation may use the network; runtime may not. The pinned index supports exactly the Godot 4.6 minor line. Its provenance, attribution, regeneration, and byte-for-byte check procedure are documented in `docs/third-party/godot-class-reference-4.6.2.md`.
+The approved fallback bundles only the normalized class and member descriptions needed by `class_doc`, not an engine source tree or binary. Generation may use the network; runtime may not. The immutable full-commit archive is hash-verified before bounded, traversal-checked extraction. A hardened XML parser rejects DTDs/external entities and explicitly traverses the Godot schema. Runtime verifies all compiled provenance fields, a composite generator/parser/config hash, counts, and content hash. The pinned index supports exactly the Godot 4.6 minor line. Its provenance, attribution, regeneration, offline check, and byte-for-byte archive check procedure are documented in `docs/third-party/godot-class-reference-4.6.2.md`.
 
 ## Consequences
 

@@ -1,0 +1,13 @@
+Godot Engine 4.6.2 class-reference attribution
+
+This package contains a generated index derived from Godot Engine class-reference XML.
+Source commit: 001aa128b1cd80dc4e47e823c360bccf45ed6bad
+Project: https://github.com/godotengine/godot
+
+Godot Engine source is distributed under the MIT License.
+Godot documentation is distributed under Creative Commons Attribution 3.0.
+Copyright (c) 2014-present Godot Engine contributors.
+Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.
+
+License information: https://godotengine.org/license/
+Documentation attribution: https://docs.godotengine.org/en/4.6/about/complying_with_licenses.html
