@@ -54,4 +54,14 @@ describe("freshly built stdio server", () => {
       "godot_connection_status", "godot_get_version", "godot_ping",
     ]);
   });
+
+  it("exits promptly and successfully when its stdio host closes stdin", async () => {
+    const child = spawn(process.execPath, [artifact], { cwd: process.cwd(), stdio: ["pipe", "pipe", "pipe"] });
+    child.stdin.end();
+    const result = await Promise.race([
+      new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.once("exit", (code, signal) => resolve({ code, signal }))),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("stdio server did not exit after stdin EOF")), 3000)),
+    ]);
+    expect(result).toEqual({ code: 0, signal: null });
+  });
 });

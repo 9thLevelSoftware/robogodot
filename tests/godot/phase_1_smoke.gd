@@ -3,6 +3,7 @@ extends SceneTree
 const Router = preload("../../addons/godot_control_mcp/command_router.gd")
 const Server = preload("../../addons/godot_control_mcp/ws_server.gd")
 const Core = preload("../../addons/godot_control_mcp/commands/core.gd")
+const Plugin = preload("../../addons/godot_control_mcp/plugin.gd")
 const PORT := 19200
 
 var failures: Array[String] = []
@@ -25,6 +26,10 @@ func _request(peer: WebSocketPeer, payload: String) -> Dictionary:
 	return {}
 
 func _run() -> void:
+	_check(Plugin.parse_port("09200") == 9200, "alternate integer spelling must parse")
+	_check(Plugin.is_valid_port_value("09200"), "alternate integer spelling must be valid")
+	_check(not Plugin.is_valid_port_value("0"), "out-of-range port must be invalid")
+	print("PASS port parsing")
 	var router = Router.new()
 	_check(router.register_command("core.ping", Core.ping), "first registration must succeed")
 	_check(not router.register_command("core.ping", Core.ping), "duplicate registration must fail")

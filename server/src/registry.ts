@@ -25,8 +25,6 @@ export function registerTool<Input extends Record<string, unknown>, Output exten
     registeredNames.set(server, names);
   }
   if (names.has(definition.name)) throw new Error(`Tool "${definition.name}" is already registered`);
-  names.add(definition.name);
-
   server.registerTool(definition.name, {
     description: definition.description,
     inputSchema: definition.inputSchema,
@@ -40,4 +38,5 @@ export function registerTool<Input extends Record<string, unknown>, Output exten
       return toToolError(error) as unknown as CallToolResult;
     }
   });
+  names.add(definition.name);
 }

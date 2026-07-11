@@ -781,5 +781,5 @@ test("lifecycle view has exhaustive adjacent state and transition outlines plus 
     }
   }
   const heartbeatTrace = traceRows.find((line) => line.startsWith("| `FLOW-WS-005` |"));
-  assert.match(heartbeatTrace, /Q-003/, "heartbeat transition traces the unresolved transport detail");
+  assert.match(heartbeatTrace, /resolved `Q-003`; ADR 0001/, "heartbeat transition traces the accepted transport decision");
 });

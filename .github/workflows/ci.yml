@@ -2,6 +2,8 @@ name: CI
 on: [push, pull_request]
 env:
   GODOT_VERSION: 4.6.2
+  GODOT_LINUX_SHA256: 30e6b6d141f0cd5bebd629ad1d0ef1324e60091bb20662d026b402ba58c59937
+  GODOT_WINDOWS_SHA256: 14293422efb54b24a51f79d4cb55ab4001ef3d936e064a6c8af32e1f984024be
 jobs:
   verify:
     strategy:
@@ -9,8 +11,8 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -31,6 +33,7 @@ jobs:
         shell: bash
         run: |
           curl -fL -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          echo "${GODOT_LINUX_SHA256}  godot.zip" | sha256sum --check --strict
           unzip -q godot.zip -d .godot
           echo "GODOT_PATH=$PWD/.godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64" >> "$GITHUB_ENV"
       - name: Install Godot (Windows)
@@ -38,6 +41,8 @@ jobs:
         shell: pwsh
         run: |
           Invoke-WebRequest -Uri "https://github.com/godotengine/godot/releases/download/$env:GODOT_VERSION-stable/Godot_v$env:GODOT_VERSION-stable_win64.exe.zip" -OutFile godot.zip
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath godot.zip).Hash.ToLowerInvariant()
+          if ($actual -ne $env:GODOT_WINDOWS_SHA256) { throw "Godot archive SHA-256 mismatch: expected $env:GODOT_WINDOWS_SHA256, got $actual" }
           Expand-Archive godot.zip -DestinationPath .godot
           "GODOT_PATH=$pwd\.godot\Godot_v$env:GODOT_VERSION-stable_win64.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Plugin smoke

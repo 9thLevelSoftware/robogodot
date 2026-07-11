@@ -14,12 +14,19 @@ static func parse_port(value: String) -> int:
 	var parsed := trimmed.to_int()
 	return parsed if parsed >= 1 and parsed <= 65535 else DEFAULT_PORT
 
+static func is_valid_port_value(value: String) -> bool:
+	var trimmed := value.strip_edges()
+	if not trimmed.is_valid_int():
+		return false
+	var parsed := trimmed.to_int()
+	return parsed >= 1 and parsed <= 65535
+
 static func port_from_environment() -> int:
 	if not OS.has_environment("GODOT_MCP_PORT"):
 		return DEFAULT_PORT
 	var raw := OS.get_environment("GODOT_MCP_PORT")
 	var port := parse_port(raw)
-	if port == DEFAULT_PORT and raw.strip_edges() != str(DEFAULT_PORT):
+	if not is_valid_port_value(raw):
 		push_warning("Invalid GODOT_MCP_PORT '%s'; expected an integer from 1 to 65535. Using 9200." % raw)
 	return port
 

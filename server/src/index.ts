@@ -13,11 +13,16 @@ interface SignalSource {
   once(event: "SIGINT" | "SIGTERM", listener: () => void): unknown;
   removeListener(event: "SIGINT" | "SIGTERM", listener: () => void): unknown;
 }
+interface InputSource {
+  once(event: "end" | "close", listener: () => void): unknown;
+  removeListener(event: "end" | "close", listener: () => void): unknown;
+}
 export interface RunServerDependencies {
   bridge?: BridgeLifecycle;
   server?: ServerLifecycle;
   transport?: Transport;
   signals?: SignalSource;
+  input?: InputSource;
 }
 
 export async function runServer(dependencies: RunServerDependencies = {}): Promise<void> {
@@ -27,6 +32,7 @@ export async function runServer(dependencies: RunServerDependencies = {}): Promi
   const server = dependencies.server ?? createServer({ bridge });
   const transport = dependencies.transport ?? new StdioServerTransport();
   const signals = dependencies.signals ?? process;
+  const input = dependencies.input ?? process.stdin;
   let requestShutdown!: () => void;
   const shutdownRequested = new Promise<void>((resolve) => { requestShutdown = resolve; });
   let cleaned = false;
@@ -35,11 +41,15 @@ export async function runServer(dependencies: RunServerDependencies = {}): Promi
     cleaned = true;
     signals.removeListener("SIGINT", requestShutdown);
     signals.removeListener("SIGTERM", requestShutdown);
+    input.removeListener("end", requestShutdown);
+    input.removeListener("close", requestShutdown);
     bridge.stop();
     await server.close();
   };
   signals.once("SIGINT", requestShutdown);
   signals.once("SIGTERM", requestShutdown);
+  input.once("end", requestShutdown);
+  input.once("close", requestShutdown);
   try {
     bridge.start();
     await server.connect(transport);

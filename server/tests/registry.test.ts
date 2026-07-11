@@ -37,6 +37,20 @@ describe("registerTool", () => {
     expect(() => registerTool(target.server, tool)).toThrow('Tool "echo" is already registered');
   });
 
+  it("allows retrying a name when the SDK registration throws", () => {
+    let attempts = 0;
+    const server = {
+      registerTool: () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("SDK registration failed");
+      },
+    };
+    const tool = definition(async ({ value }) => ({ echoed: value }));
+    expect(() => registerTool(server, tool)).toThrow("SDK registration failed");
+    expect(() => registerTool(server, tool)).not.toThrow();
+    expect(attempts).toBe(2);
+  });
+
   it("returns matching JSON text and structured content", async () => {
     const target = recordingServer();
     registerTool(target.server, definition(async ({ value }) => ({ echoed: value })));

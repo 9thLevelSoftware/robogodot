@@ -23,14 +23,17 @@ describe("createServer", () => {
 describe("runServer lifecycle", () => {
   function runtime(start: () => void, connect: () => Promise<void>) {
     const signals = new EventEmitter();
+    const input = new EventEmitter();
     const stop = vi.fn();
     const close = vi.fn().mockResolvedValue(undefined);
+    const transport = {} as { onclose?: () => void };
     return {
-      signals, stop, close,
+      signals, input, stop, close,
       run: () => runServer({
         bridge: { start, stop, getStatus: vi.fn() as never, call: vi.fn() as never },
-        server: { connect, close }, transport: {} as never, signals,
+        server: { connect, close }, transport: transport as never, signals, input,
       }),
+      transport,
     };
   }
 
@@ -64,5 +67,16 @@ describe("runServer lifecycle", () => {
     expect(fixture.close).toHaveBeenCalledOnce();
     expect(fixture.signals.listenerCount("SIGINT")).toBe(0);
     expect(fixture.signals.listenerCount("SIGTERM")).toBe(0);
+  });
+
+  it("treats stdin end as a normal idempotent shutdown request", async () => {
+    const fixture = runtime(vi.fn(), vi.fn().mockResolvedValue(undefined));
+    const running = fixture.run();
+    await vi.waitFor(() => expect(fixture.input.listenerCount("end")).toBe(1));
+    fixture.input.emit("end");
+    fixture.input.emit("close");
+    await running;
+    expect(fixture.stop).toHaveBeenCalledOnce();
+    expect(fixture.close).toHaveBeenCalledOnce();
   });
 });
