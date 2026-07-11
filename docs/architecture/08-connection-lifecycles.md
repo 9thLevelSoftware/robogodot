@@ -11,14 +11,14 @@ These four state views isolate the independently recoverable lifecycles behind e
 - Editor WebSocket connection, heartbeat, and retry behavior: `phase-01-foundation-and-transport.md` — §§4–6 and 8–9.
 - LSP TCP, handshake, document synchronization, reconnect, and shutdown operations: `phase-04-code-intelligence-lsp.md` — §§2, 4, and 6–9.
 - Process and DAP operations, stop escalation, cleanup, and launch ambiguity: `phase-05-runtime-and-debug.md` — §§2 and 4–9.
-- Unresolved heartbeat mechanics and DAP launch ownership: [Open-question register](open-questions.md#architecture-open-questions), especially [Q-003](open-questions.md#architecture-open-questions) and [Q-010](open-questions.md#architecture-open-questions).
+- Resolved heartbeat mechanics and unresolved DAP launch ownership: [Q-003](open-questions.md#architecture-open-questions) is superseded by ADR 0001; [Q-010](open-questions.md#architecture-open-questions) remains open.
 
 ## Editor WebSocket transport lifecycle
 
 ```mermaid
 stateDiagram-v2
   accTitle: Editor WebSocket transport lifecycle
-  accDescr: The TypeScript WebSocket client starts disconnected, opens a localhost editor connection, and enters connected service. Initial connection failure, socket close, or a missed heartbeat enters reconnecting; exponential backoff returns it to a fresh connection attempt. Q-003 leaves the heartbeat frame and ownership details unresolved.
+  accDescr: The TypeScript WebSocket client starts disconnected, opens a localhost editor connection, and enters connected service. Initial connection failure, socket close, or a missed JSON-RPC core.ping heartbeat enters reconnecting; exponential backoff from one second to a sixty-second cap returns it to a fresh connection attempt.
   direction LR
 
   %% atlas-node: STATE-WS-DISCONNECTED
@@ -44,7 +44,7 @@ stateDiagram-v2
   WS_RECONNECTING --> WS_CONNECTING : backoff elapsed
 ```
 
-**Source status.** Phase 1 explicitly assigns connection state, heartbeat detection, reconnect ownership, and exponential backoff to the TypeScript WebSocket client. [Q-003](open-questions.md#architecture-open-questions) keeps the heartbeat transport, initiator, and timeout mechanics unresolved without weakening the explicit missed-heartbeat recovery transition.
+**Source status.** Phase 1 explicitly assigns connection state, heartbeat detection, reconnect ownership, and exponential backoff to the TypeScript WebSocket client. [Q-003](open-questions.md#architecture-open-questions) is resolved by [ADR 0001](../decisions/0001-phase-1-transport-lifecycle.md): the client sends JSON-RPC `core.ping` heartbeats and owns reconnect delays from 1 second through a 60-second cap.
 
 **Operational invariant.** Editor JSON-RPC work is available only in `STATE-WS-CONNECTED`. A failed open, closed socket, or missed heartbeat cannot continue serving calls; recovery re-enters `STATE-WS-CONNECTING` only after the source-defined exponential backoff delay.
 

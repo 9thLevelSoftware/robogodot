@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-11T04:56:51.173Z",
+  "generatedAt": "2026-07-11T16:40:57.853Z",
   "renderer": "@mermaid-js/mermaid-cli@11.16.0",
   "sourceArchive": {
     "path": "C:\\Users\\dasbl\\Downloads\\files.zip",
@@ -81,10 +81,10 @@
       "output": "08a-editor-websocket-lifecycle.svg",
       "source": "08-connection-lifecycles.md",
       "block": 1,
-      "sourceBlockSha256": "21B1A368BFB692A07A0953A08BB39149C2E16EF67B2202FF1EBAE9777761E2F5",
-      "outputSha256": "B651F40435BB87FE39D6F0D24CE0DA39FEB6DC6A534C491C41A2BC72EDA6A65A",
+      "sourceBlockSha256": "66CF7AE458185AA48BF96A69D7430134104D9E0FCDE838BD59832D06587AD6CF",
+      "outputSha256": "5D9E58E705E40D8AC05BEA6669CE7FDE266DBE6F87A59C614A99CF8FC7B6A91E",
       "archiveSha256": "0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229",
-      "generatedAt": "2026-07-11T04:56:51.173Z",
+      "generatedAt": "2026-07-11T16:40:57.853Z",
       "renderer": "@mermaid-js/mermaid-cli@11.16.0"
     },
     {

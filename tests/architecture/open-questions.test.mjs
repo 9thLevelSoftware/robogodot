@@ -15,9 +15,12 @@ const expected = [
 
 test("records the ordered open-question inventory and required columns", async () => {
   const markdown = await readFile(path.join(ROOT, "open-questions.md"), "utf8");
-  assert.deepEqual(markdown.match(/Q-[0-9]{3}/g) ?? [], expected);
+  assert.deepEqual([...markdown.matchAll(/^\| `(Q-[0-9]{3})`/gm)].map((match) => match[1]), expected);
   assert.match(
     markdown,
     /\| ID \| Decision needed \| Conflicting evidence \| Implementation impact \| Recommended resolution \| Owning phase \|/,
   );
+  assert.match(markdown, /Q-003[^\n]+Resolved \/ superseded by \[ADR 0001\]/);
+  assert.match(markdown, /TypeScript client owns one JSON-RPC `core\.ping` heartbeat/);
+  assert.match(markdown, /1 second through a 60-second cap/);
 });

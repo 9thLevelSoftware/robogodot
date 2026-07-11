@@ -1,0 +1,9 @@
+[application]
+config/name="Godot Control MCP Smoke"
+run/main_scene="res://test_scene.tscn"
+
+[editor_plugins]
+enabled=PackedStringArray("res://addons/godot_control_mcp/plugin.cfg")
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
