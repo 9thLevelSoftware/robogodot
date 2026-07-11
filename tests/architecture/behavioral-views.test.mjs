@@ -276,6 +276,35 @@ test("runtime debug sequence preserves the exact setup, interaction, and shutdow
   assert.ok(setup < interaction && interaction < shutdown, "phase bands stay visually ordered");
 });
 
+test("runtime screenshot result requires a successful IPC response", async () => {
+  const markdown = await assertView("06-runtime-debug-sequence.md", { ids: runtimeIds });
+  const [block] = extractMermaidBlocks(markdown);
+  const lines = block.split(/\r?\n/);
+  const successResult = lines.findIndex((line) => line.trim() === "%% atlas-flow: FLOW-RUN-015");
+  const timeoutAlternative = lines.findIndex((line) => line.trim() === "else Response deadline expires");
+  const timeoutResult = lines.findIndex((line) => line.trim() === "%% atlas-flow: FLOW-RUN-016");
+  const responseEnd = lines.findIndex((line, index) => index > timeoutResult && line.trim() === "end");
+  const screenshotGuard = lines.findIndex(
+    (line) => line.trim() === "opt Successful IPC response and requested operation is a screenshot",
+  );
+  const screenshotResult = lines.findIndex((line) => line.trim() === "%% atlas-flow: FLOW-RUN-017");
+
+  assert.notEqual(screenshotGuard, -1, "screenshot opt explicitly requires a successful IPC response");
+  assert.ok(
+    successResult < timeoutAlternative
+      && timeoutAlternative < timeoutResult
+      && timeoutResult < responseEnd
+      && responseEnd < screenshotGuard
+      && screenshotGuard < screenshotResult,
+    "success-conditioned screenshot result follows the closed response alternative in normative flow order",
+  );
+  assert.doesNotMatch(
+    lines.slice(timeoutAlternative, responseEnd + 1).join("\n"),
+    /FLOW-RUN-017/,
+    "timeout branch cannot return a screenshot result",
+  );
+});
+
 test("runtime debug view has exhaustive adjacent participant and relationship outlines", async () => {
   const markdown = await assertView("06-runtime-debug-sequence.md", { ids: runtimeIds });
   const diagramEnd = markdown.indexOf("```", markdown.indexOf("```mermaid") + 3);

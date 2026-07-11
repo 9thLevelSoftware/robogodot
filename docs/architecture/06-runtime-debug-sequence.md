@@ -88,7 +88,7 @@ sequenceDiagram
       %% atlas-flow: FLOW-RUN-016
       RUNTIME_TOOLS-->>MCP_CLIENT: timeout alternative with game-not-running hint
     end
-    opt Requested operation is a screenshot
+    opt Successful IPC response and requested operation is a screenshot
       %% atlas-flow: FLOW-RUN-017
       RUNTIME_TOOLS-->>MCP_CLIENT: screenshot alternative returns path, dimensions, and PNG
       Note over RUNTIME_TOOLS,MCP_CLIENT: Screenshot result includes path, absPath, w, h, and PNG — Q-011 leaves host-path production unresolved
@@ -145,7 +145,7 @@ The participants below are indexed in the [Traceability index](traceability.md#a
 | `FLOW-RUN-014` | `CMP-RUNTIME-DRIVER` → `CNT-RUNTIME-IPC-FILES` | Read and delete the correlated response. | Explicit | Phase 5 / host-side file IPC | Phase 5 §§6–8 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-015` | `CMP-RUNTIME-TOOLS` → `CNT-MCP-CLIENT` | Return the structured runtime result. | Explicit | Phase 5 / MCP structured result | Phase 5 §§2,7 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-016` | `CMP-RUNTIME-TOOLS` → `CNT-MCP-CLIENT` | Return `timeout` with a game-not-running hint. | Explicit | Phase 5 / MCP structured timeout error | Phase 5 §§6–7 · [trace](traceability.md#architecture-atlas-traceability) |
-| `FLOW-RUN-017` | `CMP-RUNTIME-TOOLS` → `CNT-MCP-CLIENT` | Return screenshot path fields, dimensions, and PNG format. | Explicit | Phase 5 / MCP screenshot result | Phase 5 §§5,7–9 · [Q-011](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
+| `FLOW-RUN-017` | `CMP-RUNTIME-TOOLS` → `CNT-MCP-CLIENT` | After a successful IPC response, return screenshot path fields, dimensions, and PNG format. | Explicit | Phase 5 / MCP screenshot result | Phase 5 §§5,7–9 · [Q-011](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-018` | `CMP-RUNTIME-TOOLS` → `CMP-PROCESS-RUNNER` | Request graceful stop, then force only if required. | Explicit | Phase 5 / managed process termination | Phase 5 §§6,8–9 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-019` | `CMP-RUNTIME-TOOLS` → `CMP-RUNTIME-TOOLS` | Coordinate IPC-file removal, DAP end, and orphan-PID cleanup through their existing owners. | Explicit | Phase 5 / runtime teardown coordination | Phase 5 §§6,8–9 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-020` | `CMP-RUNTIME-TOOLS` → `CMP-AUDIT` | Record the runtime/debug outcome. | Explicit | Phase 5 / runtime outcome into Phase 7 audit | Phase 7 §4 · [trace](traceability.md#architecture-atlas-traceability) |
@@ -157,7 +157,7 @@ The participants below are indexed in the [Traceability index](traceability.md#a
 | DAP support is partial or unavailable | Runtime tools and DAP client | Explicitly **degrade to process + bridge**: launch/output/stop and live bridge operations remain usable while unsupported DAP features do not masquerade as available. |
 | DAP launch versus attach | DAP client and process control | `FLOW-RUN-006` stays **[UNRESOLVED]** under [Q-010](open-questions.md#architecture-open-questions); this view does not choose an owner or add a second spawn. |
 | Runtime response times out | Runtime driver and runtime tools | Return `timeout` with a game-not-running hint; do not claim the requested operation completed. |
-| Screenshot requested | Runtime autoloads and runtime tools | Return PNG path fields and dimensions. The source sketches `path`, `absPath`, `w`, and `h`, while [Q-011](open-questions.md#architecture-open-questions) leaves host resolution unresolved. |
+| Screenshot request succeeds | Runtime autoloads and runtime tools | Return PNG path fields and dimensions only after the correlated IPC response succeeds. The source sketches `path`, `absPath`, `w`, and `h`, while [Q-011](open-questions.md#architecture-open-questions) leaves host resolution unresolved. |
 | Stop or teardown | ProcessRunner, DAP client, and runtime driver | Attempt graceful stop before forced stop, remove request artifacts, end DAP, and clean an orphan PID as required by the source lifecycle. |
 | Host IPC path or socket fallback needed | Runtime driver and runtime autoloads | [Q-011](open-questions.md#architecture-open-questions) and [Q-012](open-questions.md#architecture-open-questions) remain open; no OS path derivation, endpoint, negotiation, authentication, fallback trigger, switching, or replay behavior is asserted. |
 
