@@ -44,3 +44,11 @@ static func editor_undo_redo() -> EditorUndoRedoManager:
 static func undo_history_version(undo: EditorUndoRedoManager, target: Object) -> int:
 	var history_id := undo.get_object_history_id(target)
 	return undo.get_history_undo_redo(history_id).get_version()
+
+static func undo_history_undo(undo: EditorUndoRedoManager, target: Object) -> void:
+	var history_id := undo.get_object_history_id(target)
+	undo.get_history_undo_redo(history_id).undo()
+
+static func undo_history_redo(undo: EditorUndoRedoManager, target: Object) -> void:
+	var history_id := undo.get_object_history_id(target)
+	undo.get_history_undo_redo(history_id).redo()

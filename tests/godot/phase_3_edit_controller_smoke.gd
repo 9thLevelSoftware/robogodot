@@ -4,6 +4,11 @@ const Compat = preload("res://addons/godot_control_mcp/godot_compat.gd")
 const EditController = preload("res://addons/godot_control_mcp/edit_controller.gd")
 var failures: Array[String] = []
 
+class ReadOnlyFixture extends RefCounted:
+	var read_only_value: int:
+		get:
+			return 7
+
 func _initialize() -> void:
 	call_deferred("_run")
 
@@ -59,6 +64,20 @@ func _run() -> void:
 	version = Compat.undo_history_version(undo, child)
 	_check(not controller.rename_node(null, "Nope", "Invalid rename").ok, "invalid target must fail")
 	_check(Compat.undo_history_version(undo, child) == version, "invalid target must not change history")
+
+	version = Compat.undo_history_version(undo, main)
+	_check(not controller.add_node(main, child, "Invalid add").ok, "attached add target must fail")
+	_check(Compat.undo_history_version(undo, main) == version, "invalid add must not change history")
+
+	version = Compat.undo_history_version(undo, child)
+	_check(not controller.set_property(child, &"missing_property", 1, "Invalid property").ok, "unknown property must fail")
+	_check(Compat.undo_history_version(undo, child) == version, "unknown property must not change history")
+
+	var read_only := ReadOnlyFixture.new()
+	version = Compat.undo_history_version(undo, read_only)
+	_check(not controller.set_property(read_only, &"read_only_value", 8, "Read-only property").ok, "read-only property must fail")
+	_check(read_only.read_only_value == 7, "read-only property must remain unchanged")
+	_check(Compat.undo_history_version(undo, read_only) == version, "read-only property must not change history")
 
 	main.queue_free()
 	print("PASS phase 3 edit controller foundation")
