@@ -4,6 +4,7 @@ extends Node
 const MIN_TOKEN_BYTES := 32
 const MAX_TOKEN_BYTES := 256
 const MAX_AUTH_FRAME_BYTES := 1024
+const MAX_REQUEST_FRAME_BYTES := 32768
 const MAX_PENDING_PEERS := 4
 const MAX_TOTAL_PEERS := 5
 const PREAUTH_TIMEOUT_MSEC := 500
@@ -114,6 +115,9 @@ func _remove_peer_at(index: int) -> void:
 
 func _handle_text(peer: WebSocketPeer, text: String) -> void:
 	if _authenticated.get(peer, false):
+		if text.to_utf8_buffer().size() > MAX_REQUEST_FRAME_BYTES:
+			_send_error_and_close(peer, null, -32600, "Request frame exceeds 32768 UTF-8 bytes")
+			return
 		peer.send_text(JSON.stringify(_router.parse_and_dispatch(text)))
 		return
 	var json := JSON.new()

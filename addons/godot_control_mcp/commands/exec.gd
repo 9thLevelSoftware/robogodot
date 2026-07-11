@@ -3,7 +3,8 @@ extends RefCounted
 
 const DEFAULT_OUTPUT_CAP_BYTES := 262144
 const MAX_ERROR_ENTRIES := 128
-const MAX_RESULT_JSON_BYTES := 261888
+# Reserves 2048 bytes for JSON-RPC keys plus a 128-byte request id at worst-case JSON escaping.
+const MAX_RESULT_JSON_BYTES := 260096
 const TYPE_PARSE_PATH := "res://addons/godot_control_mcp/util/type_parse.gd"
 
 class CaptureLogger extends Logger:
@@ -53,6 +54,8 @@ class CaptureLogger extends Logger:
 		var redacted := text.replace(project_path, "res://") if not project_path.is_empty() else text
 		var windows_path := RegEx.create_from_string("[A-Za-z]:[\\\\/][^\\s]+")
 		redacted = windows_path.sub(redacted, "[host-path]", true)
+		var unc_path := RegEx.create_from_string("\\\\\\\\[^\\s\\\\]+\\\\[^\\s]+")
+		redacted = unc_path.sub(redacted, "[host-path]", true)
 		var unix_path := RegEx.create_from_string("/(?:Users|home|tmp|var|private|root)/[^\\s]+")
 		return unix_path.sub(redacted, "[host-path]", true)
 

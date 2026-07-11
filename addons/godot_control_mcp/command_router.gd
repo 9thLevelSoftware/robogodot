@@ -2,6 +2,7 @@
 extends RefCounted
 
 var _commands: Dictionary = {}
+const MAX_REQUEST_ID_BYTES := 128
 
 func register_command(command_name: String, command: Callable) -> bool:
 	if command_name.is_empty() or not command.is_valid() or _commands.has(command_name):
@@ -21,6 +22,8 @@ func dispatch(request: Variant) -> Dictionary:
 	var id: Variant = request.get("id")
 	if request.get("jsonrpc") != "2.0" or not request.has("id") or not (id is String or id is int or id is float):
 		return _error(null, -32600, "Invalid Request", "Use jsonrpc 2.0 with a string or numeric id.")
+	if id is String and id.to_utf8_buffer().size() > MAX_REQUEST_ID_BYTES:
+		return _error(null, -32600, "Invalid Request", "String request id exceeds 128 UTF-8 bytes.")
 	var method: Variant = request.get("method")
 	if not method is String or method.is_empty():
 		return _error(id, -32600, "Invalid Request", "Method must be a nonempty string.")

@@ -1,6 +1,7 @@
 extends SceneTree
 
 const Exec = preload("res://addons/godot_control_mcp/commands/exec.gd")
+const Router = preload("res://addons/godot_control_mcp/command_router.gd")
 
 func _init() -> void:
 	var typed := Exec.run({"source": "func __run(args):\n\tprint(\"hello\")\n\treturn Vector2(args.x, 2)", "args": {"x": 1}, "outputCapBytes": 262144})
@@ -30,15 +31,24 @@ func _init() -> void:
 	var stress_logger := Exec.CaptureLogger.new()
 	stress_logger.cap_bytes = 4096
 	stress_logger._log_error("fn", "/home/secret/project/x.gd", 1, "", "/home/secret/token", false, 0, [])
+	stress_logger._log_error("fn", "\\\\server\\share\\x.gd", 1, "", "\\\\server\\share\\token", false, 0, [])
 	for index in 400: stress_logger._log_error("fn", "C:\\secret\\project\\x.gd", index, "", "error-%d-%s" % [index, "x".repeat(1000)], false, 0, [])
 	stress_logger._log_message("after-cap", false)
 	var stressed_result := {"ok": false, "returnValue": {"huge": "z".repeat(262144)}, "stdout": stress_logger.stdout, "errors": stress_logger.errors, "elapsedMs": 0, "truncated": stress_logger.truncated}
 	var many_errors := Exec._finish(stressed_result, Time.get_ticks_usec())
 	assert(many_errors.result.truncated)
 	assert(many_errors.result.errors.size() <= 128)
-	assert(many_errors.result.errors.all(func(value): return not value.is_empty() and not "secret" in value))
+	assert(many_errors.result.errors.all(func(value): return not value.is_empty() and not "secret" in value and not "server" in value))
 	assert(JSON.stringify({"jsonrpc": "2.0", "id": 1, "result": many_errors.result}).to_utf8_buffer().size() <= 262144)
 	var after_error := Exec.run({"source": "func __run(args):\n\tprint(\"fresh\")\n\treturn 7", "args": {}})
 	assert(after_error.result.ok and "fresh\n" in after_error.result.stdout and not "boom" in after_error.result.stdout)
 	assert(after_error.result.errors.is_empty())
+	var router := Router.new()
+	assert(router.register_command("exec.run", Exec.run))
+	var boundary_id := "i".repeat(Router.MAX_REQUEST_ID_BYTES)
+	var boundary_response := router.dispatch({"jsonrpc": "2.0", "id": boundary_id, "method": "exec.run", "params": {"source": "func __run(args):\n\treturn {\"huge\": \"z\".repeat(300000)}"}})
+	assert(boundary_response.id == boundary_id)
+	assert(JSON.stringify(boundary_response).to_utf8_buffer().size() <= 262144)
+	var oversized_id := router.dispatch({"jsonrpc": "2.0", "id": "é".repeat((Router.MAX_REQUEST_ID_BYTES / 2) + 1), "method": "exec.run", "params": {}})
+	assert(oversized_id.id == null and oversized_id.error.code == -32600)
 	quit()

@@ -15,7 +15,7 @@
 - Plugin command dispatch requires an authenticated shared token and permits exactly one active control-plane client.
 - Default stdout cap is 262144 bytes and truncation is explicit.
 - `godot_script_run` annotations are `readOnlyHint:false`, `destructiveHint:true`, `idempotentHint:false`, `openWorldHint:true`.
-- Block editor-script execution in `read_only` and `confirm_destructive`. In `full`, always require `allowDangerous:true`; source heuristics are defense-in-depth diagnostics only and never authorization. Return `blocked_by_policy` for mode/capability rejection.
+- Block editor-script execution in `read_only` and `confirm_destructive`. In `full`, always require `allowDangerous:true`. Authorization is source-independent and uses no deny-list or source heuristic. Return `blocked_by_policy` for mode/capability rejection.
 - Keep version-sensitive ClassDB/editor-help access behind `godot_compat.gd`.
 - Target Godot 4.6.x and preserve stdout exclusively for MCP.
 - Follow TDD and commit every task independently.
@@ -50,7 +50,7 @@
 
 **Interfaces:** Produce `exec.run` returning `{ok,returnValue,stdout,errors,elapsedMs,truncated}`.
 
-- [ ] Write failing tests for the universal mode/allowDangerous gate, diagnostic-only heuristics, 15000 ms response timeout, aggregate 262144-byte bound, compile/runtime errors, typed return values, logger cleanup, and restart guidance.
+- [ ] Write failing tests for the universal mode/allowDangerous gate, 15000 ms response timeout, aggregate 262144-byte response bound, compile/runtime errors, typed return values, logger cleanup, request-frame/request-ID limits, and restart guidance.
 - [ ] Implement minimal server guard and transient `__run(args)` plugin execution without claiming cancellation.
 - [ ] Run mocked and live Godot execution tests; commit `feat: add guarded editor execution`.
 

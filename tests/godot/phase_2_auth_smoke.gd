@@ -28,6 +28,9 @@ func _connect() -> WebSocketPeer:
 
 func _request(peer: WebSocketPeer, request: Dictionary) -> Dictionary:
 	_check(peer.send_text(JSON.stringify(request)) == OK, "request send must succeed")
+	return await _receive(peer)
+
+func _receive(peer: WebSocketPeer) -> Dictionary:
 	for ignored in range(120):
 		peer.poll()
 		if peer.get_available_packet_count() > 0:
@@ -98,6 +101,16 @@ func _run() -> void:
 	_check(denied.get("error", {}).get("code") == -32002, "direct exec.run before authentication must be rejected; got %s" % denied)
 	await _wait_closed(preauth)
 	_check(preauth.get_ready_state() == WebSocketPeer.STATE_CLOSED, "pre-auth command peer must close")
+
+	var authenticated_oversized := await _connect()
+	var oversized_auth := await _request(authenticated_oversized, {"jsonrpc":"2.0", "id":10, "method":"auth.authenticate", "params":{"token":TOKEN}})
+	_check(oversized_auth.get("result", {}).get("authenticated", false), "oversized-frame peer must authenticate first")
+	var huge_text := '{"jsonrpc":"2.0","id":11,"method":"core.ping","params":{"padding":"%s"}}' % "x".repeat(Server.MAX_REQUEST_FRAME_BYTES)
+	_check(authenticated_oversized.send_text(huge_text) == OK, "oversized authenticated frame send must start")
+	var oversized_reply := await _receive(authenticated_oversized)
+	_check(oversized_reply.get("id") == null and oversized_reply.get("error", {}).get("code") == -32600, "oversized frame must receive bounded null-id rejection")
+	_check(JSON.stringify(oversized_reply).to_utf8_buffer().size() <= Server.MAX_REQUEST_FRAME_BYTES, "oversized-frame rejection must be bounded")
+	await _wait_closed(authenticated_oversized)
 
 	var missing := await _connect()
 	var missing_result := await _request(missing, {"jsonrpc":"2.0", "id":2, "method":"auth.authenticate", "params":{}})
