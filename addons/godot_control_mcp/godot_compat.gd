@@ -37,3 +37,10 @@ static func constant_value(target_class: String, constant_name: String) -> int:
 
 static func variant_type_name(type_id: int) -> String:
 	return type_string(type_id)
+
+static func editor_undo_redo() -> EditorUndoRedoManager:
+	return EditorInterface.get_editor_undo_redo()
+
+static func undo_history_version(undo: EditorUndoRedoManager, target: Object) -> int:
+	var history_id := undo.get_object_history_id(target)
+	return undo.get_history_undo_redo(history_id).get_version()
