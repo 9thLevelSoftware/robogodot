@@ -8,7 +8,7 @@ This primary structural view maps each capability channel to its runtime contain
 
 - Archive: `C:\Users\dasbl\Downloads\files.zip`
 - SHA-256: `0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229`
-- Source headings: `00-master-architecture-and-standards.md` — “2. The five channels” and “3. System components”; `phase-01-foundation-and-transport.md`, `phase-04-code-intelligence-lsp.md`, `phase-05-runtime-and-debug.md`, and `phase-06-batch-filesystem-and-assets.md` — “4. Architecture.”
+- Source headings: `00-master-architecture-and-standards.md` — “2. The five channels” and “3. System components”; `phase-01-foundation-and-transport.md`, `phase-02-introspection-and-universal-primitive.md`, `phase-04-code-intelligence-lsp.md`, `phase-05-runtime-and-debug.md`, and `phase-06-batch-filesystem-and-assets.md` — “4. Architecture.”
 
 ## Container and channel view
 
@@ -86,7 +86,7 @@ flowchart LR
   %% atlas-flow: FLOW-CH-002
   CNT_TYPESCRIPT_SERVER -->|"route editor mutation"| CH_EDITOR_MUTATION
   %% atlas-flow: FLOW-CH-003
-  CH_EDITOR_MUTATION & CH_INTROSPECTION -->|"WebSocket + JSON-RPC 2.0 on localhost:9200"| CNT_EDITOR_PLUGIN
+  CNT_TYPESCRIPT_SERVER -->|"WebSocket + JSON-RPC 2.0 on localhost:9200"| CNT_EDITOR_PLUGIN
   %% atlas-flow: FLOW-CH-004
   CNT_TYPESCRIPT_SERVER -->|"route live introspection"| CH_INTROSPECTION
   %% atlas-flow: FLOW-CH-005
@@ -134,7 +134,7 @@ flowchart LR
 |---|---|---|---|---|---|
 | `FLOW-CH-001` | MCP client → TypeScript server: MCP over stdio. | `phase-01-foundation-and-transport.md` — “4. Architecture” | Explicit | Phase 1 | Public MCP traffic has one local process entry point. |
 | `FLOW-CH-002` | Server → Editor mutation: route editor mutation. | `00-master-architecture-and-standards.md` — “2. The five channels” | Explicit | Phases 2–3 | Editor writes use the editor-aware mutation lane. |
-| `FLOW-CH-003` | Editor mutation and introspection → plugin: WebSocket + JSON-RPC 2.0 on `localhost:9200`. | `phase-01-foundation-and-transport.md` — “4. Architecture” | Explicit | Phase 1 | Both channels reuse one local plugin transport and lifecycle. |
+| `FLOW-CH-003` | TypeScript server → plugin: shared editor-channel WebSocket + JSON-RPC 2.0 on `localhost:9200`. | `phase-01-foundation-and-transport.md` — “4. Architecture” | Explicit | Phase 1 | Both editor channels reuse one local plugin transport and lifecycle. |
 | `FLOW-CH-004` | Server → Introspection / API knowledge: route live introspection. | `00-master-architecture-and-standards.md` — “2. The five channels” | Explicit | Phase 2 | Live reads enter the same editor-aware control boundary as mutation. |
 | `FLOW-CH-005` | Plugin → ClassDB/docs: query ClassDB and integrated documentation. | `phase-02-introspection-and-universal-primitive.md` — “4. Architecture” | Explicit | Phase 2 | API answers remain coupled to the active Godot version. |
 | `FLOW-CH-006` | Code intelligence → Godot LSP: LSP JSON-RPC over TCP `6005`. | `phase-04-code-intelligence-lsp.md` — “4. Architecture” | Explicit | Phase 4 | The server adapts Godot LSP rather than reimplementing language intelligence. |

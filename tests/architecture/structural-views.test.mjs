@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { extractMermaidBlocks } from "../../docs/architecture/render.mjs";
 import { assertView } from "./assertions.mjs";
 
 const ARCHIVE_SHA256 = "0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229";
@@ -99,4 +100,38 @@ test("container view has exactly the five source-defined channels", async () => 
 
   const channelAnchors = markdown.match(/%% atlas-node: CH-[A-Z0-9-]+/g) ?? [];
   assert.equal(channelAnchors.length, 5, "02-container-channels.md: top-level channel count");
+});
+
+test("system context keeps the engineer and MCP-client role inside the workstation", async () => {
+  const markdown = await assertView("01-system-context.md", { ids: contextIds });
+  const [block] = extractMermaidBlocks(markdown);
+  const localStart = block.indexOf('subgraph LOCAL_WORKSTATION["Local workstation · personal-use scope"]');
+  const localEnd = block.indexOf("\n  end", localStart);
+  const actorAnchor = block.indexOf("%% atlas-node: ACT-ENGINEER-AI");
+  assert.ok(localStart < actorAnchor && actorAnchor < localEnd, "ACT-ENGINEER-AI must be inside local workstation");
+});
+
+test("container view includes every cited phase source in its baseline", async () => {
+  const markdown = await assertView("02-container-channels.md", { ids: channelIds });
+  const sourceBaseline = markdown.slice(
+    markdown.indexOf("## Source baseline"),
+    markdown.indexOf("## Container and channel view"),
+  );
+  assert.ok(
+    sourceBaseline.includes("phase-02-introspection-and-universal-primitive.md"),
+    "02-container-channels.md: Phase 2 source belongs in source baseline",
+  );
+});
+
+test("shared editor transport has one FLOW-CH-003 edge", async () => {
+  const markdown = await assertView("02-container-channels.md", { ids: channelIds });
+  const [block] = extractMermaidBlocks(markdown);
+  const lines = block.split(/\r?\n/);
+  const flowAnchor = lines.findIndex((line) => line.trim() === "%% atlas-flow: FLOW-CH-003");
+  assert.notEqual(flowAnchor, -1, "02-container-channels.md: FLOW-CH-003 anchor");
+  assert.match(
+    lines[flowAnchor + 1].trim(),
+    /^CNT_TYPESCRIPT_SERVER -->\|"WebSocket \+ JSON-RPC 2\.0 on localhost:9200"\| CNT_EDITOR_PLUGIN$/,
+    "FLOW-CH-003 must map one server-to-plugin transport edge",
+  );
 });

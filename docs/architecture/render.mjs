@@ -23,6 +23,9 @@ export const EXPORT_MAP = Object.freeze({
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ID_PATTERN = /\b(?:ACT|SYS|CNT|CMP|CH|PHASE|STATE|FLOW)-[A-Z0-9-]+\b/g;
+const TRACEABILITY_HEADER = "| ID | Name | View | Evidence | Source | Phase owner | Consumes | Produces | Consequence |";
+const TRACEABILITY_DIVIDER = "|---|---|---|---|---|---|---|---|---|";
+const ATLAS_ANCHOR_PATTERN = /^\s*%% atlas-(node|flow): ((?:ACT|SYS|CNT|CMP|CH|PHASE|STATE|FLOW)-[A-Z0-9-]+)\s*$/;
 
 export function extractMermaidBlocks(markdown) {
   return [...markdown.matchAll(/```mermaid\s*\r?\n([\s\S]*?)```/g)].map((match) => match[1].trim());
@@ -43,6 +46,138 @@ export function parseTraceabilityIds(markdown) {
     if (match) ids.add(match[1]);
   }
   return ids;
+}
+
+export function validateTraceability(markdown) {
+  const lines = markdown.split(/\r?\n/);
+  const headerIndexes = lines
+    .map((line, index) => line === TRACEABILITY_HEADER ? index : -1)
+    .filter((index) => index >= 0);
+  if (headerIndexes.length !== 1) {
+    throw new Error(`Traceability must contain the exact traceability header once: ${TRACEABILITY_HEADER}`);
+  }
+  if (lines[headerIndexes[0] + 1] !== TRACEABILITY_DIVIDER) {
+    throw new Error(`Traceability must use the exact divider: ${TRACEABILITY_DIVIDER}`);
+  }
+
+  const occurrences = [];
+  for (const line of lines) {
+    const match = line.match(/^\|\s*`((?:ACT|SYS|CNT|CMP|CH|PHASE|STATE|FLOW)-[A-Z0-9-]+)`\s*\|/);
+    if (match) occurrences.push(match[1]);
+  }
+  const duplicates = [...new Set(occurrences.filter((id, index) => occurrences.indexOf(id) !== index))].sort();
+  if (duplicates.length) throw new Error(`Duplicate traceability IDs: ${duplicates.join(", ")}`);
+  return new Set(occurrences);
+}
+
+function parseAtlasAnchor(line) {
+  const match = line.match(ATLAS_ANCHOR_PATTERN);
+  return match ? { kind: match[1], id: match[2] } : null;
+}
+
+function stripMermaidEdgeLabels(line) {
+  return line
+    .replace(/"(?:\\.|[^"\\])*"/g, '""')
+    .replace(/'(?:\\.|[^'\\])*'/g, "''")
+    .replace(/\|[^|]*\|/g, "");
+}
+
+function parseFlowchartEdge(line) {
+  const sanitized = stripMermaidEdgeLabels(line);
+  const arrows = [...sanitized.matchAll(/<-->|<---|-\.->|==>|-->|---|-\.-|===|~~~|--o|--x|o--o|x--x/g)];
+  if (arrows.length === 0) return null;
+
+  const expands = /(^|\s)&(\s|$)/.test(sanitized);
+  const edgeCount = arrows.length === 1 && !expands ? 1 : Math.max(2, arrows.length);
+  const endpoints = [];
+  if (arrows.length === 1) {
+    const arrow = arrows[0];
+    const leftIds = sanitized.slice(0, arrow.index).match(/[A-Za-z_][A-Za-z0-9_-]*/g) ?? [];
+    const rightIds = sanitized.slice(arrow.index + arrow[0].length).match(/[A-Za-z_][A-Za-z0-9_-]*/g) ?? [];
+    if (leftIds.length) endpoints.push(leftIds.at(-1));
+    if (rightIds.length) endpoints.push(rightIds[0]);
+  }
+  return { edgeCount, endpoints };
+}
+
+function parseFlowchartNode(line) {
+  if (parseFlowchartEdge(line)) return null;
+  const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*(?:\[|\(|\{|>)/);
+  return match?.[1] ?? null;
+}
+
+export function validateMermaidAnchors(block, context = "Mermaid block") {
+  const lines = block.split(/\r?\n/);
+  const isFlowchart = lines.some((line) => /^\s*(?:flowchart|graph)\s+/.test(line));
+  const anchors = [];
+  const seenAnchors = new Set();
+
+  for (const [index, line] of lines.entries()) {
+    const anchor = parseAtlasAnchor(line);
+    if (!anchor) continue;
+    if (seenAnchors.has(anchor.id)) throw new Error(`${context}: Duplicate atlas anchor: ${anchor.id}`);
+    if (anchor.kind === "flow" && !anchor.id.startsWith("FLOW-")) {
+      throw new Error(`${context} line ${index + 1}: atlas-flow anchor must use a FLOW-* ID`);
+    }
+    if (anchor.kind === "node" && anchor.id.startsWith("FLOW-")) {
+      throw new Error(`${context} line ${index + 1}: atlas-node anchor cannot use a FLOW-* ID`);
+    }
+    seenAnchors.add(anchor.id);
+    anchors.push({ ...anchor, index });
+  }
+
+  if (!isFlowchart) return new Set(anchors.map(({ id }) => id));
+
+  const declaredNodes = new Map();
+  const edges = [];
+  for (const [index, line] of lines.entries()) {
+    const node = parseFlowchartNode(line);
+    if (node) {
+      const anchor = parseAtlasAnchor(lines[index - 1] ?? "");
+      if (!anchor || anchor.kind !== "node") {
+        throw new Error(
+          `${context} line ${index + 1}: ${node} missing immediately preceding atlas-node anchor; atlas-node must immediately precede every flowchart node`,
+        );
+      }
+      declaredNodes.set(node, anchor.id);
+    }
+
+    const edge = parseFlowchartEdge(line);
+    if (edge) {
+      const anchor = parseAtlasAnchor(lines[index - 1] ?? "");
+      if (!anchor || anchor.kind !== "flow") {
+        throw new Error(
+          `${context} line ${index + 1}: edge missing immediately preceding atlas-flow anchor; atlas-flow must immediately precede every flowchart edge`,
+        );
+      }
+      if (edge.edgeCount !== 1) {
+        throw new Error(`${context} line ${index + 1}: ${anchor.id} must map to exactly one Mermaid edge`);
+      }
+      edges.push({ ...edge, anchor });
+    }
+  }
+
+  for (const { kind, id, index } of anchors) {
+    const next = lines[index + 1] ?? "";
+    if (kind === "node" && !parseFlowchartNode(next)) {
+      throw new Error(`${context} line ${index + 1}: atlas-node ${id} must immediately precede a flowchart node`);
+    }
+    if (kind === "flow" && !parseFlowchartEdge(next)) {
+      throw new Error(`${context} line ${index + 1}: atlas-flow ${id} must immediately precede a flowchart edge`);
+    }
+  }
+
+  for (const { endpoints } of edges) {
+    for (const endpoint of endpoints) {
+      if (!declaredNodes.has(endpoint)) {
+        throw new Error(`${context}: ${endpoint} must have an anchored node declaration`);
+      }
+    }
+  }
+
+  const unanchoredIds = [...collectAtlasIds([block])].filter((id) => !seenAnchors.has(id)).sort();
+  if (unanchoredIds.length) throw new Error(`${context}: Unanchored atlas IDs: ${unanchoredIds.join(", ")}`);
+  return new Set(anchors.map(({ id }) => id));
 }
 
 export function diffTraceability(diagramIds, traceabilityIds) {
@@ -68,9 +203,12 @@ export function mergeManifestEntries(existing, next) {
     .sort((left, right) => left.output.localeCompare(right.output));
 }
 
-export function buildNpxInvocation(platform = process.platform) {
+export function buildNpxInvocation(platform = process.platform, execPath = process.execPath) {
   return platform === "win32"
-    ? { executable: "cmd.exe", argsPrefix: ["/d", "/s", "/c", "npx.cmd"] }
+    ? {
+        executable: execPath,
+        argsPrefix: [path.win32.join(path.win32.dirname(execPath), "node_modules", "npm", "bin", "npx-cli.js")],
+      }
     : { executable: "npx", argsPrefix: [] };
 }
 
@@ -82,13 +220,20 @@ function parseArgs(argv) {
   };
 }
 
-export async function renderAtlas({ check = false, only = null, root = ROOT } = {}) {
+export async function renderAtlas({
+  check = false,
+  only = null,
+  root = ROOT,
+  spawn = spawnSync,
+  platform = process.platform,
+  execPath = process.execPath,
+} = {}) {
   const selected = Object.entries(EXPORT_MAP).filter(([source]) => !only || only.has(source.replace(/\.md$/, "")));
   if (selected.length === 0) throw new Error("No atlas views selected");
 
   const renderedDir = path.join(root, "rendered");
   const tempDir = path.join(root, ".render-tmp");
-  const traceability = parseTraceabilityIds(await readFile(path.join(root, "traceability.md"), "utf8"));
+  const traceability = validateTraceability(await readFile(path.join(root, "traceability.md"), "utf8"));
   const diagramIds = new Set();
   const jobs = [];
 
@@ -102,7 +247,7 @@ export async function renderAtlas({ check = false, only = null, root = ROOT } = 
       if (!block.includes("accTitle:") || !block.includes("accDescr:")) {
         throw new Error(`${source} block ${index + 1}: missing accTitle or accDescr`);
       }
-      collectAtlasIds([block]).forEach((id) => diagramIds.add(id));
+      validateMermaidAnchors(block, `${source} block ${index + 1}`).forEach((id) => diagramIds.add(id));
       jobs.push({ source, block: index + 1, definition: block, output: outputs[index] });
     });
   }
@@ -121,8 +266,8 @@ export async function renderAtlas({ check = false, only = null, root = ROOT } = 
       const input = path.join(tempDir, `${job.output}.mmd`);
       const output = path.join(renderedDir, job.output);
       await writeFile(input, `${job.definition}\n`, "utf8");
-      const { executable, argsPrefix } = buildNpxInvocation();
-      const result = spawnSync(executable, [
+      const { executable, argsPrefix } = buildNpxInvocation(platform, execPath);
+      const result = spawn(executable, [
         ...argsPrefix,
         "--yes",
         `@mermaid-js/mermaid-cli@${CLI_VERSION}`,
@@ -132,7 +277,13 @@ export async function renderAtlas({ check = false, only = null, root = ROOT } = 
         "-t", "neutral",
         "-b", "white",
       ], { encoding: "utf8" });
-      if (result.status !== 0) throw new Error(`${job.output}: ${result.stderr || result.stdout}`);
+      if (result.error) {
+        const detail = result.error.code ? `${result.error.code}: ${result.error.message}` : result.error.message;
+        throw new Error(`${job.output}: renderer launch failed: ${detail}`, { cause: result.error });
+      }
+      if (result.status !== 0) {
+        throw new Error(`${job.output}: ${result.stderr || result.stdout || `renderer exited with status ${result.status}`}`);
+      }
       entries.push({ output: job.output, source: job.source, block: job.block });
     }
     let manifestEntries = entries;

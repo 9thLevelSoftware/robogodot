@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   ARCHIVE_SHA256,
   CLI_VERSION,
@@ -11,6 +14,7 @@ import {
   extractMermaidBlocks,
   mergeManifestEntries,
   parseTraceabilityIds,
+  renderAtlas,
 } from "../../docs/architecture/render.mjs";
 
 const sample = `# Sample
@@ -27,6 +31,29 @@ flowchart LR
   ACT_SAMPLE -->|uses| SYS_TARGET
 \`\`\`
 `;
+
+const TRACEABILITY_HEADER = "| ID | Name | View | Evidence | Source | Phase owner | Consumes | Produces | Consequence |";
+const TRACEABILITY_DIVIDER = "|---|---|---|---|---|---|---|---|---|";
+const sampleRows = [
+  "| `ACT-SAMPLE` | Sample actor | `01-system-context.md` | Explicit | source — heading | Test | input | request | actor consequence |",
+  "| `SYS-TARGET` | Sample target | `01-system-context.md` | Explicit | source — heading | Test | request | result | target consequence |",
+  "| `FLOW-SAMPLE-001` | Uses | `01-system-context.md` | Explicit | source — heading | Test | request | result | flow consequence |",
+];
+
+const sampleBlock = extractMermaidBlocks(sample)[0];
+
+function buildSampleTraceability({ header = TRACEABILITY_HEADER, rows = sampleRows } = {}) {
+  return `# Traceability\n\n${header}\n${TRACEABILITY_DIVIDER}\n${rows.join("\n")}\n`;
+}
+
+async function createAtlasFixture(t, { block = sampleBlock, traceability = buildSampleTraceability() } = {}) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "architecture-atlas-test-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, "01-system-context.md"), `# Sample\n\n\`\`\`mermaid\n${block}\n\`\`\`\n`, "utf8");
+  await writeFile(path.join(root, "traceability.md"), traceability, "utf8");
+  await writeFile(path.join(root, "mermaid-config.json"), "{}\n", "utf8");
+  return root;
+}
 
 test("extracts Mermaid blocks", () => {
   assert.equal(extractMermaidBlocks(sample).length, 1);
@@ -54,16 +81,136 @@ test("pins the renderer and declares eleven exports", () => {
   assert.equal(Object.values(EXPORT_MAP).flat().length, 11);
 });
 
-test("routes Windows npm command shims through cmd.exe", () => {
-  assert.equal(typeof buildNpxInvocation, "function", "renderer exports its launcher contract");
-  assert.deepEqual(buildNpxInvocation("win32"), {
-    executable: "cmd.exe",
-    argsPrefix: ["/d", "/s", "/c", "npx.cmd"],
+test("builds a shell-free Windows npx invocation with opaque paths", () => {
+  const execPath = String.raw`C:\Tools\Node & 100%^!\node.exe`;
+  assert.deepEqual(buildNpxInvocation("win32", execPath), {
+    executable: execPath,
+    argsPrefix: [path.win32.join(path.win32.dirname(execPath), "node_modules", "npm", "bin", "npx-cli.js")],
   });
   assert.deepEqual(buildNpxInvocation("linux"), {
     executable: "npx",
     argsPrefix: [],
   });
+});
+
+test("renderAtlas rejects duplicate traceability IDs", async (t) => {
+  const root = await createAtlasFixture(t, {
+    traceability: buildSampleTraceability({ rows: [...sampleRows, sampleRows[0]] }),
+  });
+  await assert.rejects(
+    renderAtlas({ check: true, only: new Set(["01-system-context"]), root }),
+    /Duplicate traceability IDs: ACT-SAMPLE/,
+  );
+});
+
+test("renderAtlas requires the exact traceability header", async (t) => {
+  const root = await createAtlasFixture(t, {
+    traceability: buildSampleTraceability({ header: TRACEABILITY_HEADER.replace("Phase owner", "Owner") }),
+  });
+  await assert.rejects(
+    renderAtlas({ check: true, only: new Set(["01-system-context"]), root }),
+    /exact traceability header/,
+  );
+});
+
+test("renderAtlas enforces immediate unique anchors and one edge per flow anchor", async (t) => {
+  const cases = [
+    {
+      name: "node without anchor",
+      block: sampleBlock.replace("  %% atlas-node: SYS-TARGET\n", ""),
+      error: /missing immediately preceding atlas-node anchor/,
+    },
+    {
+      name: "edge without anchor",
+      block: sampleBlock.replace("  %% atlas-flow: FLOW-SAMPLE-001\n", ""),
+      error: /missing immediately preceding atlas-flow anchor/,
+    },
+    {
+      name: "blank between anchor and node",
+      block: sampleBlock.replace("  %% atlas-node: SYS-TARGET\n", "  %% atlas-node: SYS-TARGET\n\n"),
+      error: /must immediately precede/,
+    },
+    {
+      name: "duplicate node anchor",
+      block: sampleBlock.replace(
+        "  %% atlas-node: ACT-SAMPLE\n",
+        "  %% atlas-node: ACT-SAMPLE\n  %% atlas-node: ACT-SAMPLE\n",
+      ),
+      error: /Duplicate atlas anchor: ACT-SAMPLE/,
+    },
+    {
+      name: "duplicate flow anchor",
+      block: sampleBlock.replace(
+        "  %% atlas-flow: FLOW-SAMPLE-001\n",
+        "  %% atlas-flow: FLOW-SAMPLE-001\n  %% atlas-flow: FLOW-SAMPLE-001\n",
+      ),
+      error: /Duplicate atlas anchor: FLOW-SAMPLE-001/,
+    },
+    {
+      name: "one anchor expands to multiple edges",
+      block: sampleBlock.replace("  ACT_SAMPLE -->|uses| SYS_TARGET", "  ACT_SAMPLE & SYS_TARGET -->|uses| SYS_TARGET"),
+      error: /must map to exactly one Mermaid edge/,
+    },
+    {
+      name: "unanchored extra channel declaration",
+      block: sampleBlock.replace(
+        "  %% atlas-flow: FLOW-SAMPLE-001",
+        '  CH_EXTRA["Extra channel"]\n  %% atlas-flow: FLOW-SAMPLE-001',
+      ),
+      error: /CH_EXTRA.*missing immediately preceding atlas-node anchor/,
+    },
+    {
+      name: "implicit extra channel endpoint",
+      block: sampleBlock.replace("ACT_SAMPLE -->|uses| SYS_TARGET", "ACT_SAMPLE -->|uses| CH_EXTRA"),
+      error: /CH_EXTRA.*must have an anchored node declaration/,
+    },
+  ];
+
+  for (const fixture of cases) {
+    await t.test(fixture.name, async (t) => {
+      const root = await createAtlasFixture(t, { block: fixture.block });
+      await assert.rejects(
+        renderAtlas({ check: true, only: new Set(["01-system-context"]), root }),
+        fixture.error,
+      );
+    });
+  }
+});
+
+test("renderAtlas passes the Windows launcher to spawn without a shell", async (t) => {
+  const root = await createAtlasFixture(t);
+  const execPath = String.raw`C:\Tools\Node & 100%^!\node.exe`;
+  const calls = [];
+  const spawn = (...args) => {
+    calls.push(args);
+    return { status: 0, stdout: "", stderr: "" };
+  };
+
+  await renderAtlas({
+    only: new Set(["01-system-context"]),
+    root,
+    platform: "win32",
+    execPath,
+    spawn,
+  });
+
+  assert.equal(calls.length, 1);
+  const [executable, args, options] = calls[0];
+  assert.equal(executable, execPath);
+  assert.equal(args[0], path.win32.join(path.win32.dirname(execPath), "node_modules", "npm", "bin", "npx-cli.js"));
+  assert.deepEqual(options, { encoding: "utf8" });
+});
+
+test("renderAtlas propagates spawn EINVAL and cleans temporary files", async (t) => {
+  const root = await createAtlasFixture(t);
+  const spawnError = Object.assign(new Error("spawnSync npx-cli.js EINVAL"), { code: "EINVAL" });
+  const spawn = () => ({ status: null, error: spawnError, stdout: null, stderr: null });
+
+  await assert.rejects(
+    renderAtlas({ only: new Set(["01-system-context"]), root, spawn }),
+    /renderer launch failed: EINVAL: spawnSync npx-cli\.js EINVAL/,
+  );
+  await assert.rejects(access(path.join(root, ".render-tmp")), { code: "ENOENT" });
 });
 
 test("builds detached export provenance", () => {

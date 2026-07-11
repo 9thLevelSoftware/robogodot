@@ -17,11 +17,11 @@ flowchart LR
   accTitle: Godot Control MCP system context
   accDescr: An engineer or AI-enabled MCP client uses a local TypeScript control plane to direct the Godot editor, a running game, and guarded project files, with an optional external asset provider outside the workstation boundary.
 
-  %% atlas-node: ACT-ENGINEER-AI
-  ACT_ENGINEER_AI(["ACT-ENGINEER-AI<br/>Engineer or AI-enabled<br/>MCP client"])
-
   subgraph LOCAL_WORKSTATION["Local workstation · personal-use scope"]
     direction LR
+
+    %% atlas-node: ACT-ENGINEER-AI
+    ACT_ENGINEER_AI(["ACT-ENGINEER-AI<br/>Engineer or AI-enabled<br/>MCP client"])
 
     %% atlas-node: SYS-GODOT-CONTROL-MCP
     SYS_GODOT_CONTROL_MCP["SYS-GODOT-CONTROL-MCP<br/>godot-control-mcp<br/>TypeScript control plane"]
