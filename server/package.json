@@ -8,6 +8,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
+    "test:live": "vitest run tests/live-godot.test.ts",
     "lint": "tsc --noEmit",
     "start": "node dist/index.js"
   },

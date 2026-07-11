@@ -1,0 +1,44 @@
+name: CI
+on: [push, pull_request]
+env:
+  GODOT_VERSION: 4.6.2
+jobs:
+  verify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Install server
+        working-directory: server
+        run: npm ci
+      - name: Architecture
+        run: node --test tests/architecture/*.test.mjs
+      - name: Server tests
+        working-directory: server
+        run: npm test -- --run
+      - name: Typecheck and build
+        working-directory: server
+        run: npm run typecheck && npm run build
+      - name: Install Godot (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          curl -fL -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q godot.zip -d .godot
+          echo "GODOT_PATH=$PWD/.godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64" >> "$GITHUB_ENV"
+      - name: Install Godot (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/godotengine/godot/releases/download/$env:GODOT_VERSION-stable/Godot_v$env:GODOT_VERSION-stable_win64.exe.zip" -OutFile godot.zip
+          Expand-Archive godot.zip -DestinationPath .godot
+          "GODOT_PATH=$pwd\.godot\Godot_v$env:GODOT_VERSION-stable_win64.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Plugin smoke
+        run: node tests/godot/run-smoke.mjs
