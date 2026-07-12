@@ -2,7 +2,7 @@ import { connect } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { LspTransport } from "../src/lsp/transport.js";
 import { LSP_LIMITS } from "../src/lsp/protocol.js";
-import { MockLspServer, frame } from "./mock-lsp.js";
+import { MOCK_LSP_LIMITS, MockLspServer, frame } from "./mock-lsp.js";
 
 const mocks: MockLspServer[] = [];
 async function setup(options = {}) {
@@ -39,12 +39,60 @@ describe("LspTransport", () => {
   });
 
   it("maps LSP errors and removes timed-out pending requests", async () => {
-    const { mock, transport } = await setup({ minRequestMs: 10 });
+    const { mock, transport } = await setup({ minRequestMs: 10, maxPending: 1 });
     const failed = transport.request("bad", {}, 1_000); await expect.poll(() => mock.messages.length).toBe(1);
     mock.error(mock.messages[0].id, -32602, "bad args", { field: "x" });
     await expect(failed).rejects.toMatchObject({ code: "godot_error", message: "bad args", data: { code: -32602, data: { field: "x" } } });
     await expect(transport.request("slow", {}, 10)).rejects.toMatchObject({ code: "timeout" });
-    await expect(transport.request("after-timeout", {}, 10)).rejects.toMatchObject({ code: "timeout" });
+    const admitted = transport.request<string>("after-timeout", {}, 1_000);
+    await expect.poll(() => mock.messages.length).toBe(3);
+    mock.result(mock.messages[2].id, "admitted");
+    await expect(admitted).resolves.toBe("admitted");
+  });
+
+  it.each([
+    { maxFrameBytes: Number.NaN }, { maxBufferBytes: Number.POSITIVE_INFINITY },
+    { maxPending: -1 }, { maxPending: 1.5 }, { maxFrameBytes: 20, maxBufferBytes: 10 },
+  ])("rejects invalid transport options: %j", (invalid) => {
+    expect(() => new LspTransport({ ...LSP_LIMITS, ...invalid })).toThrowError(expect.objectContaining({ code: "godot_error" }));
+  });
+
+  it("isolates notification subscriber exceptions", async () => {
+    const { mock, transport } = await setup(); const events: string[] = [];
+    transport.onNotification(() => { throw new Error("listener failed"); });
+    transport.onNotification((event) => events.push(event.method));
+    mock.notify("still/healthy");
+    await expect.poll(() => events).toEqual(["still/healthy"]);
+    expect(transport.isAttached).toBe(true);
+  });
+
+  it("isolates closed subscriber exceptions and completes cleanup", async () => {
+    const { transport } = await setup(); const calls: string[] = [];
+    transport.onClosed(() => { calls.push("first"); throw new Error("listener failed"); });
+    transport.onClosed(() => calls.push("second"));
+    await expect(transport.close()).resolves.toBeUndefined();
+    expect(calls).toEqual(["first", "second"]); expect(transport.isAttached).toBe(false);
+  });
+
+  it("bounds the mock receive buffer and rejects oversized frames", async () => {
+    const mock = new MockLspServer(); mocks.push(mock); await mock.start();
+    const socket = connect(mock.port, "127.0.0.1"); await new Promise<void>((r) => socket.once("connect", r));
+    socket.write("x".repeat(MOCK_LSP_LIMITS.maxBufferBytes + 1));
+    await new Promise<void>((resolve) => socket.once("close", () => resolve()));
+    expect(mock.messages).toHaveLength(0);
+
+    const second = connect(mock.port, "127.0.0.1"); await new Promise<void>((r) => second.once("connect", r));
+    second.write(`Content-Length: ${MOCK_LSP_LIMITS.maxFrameBytes + 1}\r\n\r\n`);
+    await new Promise<void>((resolve) => second.once("close", () => resolve()));
+    expect(mock.messages).toHaveLength(0);
+  });
+
+  it("caps messages recorded by the mock", async () => {
+    const mock = new MockLspServer(); mocks.push(mock); await mock.start();
+    const socket = connect(mock.port, "127.0.0.1"); await new Promise<void>((r) => socket.once("connect", r));
+    socket.write(Buffer.concat(Array.from({ length: MOCK_LSP_LIMITS.maxRecordedMessages + 1 }, (_, id) => frame({ jsonrpc: "2.0", id, method: "x" }))));
+    await new Promise<void>((resolve) => socket.once("close", () => resolve()));
+    expect(mock.messages).toHaveLength(MOCK_LSP_LIMITS.maxRecordedMessages);
   });
 
   it("rejects pending requests and emits closed once", async () => {
@@ -69,7 +117,7 @@ describe("LspTransport", () => {
   });
 
   it("enforces pending and buffer bounds", async () => {
-    const { mock, transport } = await setup({ maxPending: 1, maxBufferBytes: 16 });
+    const { mock, transport } = await setup({ maxPending: 1, maxFrameBytes: 16, maxBufferBytes: 16 });
     void transport.request("held", {}, 1_000).catch(() => undefined); await expect.poll(() => mock.messages.length).toBe(1);
     await expect(transport.request("extra", {}, 1_000)).rejects.toMatchObject({ code: "godot_error" });
     const closed = new Promise<Error>((resolve) => transport.onClosed(resolve)); mock.sendRaw("x".repeat(17));

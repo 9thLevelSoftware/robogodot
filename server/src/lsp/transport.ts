@@ -24,7 +24,7 @@ export class LspTransport {
   private currentGeneration = 0;
   private closing = false;
 
-  constructor(private readonly options: TransportOptions = LSP_LIMITS) {}
+  constructor(private readonly options: TransportOptions = LSP_LIMITS) { this.validateOptions(options); }
   get generation(): number { return this.currentGeneration; }
   get isAttached(): boolean { return this.socket !== undefined; }
 
@@ -65,6 +65,17 @@ export class LspTransport {
     const min = this.options.minRequestMs ?? LSP_LIMITS.minRequestMs, max = this.options.maxRequestMs ?? LSP_LIMITS.maxRequestMs;
     return Math.min(max, Math.max(min, Number.isFinite(timeoutMs) ? timeoutMs : this.options.defaultRequestMs ?? LSP_LIMITS.defaultRequestMs));
   }
+  private validateOptions(options: TransportOptions): void {
+    const values = [options.maxFrameBytes, options.maxBufferBytes, options.maxPending,
+      options.defaultRequestMs ?? LSP_LIMITS.defaultRequestMs,
+      options.minRequestMs ?? LSP_LIMITS.minRequestMs,
+      options.maxRequestMs ?? LSP_LIMITS.maxRequestMs];
+    const [frame, buffer, , defaultMs, minMs, maxMs] = values as [number, number, number, number, number, number];
+    if (values.some((value) => !Number.isFinite(value) || !Number.isInteger(value) || value <= 0)
+      || frame > buffer || minMs > defaultMs || defaultMs > maxMs) {
+      throw new GodotMcpError("godot_error", "Invalid LSP transport limits.", "Use finite positive integer limits with frame <= buffer and min deadline <= default deadline <= max deadline.");
+    }
+  }
   private write(message: unknown): void { this.socket!.write(encodeFrame(message)); }
 
   private readonly onData = (chunk: Buffer | string): void => {
@@ -96,7 +107,7 @@ export class LspTransport {
       const event: LspNotification = envelope.params === undefined
         ? { generation: this.currentGeneration, method: envelope.method }
         : { generation: this.currentGeneration, method: envelope.method, params: envelope.params };
-      for (const listener of this.notificationListeners) listener(event); return;
+      for (const listener of this.notificationListeners) { try { listener(event); } catch { /* subscriber failures are isolated */ } } return;
     }
     if (!("id" in envelope) || "method" in envelope) return;
     const pending = this.pending.get(envelope.id); if (!pending || pending.generation !== this.currentGeneration) return;
@@ -114,7 +125,7 @@ export class LspTransport {
     this.socket = undefined; socket.off("data", this.onData); socket.off("close", this.onSocketClose); socket.off("error", this.onSocketError);
     this.buffer = Buffer.alloc(0); this.bodyLength = undefined;
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error); } this.pending.clear();
-    for (const listener of this.closedListeners) listener(error);
+    for (const listener of this.closedListeners) { try { listener(error); } catch { /* subscriber failures are isolated */ } }
     if (!this.closing) socket.destroy();
   }
 }

@@ -2,13 +2,15 @@ import { createServer, type Server, type Socket } from "node:net";
 
 export interface DecodedFrame { header: string; body: string; json: any }
 
+export const MOCK_LSP_LIMITS = {
+  maxFrameBytes: 1_048_576,
+  maxBufferBytes: 2_097_152,
+  maxRecordedMessages: 1_024,
+} as const;
+
 export function frame(message: unknown): Buffer {
   const body = Buffer.from(JSON.stringify(message), "utf8");
   return Buffer.concat([Buffer.from(`Content-Length: ${body.length}\r\n\r\n`, "ascii"), body]);
-}
-
-export function duplexPair(): { client: Socket; server: Socket } {
-  throw new Error("duplexPair is only available asynchronously through MockLspServer");
 }
 
 export class MockLspServer {
@@ -24,23 +26,28 @@ export class MockLspServer {
       let buffer = Buffer.alloc(0);
       socket.on("close", () => this.sockets.delete(socket));
       socket.on("data", (chunk) => {
+        if (chunk.length > MOCK_LSP_LIMITS.maxBufferBytes - buffer.length) { socket.destroy(); return; }
         buffer = Buffer.concat([buffer, chunk]);
-        while (true) {
-          const end = buffer.indexOf("\r\n\r\n");
-          if (end < 0) break;
-          const header = buffer.subarray(0, end).toString("ascii");
-          const lengths = header.split("\r\n").filter((line) => /^content-length:/i.test(line));
-          if (lengths.length !== 1) { socket.destroy(); return; }
-          const raw = lengths[0]!.slice(lengths[0]!.indexOf(":") + 1).trim();
-          if (!/^\d+$/.test(raw)) { socket.destroy(); return; }
-          const length = Number(raw);
-          if (buffer.length < end + 4 + length) break;
-          const body = buffer.subarray(end + 4, end + 4 + length);
-          buffer = buffer.subarray(end + 4 + length);
-          const message = JSON.parse(body.toString("utf8"));
-          this.messages.push(message);
-          if (typeof message.method === "string" && typeof message.id === "number") this.handlers.get(message.method)?.(message);
-        }
+        try {
+          while (true) {
+            const end = buffer.indexOf("\r\n\r\n");
+            if (end < 0) break;
+            const header = buffer.subarray(0, end).toString("ascii");
+            const lengths = header.split("\r\n").filter((line) => /^content-length:/i.test(line));
+            if (lengths.length !== 1) throw new Error("invalid length header");
+            const raw = lengths[0]!.slice(lengths[0]!.indexOf(":") + 1).trim();
+            if (!/^\d+$/.test(raw)) throw new Error("invalid length");
+            const length = Number(raw);
+            if (!Number.isSafeInteger(length) || length > MOCK_LSP_LIMITS.maxFrameBytes) throw new Error("oversized frame");
+            if (buffer.length < end + 4 + length) break;
+            const body = buffer.subarray(end + 4, end + 4 + length);
+            buffer = buffer.subarray(end + 4 + length);
+            const message = JSON.parse(body.toString("utf8"));
+            if (this.messages.length >= MOCK_LSP_LIMITS.maxRecordedMessages) throw new Error("recording limit reached");
+            this.messages.push(message);
+            if (typeof message.method === "string" && typeof message.id === "number") this.handlers.get(message.method)?.(message);
+          }
+        } catch { socket.destroy(); }
       });
     });
     await new Promise<void>((resolve, reject) => this.server!.listen(0, "127.0.0.1", resolve).once("error", reject));
