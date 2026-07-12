@@ -6,7 +6,7 @@ import { connect } from "node:net";
 import { GodotMcpError } from "../errors.js";
 
 export type LspOwnership = "attached" | "owned";
-type HostChild = Pick<ChildProcess, "once" | "off" | "kill" | "stdout" | "stderr">;
+type HostChild = Pick<ChildProcess, "on" | "once" | "off" | "kill" | "stdout" | "stderr">;
 export interface LspHostConfig { lspPort: number; lspAutoStart: boolean; godotPath?: string; projectPath?: string }
 export interface LspHostDependencies {
   probe?: (host: "127.0.0.1", port: number, deadlineMs: number) => Promise<boolean>;
@@ -62,7 +62,7 @@ export class LspHost {
   private ensuring: Promise<LspOwnership> | undefined;
   private closing: Promise<void> | undefined;
   private state: "open" | "closing" | "closed" = "open";
-  private ownedListeners: { child: HostChild; detach: () => void } | undefined;
+  private ownedListeners: { child: HostChild; detach: () => void; failure?: Error } | undefined;
   private readonly deps: Required<LspHostDependencies>;
 
   constructor(private readonly config: LspHostConfig, dependencies: LspHostDependencies = {}) {
@@ -163,28 +163,38 @@ export class LspHost {
   private async performClose(): Promise<void> {
     try { await this.ensuring; } catch { /* cleanup continues */ }
     const child = this.ownedChild; this.ownedChild = undefined;
+    const listeners = this.ownedListeners;
+    let terminateError: unknown;
     try { if (child) await this.deps.terminate(child); }
+    catch (error) { terminateError = error; }
     finally {
-      const listeners = this.ownedListeners;
       if (listeners && listeners.child === child) { listeners.detach(); this.ownedListeners = undefined; }
       this.ownership = undefined; this.state = "closed";
     }
+    if (listeners?.failure) throw listeners.failure;
+    if (terminateError !== undefined) throw terminateError;
   }
 
   private installOwnedListeners(child: HostChild, onStdout: (chunk: unknown) => void, onStderr: (chunk: unknown) => void): void {
     this.ownedListeners?.detach();
+    let lifetime!: { child: HostChild; detach: () => void; failure?: Error };
+    const onError = (error: Error) => {
+      lifetime.failure ??= error;
+      this.stderr = append(this.stderr, error.message);
+    };
     const onExit = () => {
       if (this.ownedChild === child) { this.ownedChild = undefined; this.ownership = undefined; }
       detach();
       if (this.ownedListeners?.child === child) this.ownedListeners = undefined;
     };
     const detach = () => {
-      child.off("exit", onExit);
+      child.off("error", onError); child.off("exit", onExit);
       child.stdout?.off("data", onStdout); child.stderr?.off("data", onStderr);
     };
     child.stdout?.on("data", onStdout); child.stderr?.on("data", onStderr);
-    child.once("exit", onExit);
-    this.ownedListeners = { child, detach };
+    child.on("error", onError); child.once("exit", onExit);
+    lifetime = { child, detach };
+    this.ownedListeners = lifetime;
   }
 
   private assertOpen(): void { if (this.state !== "open") throw this.closedError(); }

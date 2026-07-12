@@ -88,3 +88,27 @@ No process-name kill, shell invocation, default auto-start, or live-Godot unit d
 - `close()` leaves the lifetime exit/output listeners active during exact-child termination and detaches them after termination completes, without killing an already-exited child or an attached external replacement.
 - Output emitted after readiness and during shutdown remains bounded to the final 16,384 bytes per stream.
 - Completed ensure promises are cleared, allowing an exited owned child to be followed by a fresh attach probe rather than returning stale ownership.
+
+## Owned-lifetime error-listener fix cycle
+
+### RED evidence
+
+- Added tests emitting `error` after readiness and synchronously from the termination seam.
+- Command: `npm test -- --run tests/lsp-host.test.ts`
+- Result: exit 1, 2 failed / 15 passed. The owned child had zero error listeners, so both emissions produced unhandled EventEmitter throws and no bounded diagnostics/close result.
+
+### GREEN evidence
+
+- Host cycle: 17/17 passed.
+- Final focused command: `npm test -- --run tests/lsp-host.test.ts tests/server.test.ts`
+  - 2 files passed; 25 tests passed.
+- `npm run typecheck`: exit 0.
+- `npm run build`: exit 0.
+- Full suite `npm test -- --run`: 28 files passed, 2 skipped; 279 tests passed, 2 skipped.
+
+### Fixes
+
+- Owned readiness now installs a lifetime `error` listener alongside exit/stdout/stderr listeners; startup-specific error listeners remain removed.
+- Lifetime child errors are retained as the first exact-child failure and appended through the existing 16,384-byte stderr cap.
+- Close keeps the error listener installed throughout terminate/kill, attempts termination and listener cleanup, then rejects with the captured child error (or termination error) so outer attempt-all server cleanup remains intact.
+- Exact exit and completed close detach error, exit, stdout, and stderr lifetime listeners.

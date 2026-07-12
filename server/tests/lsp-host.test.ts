@@ -147,7 +147,7 @@ describe("LspHost", () => {
   it("replaces startup listeners with owned-lifetime listeners", async () => {
     const probe = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true);
     const { host, ownedChild } = fixture({ probe }); await host.ensureAvailable();
-    expect(ownedChild.listenerCount("error")).toBe(0);
+    expect(ownedChild.listenerCount("error")).toBe(1);
     expect(ownedChild.listenerCount("exit")).toBe(1);
     expect(ownedChild.stdout.listenerCount("data")).toBe(1); expect(ownedChild.stderr.listenerCount("data")).toBe(1);
   });
@@ -176,6 +176,34 @@ describe("LspHost", () => {
     await host.close();
     expect(host.diagnostics().stdout.endsWith("shutdown-tail")).toBe(true);
     expect(ownedChild.listenerCount("exit")).toBe(0);
+    expect(ownedChild.stdout.listenerCount("data")).toBe(0); expect(ownedChild.stderr.listenerCount("data")).toBe(0);
+  });
+
+  it("captures an owned child error after readiness without an unhandled throw", async () => {
+    const probe = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true);
+    const { host, ownedChild, terminate } = fixture({ probe }); await host.ensureAvailable();
+    const failure = new Error(`owned-failure-${"z".repeat(20_000)}-tail`);
+    expect(ownedChild.listenerCount("error")).toBe(1);
+    expect(() => ownedChild.emit("error", failure)).not.toThrow();
+    const diagnostics = host.diagnostics();
+    expect(Buffer.byteLength(diagnostics.stderr)).toBe(16_384);
+    expect(diagnostics.stderr.endsWith("-tail")).toBe(true);
+    await expect(host.close()).rejects.toBe(failure);
+    expect(terminate).toHaveBeenCalledWith(ownedChild);
+    expect(ownedChild.listenerCount("error")).toBe(0); expect(ownedChild.listenerCount("exit")).toBe(0);
+  });
+
+  it("captures an owned child error during teardown and detaches after cleanup", async () => {
+    const probe = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true);
+    const failure = new Error("teardown child error");
+    const terminate = vi.fn().mockImplementation(async (ownedChild: ReturnType<typeof child>) => {
+      expect(() => ownedChild.emit("error", failure)).not.toThrow();
+    });
+    const { host, ownedChild } = fixture({ probe, terminate }); await host.ensureAvailable();
+    await expect(host.close()).rejects.toBe(failure);
+    expect(terminate).toHaveBeenCalledOnce();
+    expect(host.diagnostics().stderr).toContain("teardown child error");
+    expect(ownedChild.listenerCount("error")).toBe(0); expect(ownedChild.listenerCount("exit")).toBe(0);
     expect(ownedChild.stdout.listenerCount("data")).toBe(0); expect(ownedChild.stderr.listenerCount("data")).toBe(0);
   });
 });
