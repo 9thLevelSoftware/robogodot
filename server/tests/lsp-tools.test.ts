@@ -92,6 +92,15 @@ describe("public LSP tools", () => {
     } finally { await h.close(); }
   });
 
+  it("fails closed for accessor-backed or descriptor-trapped completion items", async () => {
+    let getterCalls = 0; const accessor = Object.defineProperty({}, "items", { get: () => { getterCalls++; throw new Error("items getter"); } });
+    const trapped = new Proxy({}, { getOwnPropertyDescriptor: (_target, key) => { if (key === "items") throw new Error("items descriptor"); return undefined; } });
+    for (const result of [accessor, trapped]) { const h = await harness(fake(result)); try {
+      expect(await h.client.callTool({ name: "godot_lsp_completion", arguments: { uri: document.uri, position: { line: 0, character: 1 } } })).toMatchObject({ structuredContent: { items: [], truncated: true } });
+    } finally { await h.close(); } }
+    expect(getterCalls).toBe(0);
+  });
+
   it("never executes inherited properties or accessors in arbitrary LSP results", async () => {
     let getterCalls = 0;
     const accessor = Object.defineProperty({}, "label", { enumerable: true, get: () => { getterCalls++; throw new Error("getter ran"); } });

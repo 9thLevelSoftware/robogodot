@@ -103,3 +103,15 @@ Shared string, documentation, position, range, completion, symbol, and tree norm
 - Patch hygiene: `git diff --check` — passed.
 
 Second-pass concerns: none. The two skipped tests remain the repository's opt-in live tests.
+
+## Final narrow completion fix
+
+### RED 5
+
+Added object-form completion regressions for an accessor-backed `items` property and a proxy whose `getOwnPropertyDescriptor` trap throws for `items`. The focused test failed because both safely returned empty items but incorrectly reported `truncated: false`; the accessor getter was not executed.
+
+### GREEN 5
+
+The completion handler now creates its scoped normalization state before inspecting the root result and obtains object-form `items` through the state-aware `field` helper. A genuinely absent property remains a normal empty result, while accessors and descriptor failures return empty items with `truncated: true` and no exception.
+
+Final verification: `tests/lsp-tools.test.ts` passed 15/15; typecheck and build passed; the full server suite passed 252 tests with the 2 existing opt-in live tests skipped; `git diff --check` passed.
