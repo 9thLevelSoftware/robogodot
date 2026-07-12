@@ -72,6 +72,7 @@ func _enter_tree() -> void:
 	router.register_command("edit.project_setting_set", Edit.project_setting_set)
 	router.register_command("edit.project_setting_list", Edit.project_setting_list)
 	_server = Server.new()
+	_server.session_ended.connect(_on_session_ended)
 	add_child(_server)
 	var port := port_from_environment()
 	var token := token_from_environment()
@@ -84,8 +85,13 @@ func _enter_tree() -> void:
 		push_error("Godot Control MCP could not listen on 127.0.0.1:%d (error %d)" % [port, listen_error])
 
 func _exit_tree() -> void:
-	ResourceHandles.clear()
 	if is_instance_valid(_server):
 		_server.stop()
+		if _server.session_ended.is_connected(_on_session_ended):
+			_server.session_ended.disconnect(_on_session_ended)
 		_server.queue_free()
 	_server = null
+	ResourceHandles.clear()
+
+func _on_session_ended() -> void:
+	ResourceHandles.clear()

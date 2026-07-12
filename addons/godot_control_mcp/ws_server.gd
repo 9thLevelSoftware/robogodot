@@ -1,6 +1,8 @@
 @tool
 extends Node
 
+signal session_ended
+
 const MIN_TOKEN_BYTES := 32
 const MAX_TOKEN_BYTES := 256
 const MAX_AUTH_FRAME_BYTES := 1024
@@ -39,6 +41,7 @@ func peer_count() -> int:
 
 func stop() -> void:
 	_tcp_server.stop()
+	_end_owner_session(_owner)
 	for peer in _peers:
 		peer.close(1001, "Server stopped")
 		peer.poll()
@@ -46,7 +49,6 @@ func stop() -> void:
 	_authenticated.clear()
 	_preauth_deadlines.clear()
 	_rejections.clear()
-	_owner = null
 
 func _exit_tree() -> void:
 	stop()
@@ -106,12 +108,18 @@ func _pending_peer_count() -> int:
 
 func _remove_peer_at(index: int) -> void:
 	var peer := _peers[index]
-	if peer == _owner:
-		_owner = null
+	_end_owner_session(peer)
 	_authenticated.erase(peer)
 	_preauth_deadlines.erase(peer)
 	_rejections.erase(peer)
 	_peers.remove_at(index)
+
+func _end_owner_session(peer: WebSocketPeer) -> void:
+	if peer == null or peer != _owner:
+		return
+	_owner = null
+	_authenticated.erase(peer)
+	session_ended.emit()
 
 func _handle_text(peer: WebSocketPeer, text: String) -> void:
 	if _authenticated.get(peer, false):

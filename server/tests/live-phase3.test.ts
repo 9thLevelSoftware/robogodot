@@ -38,7 +38,7 @@ async function stop(child?: ChildProcess): Promise<void> {
 }
 
 liveDescribe("Phase 3 public MCP acceptance (set GODOT_PATH to enable)", () => {
-  test("builds, persists, fully undoes, and reconnects with session handles invalidated", async () => {
+  test("builds, persists, fully undoes, and invalidates handles across same-editor reauthentication", async () => {
     const project = await mkdtemp(join(tmpdir(), "godot-mcp-phase3-"));
     const port = await freePort(); let process: ReturnType<typeof launch> | undefined;
     const bridge = new JsonRpcClient({ url: `ws://127.0.0.1:${port}`, token, logger: createLogger("error"), heartbeatIntervalMs: 250, heartbeatTimeoutMs: 250 });
@@ -91,9 +91,13 @@ liveDescribe("Phase 3 public MCP acceptance (set GODOT_PATH to enable)", () => {
       expect((await call<{ nodes: unknown[] }>("godot_scene_tree", { limit: 100, maxDepth: 8 })).nodes).toHaveLength(1);
       expect(await call("godot_project_setting_get", { key: settingKey })).toMatchObject({ exists: false });
 
-      await stop(process.child); process = undefined; await waitFor(() => bridge.getStatus().state !== "connected", () => "editor did not disconnect");
-      process = launch(project, port); await waitFor(() => bridge.getStatus().state === "connected", process.diagnostics);
+      bridge.stop();
+      await waitFor(() => bridge.getStatus().state !== "connected", () => "client did not disconnect");
+      bridge.start();
+      await waitFor(() => bridge.getStatus().state === "connected", process.diagnostics);
       await expect(call("godot_resource_save", { handle: resource.handle, path: "res://stale.tres" })).rejects.toThrow(/live resource handle/i);
+      const replacement = await call<{ handle: string }>("godot_resource_create", { class: "Gradient", properties: {} });
+      await expect(call("godot_resource_save", { handle: replacement.handle, path: "res://replacement.tres" })).resolves.toMatchObject({ path: "res://replacement.tres" });
       await expect(call("godot_ping")).resolves.toMatchObject({ pong: true });
     } finally {
       await client?.close(); await server?.close(); bridge.stop(); await stop(process?.child);
