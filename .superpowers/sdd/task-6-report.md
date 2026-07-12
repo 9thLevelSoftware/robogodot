@@ -173,3 +173,37 @@ Exit code   0
 ```
 
 The standard full regression also passed with 28 files / 299 tests, 4 environment-gated skips. Typecheck and build both exited 0.
+
+## Final live-suite isolation
+
+- Phase 4 now copies `GODOT_PROJECT_PATH` to a per-suite temporary directory before launch, excluding every `.godot` path while retaining `project.godot`, Phase 4 fixtures, and other required project files.
+- Every Phase 4 launch, host configuration, unavailable hint, fixture transition, and path assertion uses the resolved isolated path. The source fixture is no longer opened or mutated by Phase 4 Godot processes.
+- The harness close path independently attempts `client.close`, `server.close`, `lsp.close`, and `host.close` in that order and reports the first close error only after all four were attempted. Owned PID observation happens after this close coordinator, guaranteeing the host close attempt.
+- The temporary project is recursively removed in suite teardown. Unit coverage proves `.godot` exclusion and ordered all-attempt close behavior.
+- Normal parallel all-live verification initially showed the pre-existing `live-godot` suite's condition-driven 10-second plugin deadline expiring under concurrent cold editor scans. Phase 4 isolation removed shared mutation; the existing live deadline was raised to a bounded 20 seconds so normal parallel execution tolerates concurrent initialization without serializing tests.
+
+Focused support/session/host verification:
+
+```
+Test Files  3 passed (3)
+Tests       57 passed (57)
+typecheck   exit 0
+```
+
+Phase 4 live on the isolated copy:
+
+```
+Test Files  1 passed (1)
+Tests       2 passed (2)
+Duration    9.32s
+Exit code   0
+```
+
+Two required normal parallel all-live repetitions after the bounded deadline adjustment:
+
+```
+Run 1: 31 files passed, 305 tests passed, duration 23.87s
+Run 2: 31 files passed, 305 tests passed, duration 24.11s
+```
+
+No serial/max-worker override was used for either final repetition.

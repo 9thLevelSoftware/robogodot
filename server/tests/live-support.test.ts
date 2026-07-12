@@ -1,9 +1,34 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, test, vi } from "vitest";
-import { allocateLoopbackPort, captureBoundedOutput, launchWithPortRetry, liveTimeoutBudget, runCleanupSteps, waitForPidExit, waitForProcessConnection, waitForProcessExit } from "./live-support.js";
+import { allocateLoopbackPort, captureBoundedOutput, closeAllInOrder, createIsolatedGodotProject, launchWithPortRetry, liveTimeoutBudget, runCleanupSteps, waitForPidExit, waitForProcessConnection, waitForProcessExit } from "./live-support.js";
 
 describe("live Godot process support", () => {
+  test("attempts every MCP close in order and preserves the first error", async () => {
+    const calls: string[] = [];
+    await expect(closeAllInOrder([
+      async () => { calls.push("client"); throw new Error("client close failed"); },
+      async () => { calls.push("server"); throw new Error("server close failed"); },
+      async () => { calls.push("lsp"); }, async () => { calls.push("host"); },
+    ])).rejects.toThrow("client close failed");
+    expect(calls).toEqual(["client", "server", "lsp", "host"]);
+  });
+
+  test("copies an isolated Godot project without volatile .godot state", async () => {
+    const source = await mkdtemp(join(tmpdir(), "phase4-source-")); let isolated: string | undefined;
+    try {
+      await mkdir(join(source, ".godot")); await mkdir(join(source, "phase4"));
+      await writeFile(join(source, "project.godot"), "[application]\n");
+      await writeFile(join(source, ".godot", "volatile"), "no"); await writeFile(join(source, "phase4", "fixture.gd"), "extends Node\n");
+      isolated = await createIsolatedGodotProject(source);
+      await expect(readFile(join(isolated, "project.godot"), "utf8")).resolves.toContain("application");
+      await expect(readFile(join(isolated, "phase4", "fixture.gd"), "utf8")).resolves.toContain("extends Node");
+      await expect(readFile(join(isolated, ".godot", "volatile"), "utf8")).rejects.toThrow();
+    } finally { if (isolated) await rm(isolated, { recursive: true, force: true }); await rm(source, { recursive: true, force: true }); }
+  });
   test("attempts every cleanup step and preserves the primary failure", async () => {
     const primary = new Error("assertion failed"); const calls: number[] = [];
     await runCleanupSteps(primary, [async () => { calls.push(1); throw new Error("restore failed"); }, async () => { calls.push(2); throw new Error("close failed"); }, async () => { calls.push(3); }]);

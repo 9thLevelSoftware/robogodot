@@ -1,19 +1,21 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { LspClient } from "../src/lsp/client.js";
 import { LspHost, terminateWindowsProcessTree } from "../src/lsp/host.js";
 import { LspSession } from "../src/lsp/session.js";
 import { createServer } from "../src/server.js";
-import { allocateLoopbackPort, captureBoundedOutput, launchWithPortRetry, runCleanupSteps, waitForPidExit, waitForProcessConnection, waitForProcessExit } from "./live-support.js";
+import { allocateLoopbackPort, captureBoundedOutput, closeAllInOrder, createIsolatedGodotProject, launchWithPortRetry, runCleanupSteps, waitForPidExit, waitForProcessConnection, waitForProcessExit } from "./live-support.js";
 
 const godotPath = process.env.GODOT_PATH;
 const liveDescribe = godotPath ? describe : describe.skip;
-const projectPath = resolve(process.env.GODOT_PROJECT_PATH ?? "../tests/fixtures/godot_project");
+const sourceProjectPath = resolve(process.env.GODOT_PROJECT_PATH ?? "../tests/fixtures/godot_project");
+let projectPath = sourceProjectPath;
+let isolatedProjectPath: string | undefined;
 
 type Launched = { child: ChildProcess; capture: ReturnType<typeof captureBoundedOutput>; port: number };
 
@@ -62,7 +64,7 @@ async function mcpHarness(port: number, autoStart: boolean, spawnObserver?: (chi
   const client = new Client({ name: "phase4-live", version: "1" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-  return { host, lsp, server, client, close: async () => { await client.close(); await server.close(); await lsp.close(); await host.close(); } };
+  return { host, lsp, server, client, close: () => closeAllInOrder([() => client.close(), () => server.close(), () => lsp.close(), () => host.close()]) };
 }
 
 async function call<T extends Record<string, unknown>>(client: Client, name: string, args: Record<string, unknown>): Promise<T> {
@@ -72,6 +74,8 @@ async function call<T extends Record<string, unknown>>(client: Client, name: str
 }
 
 liveDescribe("Phase 4 live Godot 4.6 LSP acceptance (set GODOT_PATH to enable)", () => {
+  beforeAll(async () => { isolatedProjectPath = await createIsolatedGodotProject(sourceProjectPath); projectPath = resolve(isolatedProjectPath); });
+  afterAll(async () => { if (isolatedProjectPath) await rm(isolatedProjectPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); });
   test("attaches through public MCP and exposes honest editor intelligence", async () => {
     let editor: Launched | undefined; let harness: Awaited<ReturnType<typeof mcpHarness>> | undefined; let primaryFailure: unknown;
     const diagnosticPath = resolve(projectPath, "phase4/diagnostic_error.gd");

@@ -2,6 +2,9 @@ import type { Readable } from "node:stream";
 import type { EventEmitter } from "node:events";
 import { once } from "node:events";
 import { createServer } from "node:net";
+import { cp, mkdtemp, rm } from "node:fs/promises";
+import { relative, sep } from "node:path";
+import { tmpdir } from "node:os";
 
 export interface OutputCapture {
   diagnostics(): string;
@@ -17,6 +20,18 @@ export async function runCleanupSteps(primaryFailure: unknown, steps: Array<() =
     return;
   }
   throw firstCleanupFailure;
+}
+
+export async function closeAllInOrder(steps: Array<() => Promise<void>>): Promise<void> { return runCleanupSteps(undefined, steps); }
+
+export async function createIsolatedGodotProject(sourceRoot: string): Promise<string> {
+  const destination = await mkdtemp(`${tmpdir()}${sep}robogodot-phase4-`);
+  try {
+    await cp(sourceRoot, destination, { recursive: true, filter: (candidate) => !relative(sourceRoot, candidate).split(/[\\/]/).includes(".godot") });
+    return destination;
+  } catch (error) {
+    await rm(destination, { recursive: true, force: true }); throw error;
+  }
 }
 
 export async function allocateLoopbackPort(): Promise<number> {

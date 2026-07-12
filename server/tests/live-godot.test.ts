@@ -18,7 +18,9 @@ const godotPath = process.env.GODOT_PATH;
 const liveDescribe = godotPath ? describe : describe.skip;
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const LAUNCH_ATTEMPTS = 3;
-const CONNECT_TIMEOUT_MS = 10_000;
+// Multiple live suites launch Godot in parallel; readiness remains condition-driven,
+// but a cold concurrent editor scan can exceed ten seconds on Windows CI/dev hosts.
+const CONNECT_TIMEOUT_MS = 20_000;
 const TERMINATE_TIMEOUT_MS = 5_000;
 const RECONNECT_TIMEOUT_MS = 20_000;
 const LIVE_TEST_TIMEOUT_MS = liveTimeoutBudget({ attempts: LAUNCH_ATTEMPTS, connectMs: CONNECT_TIMEOUT_MS, terminateMs: TERMINATE_TIMEOUT_MS, reconnectMs: RECONNECT_TIMEOUT_MS, marginMs: 5_000 });
