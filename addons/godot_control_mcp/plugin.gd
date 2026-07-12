@@ -8,6 +8,7 @@ const Core = preload("commands/core.gd")
 const Exec = preload("commands/exec.gd")
 const Introspection = preload("commands/introspection.gd")
 const Edit = preload("commands/edit.gd")
+const ResourceHandles = preload("resource_handles.gd")
 var _server: Node
 
 static func parse_port(value: String) -> int:
@@ -39,6 +40,7 @@ static func token_from_environment() -> String:
 	return OS.get_environment("GODOT_MCP_TOKEN")
 
 func _enter_tree() -> void:
+	ResourceHandles.clear()
 	var router := Router.new()
 	router.register_command("core.ping", Core.ping)
 	router.register_command("core.get_version", Core.get_version)
@@ -63,6 +65,12 @@ func _enter_tree() -> void:
 	router.register_command("edit.scene_save", Edit.scene_save)
 	router.register_command("edit.scene_tree", Edit.scene_tree)
 	router.register_command("edit.scene_current", Edit.scene_current)
+	router.register_command("edit.resource_load", Edit.resource_load)
+	router.register_command("edit.resource_create", Edit.resource_create)
+	router.register_command("edit.resource_save", Edit.resource_save)
+	router.register_command("edit.project_setting_get", Edit.project_setting_get)
+	router.register_command("edit.project_setting_set", Edit.project_setting_set)
+	router.register_command("edit.project_setting_list", Edit.project_setting_list)
 	_server = Server.new()
 	add_child(_server)
 	var port := port_from_environment()
@@ -76,6 +84,7 @@ func _enter_tree() -> void:
 		push_error("Godot Control MCP could not listen on 127.0.0.1:%d (error %d)" % [port, listen_error])
 
 func _exit_tree() -> void:
+	ResourceHandles.clear()
 	if is_instance_valid(_server):
 		_server.stop()
 		_server.queue_free()

@@ -4,6 +4,7 @@ extends RefCounted
 const TypeParse = preload("../util/type_parse.gd")
 const EditController = preload("../edit_controller.gd")
 const Compat = preload("../godot_compat.gd")
+const ResourceHandles = preload("../resource_handles.gd")
 static var _last_tree_visit_count := 0
 static var _last_tree_child_reference_count := 0
 const MAX_TREE_CHILD_PATHS := 64
@@ -35,6 +36,88 @@ static func _path(node: Node) -> String:
 static func scene_current(_params: Dictionary) -> Dictionary:
 	var dirty := Compat.scene_dirty_state()
 	return _success({"path": Compat.current_scene_path(), "unsaved": dirty.state != "clean", "state": dirty.state, "reason": dirty.reason})
+
+static func resource_load(params: Dictionary) -> Dictionary:
+	var path := Compat.canonical_project_path(params.get("path"))
+	if path.is_empty() or not FileAccess.file_exists(path): return _failure("Provide an existing canonical res:// resource path.")
+	var resource := ResourceLoader.load(path, "", ResourceLoader.CACHE_MODE_IGNORE)
+	if not resource is Resource: return _failure("The path is not a loadable Resource.")
+	var handle := ResourceHandles.create(resource)
+	if handle.is_empty(): return _failure("A secure session handle could not be generated.")
+	return _success({"handle": handle, "class": resource.get_class(), "path": path})
+
+static func resource_create(params: Dictionary) -> Dictionary:
+	var requested_class = params.get("class")
+	if not requested_class is String or not ClassDB.class_exists(requested_class) or not ClassDB.is_parent_class(requested_class, "Resource") or not ClassDB.can_instantiate(requested_class):
+		return _failure("Provide an instantiable ClassDB Resource class.")
+	var resource = ClassDB.instantiate(requested_class)
+	if not resource is Resource: return _failure("The requested class did not instantiate as a Resource.")
+	var properties = params.get("properties", {})
+	if not properties is Dictionary: return _failure("Resource properties must be a map.")
+	for property in properties:
+		if not property is String or property in ["__proto__", "prototype", "constructor"]: return _failure("Resource properties must use safe own-property names.")
+		var descriptor := _object_property(resource, StringName(property))
+		if descriptor.is_empty(): return _failure("Unknown or read-only property '%s'." % property)
+		var parsed := TypeParse.parse_variant_literal(properties[property])
+		if not parsed.ok or not _value_matches(parsed.value, descriptor): return _failure(parsed.get("error", "Property value has the wrong type."))
+		resource.set(property, parsed.value)
+	var handle := ResourceHandles.create(resource)
+	if handle.is_empty(): return _failure("A secure session handle could not be generated.")
+	return _success({"handle": handle, "class": resource.get_class(), "path": ""})
+
+static func resource_save(params: Dictionary) -> Dictionary:
+	var resource = ResourceHandles.new().get(params.get("handle"))
+	if not resource is Resource: resource = null
+	var path := Compat.canonical_project_path(params.get("path"))
+	if resource == null: return _failure("Provide a live resource handle from this plugin session.")
+	if path.is_empty(): return _failure("Provide a canonical res:// save path.")
+	if FileAccess.file_exists(path) and not bool(params.get("overwrite", false)): return _failure("The target exists; set overwrite true to replace it.")
+	var error := ResourceSaver.save(resource, path)
+	if error != OK or not FileAccess.file_exists(path): return _failure("Godot could not persist the Resource (error %d)." % error)
+	return _success({"handle": params.handle, "class": resource.get_class(), "path": path})
+
+static func project_setting_get(params: Dictionary) -> Dictionary:
+	var key = params.get("key")
+	if not _valid_setting_key(key): return _failure("Provide a safe bounded project-setting key.")
+	var result := {"key": key, "exists": ProjectSettings.has_setting(key)}
+	if result.exists: result.value = TypeParse.serialize_variant(ProjectSettings.get_setting(key))
+	return _success(result)
+
+static func project_setting_set(params: Dictionary) -> Dictionary:
+	var key = params.get("key")
+	if not _valid_setting_key(key): return _failure("Provide a safe bounded project-setting key.")
+	var parsed := TypeParse.parse_variant_literal(params.get("value"))
+	if not parsed.ok: return _failure(parsed.error)
+	var result: Dictionary = _controller().set_project_setting(key, parsed.value, "Set project setting %s" % key)
+	if not result.ok: return result
+	var output := {"key": key, "beforeExists": result.before_exists, "after": TypeParse.serialize_variant(ProjectSettings.get_setting(key))}
+	if result.before_exists: output.before = TypeParse.serialize_variant(result.before)
+	return _success(output)
+
+static func project_setting_list(params: Dictionary) -> Dictionary:
+	var prefix = params.get("prefix", "")
+	if not prefix is String or String(prefix).to_utf8_buffer().size() > 1024: return _failure("Prefix must be a bounded string.")
+	var cursor_text := String(params.get("cursor", "0")); var limit := clampi(int(params.get("limit", 100)), 1, 500)
+	if not cursor_text.is_valid_int() or str(cursor_text.to_int()) != cursor_text or cursor_text.to_int() < 0 or cursor_text.length() > 10: return _failure("Cursor must be canonical non-negative decimal.")
+	var keys: Array[String] = []
+	for descriptor in ProjectSettings.get_property_list():
+		var key := String(descriptor.name)
+		if ProjectSettings.has_setting(key) and key.begins_with(prefix): keys.append(key)
+	keys.sort()
+	var offset := cursor_text.to_int()
+	if offset > 100000: return _failure("Cursor exceeds bounded skip limit.")
+	var settings: Array[Dictionary] = []
+	for index in range(offset, mini(keys.size(), offset + limit)):
+		settings.append({"key": keys[index], "value": TypeParse.serialize_variant(ProjectSettings.get_setting(keys[index]))})
+	var next := offset + settings.size(); var output := {"settings": settings, "truncated": next < keys.size()}
+	if output.truncated: output.nextCursor = str(next)
+	if JSON.stringify(output).to_utf8_buffer().size() > 261632: return _failure("Setting page exceeds the safe response envelope; request a smaller limit.")
+	return _success(output)
+
+static func _valid_setting_key(value: Variant) -> bool:
+	if not value is String: return false
+	var key := String(value)
+	return not key.is_empty() and key.to_utf8_buffer().size() <= 1024 and key not in ["__proto__", "prototype", "constructor"] and not key.begins_with("/") and not key.ends_with("/") and not "//" in key
 
 static func scene_open(params: Dictionary) -> Dictionary:
 	var path := Compat.canonical_project_path(params.get("path"))
@@ -238,7 +321,9 @@ static func node_call_readonly(params: Dictionary) -> Dictionary:
 	return _success({"path": _path(node), "method": method, "value": TypeParse.serialize_variant(node.call(method))})
 
 static func _property(node: Node, name: StringName) -> Dictionary:
-	for entry in node.get_property_list():
+	return _object_property(node, name)
+static func _object_property(object: Object, name: StringName) -> Dictionary:
+	for entry in object.get_property_list():
 		if StringName(entry.name) == name and int(entry.usage) & (PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_EDITOR) and not int(entry.usage) & PROPERTY_USAGE_READ_ONLY: return entry
 	return {}
 static func _value_matches(value: Variant, descriptor: Dictionary) -> bool:

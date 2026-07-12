@@ -9,6 +9,8 @@ import { MutationLane } from "./mutation/lane.js";
 import { registerNodeTools } from "./tools/node.js";
 import { registerSceneTools } from "./tools/scene.js";
 import { registerSignalTools } from "./tools/signal.js";
+import { registerResourceTools } from "./tools/resource.js";
+import { registerProjectTools } from "./tools/project.js";
 
 export interface ServerDependencies { bridge?: CoreBridge; mode?: SafetyMode; docsLoader?: () => Promise<DocsIndex> }
 
@@ -27,5 +29,7 @@ export function createServer(dependencies: ServerDependencies): McpServer {
   registerNodeTools(server, bridge, mutationLane);
   registerSceneTools(server, bridge);
   registerSignalTools(server, bridge, mutationLane);
+  registerResourceTools(server, bridge);
+  registerProjectTools(server, bridge, mutationLane);
   return server;
 }

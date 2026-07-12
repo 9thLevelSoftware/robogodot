@@ -119,6 +119,9 @@ static func canonical_project_path(path: Variant) -> String:
 	var localized := ProjectSettings.localize_path(ProjectSettings.globalize_path(value))
 	return value if localized == value else ""
 
+static func project_settings_save() -> Error:
+	return ProjectSettings.save()
+
 static func undo_history_version(undo: EditorUndoRedoManager, target: Object) -> int:
 	var history_id := undo.get_object_history_id(target)
 	return undo.get_history_undo_redo(history_id).get_version()

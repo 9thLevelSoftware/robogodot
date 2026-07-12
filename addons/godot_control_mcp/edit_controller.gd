@@ -125,6 +125,44 @@ func set_property(target: Object, property: StringName, value: Variant, action_n
 	_last_history_target = target
 	return {"ok": true}
 
+func set_project_setting(key: String, value: Variant, action_name: String) -> Dictionary:
+	if key.is_empty() or not _setting_value_supported(value): return _failure("A supported project-setting value is required.")
+	var existed := ProjectSettings.has_setting(key)
+	var old_value: Variant = ProjectSettings.get_setting(key) if existed else null
+	if not _setting_value_supported(old_value): return _failure("The previous value cannot be restored exactly.")
+	if not _apply_project_setting(key, true, value):
+		_apply_project_setting(key, existed, old_value)
+		return _failure("The new project setting could not be persisted exactly.")
+	if not _apply_project_setting(key, existed, old_value):
+		return _failure("The previous project setting could not be restored exactly during preflight.")
+	_undo.create_action(action_name, UndoRedo.MERGE_DISABLE, ProjectSettings)
+	_undo.add_do_method(self, "_apply_project_setting", key, true, value)
+	_undo.add_undo_method(self, "_apply_project_setting", key, existed, old_value)
+	_undo.add_do_reference(self)
+	_undo.commit_action()
+	_last_history_target = ProjectSettings
+	if not ProjectSettings.has_setting(key) or ProjectSettings.get_setting(key) != value:
+		return _failure("Godot did not retain the exact new project-setting value.")
+	return {"ok": true, "before_exists": existed, "before": old_value}
+
+func _apply_project_setting(key: String, should_exist: bool, value: Variant) -> bool:
+	ProjectSettings.set_setting(key, value if should_exist else null)
+	if Compat.project_settings_save() != OK: return false
+	if ProjectSettings.has_setting(key) != should_exist: return false
+	return not should_exist or ProjectSettings.get_setting(key) == value
+
+func _setting_value_supported(value: Variant, depth: int = 0) -> bool:
+	if depth > 32: return false
+	var kind := typeof(value)
+	if kind in [TYPE_OBJECT, TYPE_CALLABLE, TYPE_SIGNAL, TYPE_RID]: return value == null
+	if kind == TYPE_ARRAY:
+		for item in value:
+			if not _setting_value_supported(item, depth + 1): return false
+	if kind == TYPE_DICTIONARY:
+		for item_key in value:
+			if not item_key is String or not _setting_value_supported(value[item_key], depth + 1): return false
+	return true
+
 func undo() -> void:
 	Compat.undo_history_undo(_undo, _last_history_target)
 

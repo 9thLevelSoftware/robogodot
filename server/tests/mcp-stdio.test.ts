@@ -58,6 +58,8 @@ describe("freshly built stdio server", () => {
       "godot_node_duplicate", "godot_node_get", "godot_node_set_property", "godot_node_call_method", "godot_scene_instance",
       "godot_scene_open", "godot_scene_new", "godot_scene_save", "godot_scene_tree", "godot_scene_current",
       "godot_signal_list", "godot_signal_connect", "godot_signal_disconnect",
+      "godot_resource_load", "godot_resource_create", "godot_resource_save",
+      "godot_project_setting_get", "godot_project_setting_set", "godot_project_setting_list",
     ]);
   });
 
