@@ -71,7 +71,7 @@ export class LspSession {
     if (capability === "signatureHelp") return Boolean(caps.signatureHelpProvider);
     if (capability === "documentSymbols") return Boolean(caps.documentSymbolProvider);
     if (capability === "workspaceSymbols") return Boolean(caps.workspaceSymbolProvider);
-    return this.isPinnedGodot46() || this.hasGodotNativeExtension();
+    return this.isPinnedGodot46() || this.hasGodot46CapabilityShape() || this.hasGodotNativeExtension();
   }
 
   close(): Promise<void> {
@@ -181,6 +181,11 @@ export class LspSession {
   }
 
   private isPinnedGodot46(): boolean { const info = this.ready?.serverInfo; return info?.name.toLowerCase().includes("godot") === true && info.version?.startsWith("4.6.") === true; }
+  private hasGodot46CapabilityShape(): boolean {
+    const caps = this.ready?.capabilities; if (!caps || caps.documentSymbolProvider !== true || caps.workspaceSymbolProvider !== false || !isRecord(caps.completionProvider)) return false;
+    const triggers = caps.completionProvider.triggerCharacters;
+    return Array.isArray(triggers) && triggers.includes("$") && triggers.includes(".");
+  }
   private isClosing(): boolean { return this.state === "shutting_down" || this.state === "exited"; }
   private assertPreAttachActive(): void { if (this.isClosing()) throw unavailable(); }
   private assertGenerationActive(generation: number): void {

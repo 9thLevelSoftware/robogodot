@@ -142,6 +142,13 @@ describe("LspSession", () => {
     expect(session.supports("nativeSymbol")).toBe(true);
   });
 
+  it("recognizes Godot 4.6 capability shape when serverInfo is omitted", async () => {
+    const { mock, session } = await setup();
+    mock.onRequest("initialize", ({ id }) => mock.result(id, { capabilities: { completionProvider: { triggerCharacters: [".", "$", "'", "\""] }, documentSymbolProvider: true, workspaceSymbolProvider: false } }));
+    await session.ensureReady();
+    expect(session.supports("nativeSymbol")).toBe(true);
+  });
+
   it("prevents application requests before initialization completes", async () => {
     const { mock, session } = await setup(); initializeGodot(mock);
     const result = session.request<string>("textDocument/hover", {});

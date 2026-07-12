@@ -26,13 +26,16 @@ describe("LspDocuments", () => {
     const file = join(root, "phase4", "player.gd"); await writeFile(file, "extends Node\r\n", "utf8");
     const docs = new LspDocuments(root, session);
     const opened = await docs.sync("res://phase4/player.gd");
-    expect(opened).toMatchObject({ uri: "res://phase4/player.gd", text: "extends Node\r\n", version: 1, generation: 3 });
-    expect(notifications.at(-1)).toMatchObject({ method: "textDocument/didOpen", params: { textDocument: { languageId: "gdscript", version: 1, text: "extends Node\r\n" } } });
-    await docs.sync("res://phase4/player.gd"); expect(notifications).toHaveLength(1);
+    expect(opened).toMatchObject({ uri: "res://phase4/player.gd", text: "extends Node\r\n", version: 2, generation: 3 });
+    expect(notifications[0]).toMatchObject({ method: "textDocument/didOpen", params: { textDocument: { languageId: "gdscript", version: 1, text: "extends Node\r\n" } } });
+    expect(notifications[1]).toMatchObject({ method: "textDocument/didChange", params: { textDocument: { version: 2 }, contentChanges: [{ text: "extends Node\r\n" }] } });
+    expect(notifications[2]).toMatchObject({ method: "textDocument/didSave", params: { textDocument: { uri: expect.stringContaining("player.gd") }, text: "extends Node\r\n" } });
+    await docs.sync("res://phase4/player.gd"); expect(notifications).toHaveLength(3);
     await writeFile(file, "extends Node\r\nvar café = 1\r\n", "utf8");
     const changed = await docs.sync("res://phase4/player.gd");
-    expect(changed.version).toBe(2);
-    expect(notifications.at(-1)).toMatchObject({ method: "textDocument/didChange", params: { contentChanges: [{ text: "extends Node\r\nvar café = 1\r\n" }] } });
+    expect(changed.version).toBe(3);
+    expect(notifications.at(-2)).toMatchObject({ method: "textDocument/didChange", params: { contentChanges: [{ text: "extends Node\r\nvar café = 1\r\n" }] } });
+    expect(notifications.at(-1)).toMatchObject({ method: "textDocument/didSave", params: { text: "extends Node\r\nvar café = 1\r\n" } });
   });
 
   it("replays current documents in sorted URI order", async () => {
@@ -41,6 +44,14 @@ describe("LspDocuments", () => {
     const docs = new LspDocuments(root, session); await docs.sync("res://phase4/z.gd"); await docs.sync("res://phase4/a.gd"); notifications.length = 0;
     await docs.replay(9);
     expect(notifications.map((n) => n.params.textDocument.text)).toEqual(["a", "z"]);
+  });
+
+  it("maps Godot's percent-encoded Windows drive URI to an authorized document", async () => {
+    const { root, session } = await setup();
+    await writeFile(join(root, "phase4", "player.gd"), "extends Node\n", "utf8");
+    const docs = new LspDocuments(root, session); const document = await docs.sync("res://phase4/player.gd");
+    const encodedDrive = document.fileUri.replace("file:///", "file:///").replace(/file:\/\/\/([A-Za-z]):/, "file:///$1%3A");
+    expect(docs.publicUriForFileUri(encodedDrive)).toBe("res://phase4/player.gd");
   });
 
   it("rejects invalid UTF-8, invalid URI forms, missing files, oversized input, and escapes", async () => {

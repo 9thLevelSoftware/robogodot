@@ -51,7 +51,10 @@ jobs:
       - name: Plugin smoke
         run: node tests/godot/run-smoke.mjs
       - name: Live editor acceptance
+        env:
+          GODOT_PROJECT_PATH: ${{ github.workspace }}/tests/fixtures/godot_project
         working-directory: server
         run: |
           npm run test:live
           npm run test:live:phase3
+          npm run test:live:phase4

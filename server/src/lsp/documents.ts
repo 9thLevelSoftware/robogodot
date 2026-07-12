@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { open, realpath as fsRealpath } from "node:fs/promises";
 import { extname, isAbsolute, relative, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { GodotMcpError } from "../errors.js";
 
 export const DOCUMENT_LIMITS = { maxUriBytes: 1_024, maxSegments: 128, maxBytes: 2 * 1_024 * 1_024, maxDocuments: 128 } as const;
@@ -37,8 +37,14 @@ export class LspDocuments {
     if (!existing && this.documents.size >= DOCUMENT_LIMITS.maxDocuments) throw invalid("Synchronized document limit reached.");
     const version = (existing?.version ?? 0) + 1;
     if (existing) await this.session.notify("textDocument/didChange", { textDocument: { uri: fileUri, version }, contentChanges: [{ text }] });
-    else await this.session.notify("textDocument/didOpen", { textDocument: { uri: fileUri, languageId: "gdscript", version, text } });
-    const stored: StoredDocument = { uri, fileUri, path: target, text, version, generation: ready.generation, hash: contentHash };
+    else {
+      await this.session.notify("textDocument/didOpen", { textDocument: { uri: fileUri, languageId: "gdscript", version, text } });
+      // Godot can parse workspace scripts before initialize and then omit diagnostics on didOpen.
+      // A versioned didChange makes the synchronized contents authoritative and republishes diagnostics.
+      await this.session.notify("textDocument/didChange", { textDocument: { uri: fileUri, version: version + 1 }, contentChanges: [{ text }] });
+    }
+    await this.session.notify("textDocument/didSave", { textDocument: { uri: fileUri }, text });
+    const stored: StoredDocument = { uri, fileUri, path: target, text, version: existing ? version : version + 1, generation: ready.generation, hash: contentHash };
     this.documents.set(uri, stored); return this.publicDocument(stored);
   }
 
@@ -60,7 +66,8 @@ export class LspDocuments {
   }
 
   publicUriForFileUri(fileUri: string): string | undefined {
-    for (const document of this.documents.values()) if (document.fileUri === fileUri) return document.uri;
+    let candidate: string; try { candidate = fileURLToPath(fileUri); } catch { return undefined; }
+    for (const document of this.documents.values()) if (document.path === candidate) return document.uri;
     return undefined;
   }
 

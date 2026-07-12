@@ -25,6 +25,7 @@ const disconnectedLsp: LspToolClient = {
   diagnostics: { sequence: 0, waitFor: lspUnavailable }, sync: lspUnavailable,
   assertPosition: () => { throw new GodotMcpError("not_connected", "The Godot language server is not configured.", "Start Godot with --editor --headless --lsp-port 6005 --path <project>, or configure the RoboGodot LSP client."); },
   supports: () => { throw new GodotMcpError("not_connected", "The Godot language server is not configured.", "Start Godot with --editor --headless --lsp-port 6005 --path <project>, or configure the RoboGodot LSP client."); }, request: lspUnavailable,
+  ensureReady: lspUnavailable,
 };
 
 export function createServer(dependencies: ServerDependencies): McpServer {

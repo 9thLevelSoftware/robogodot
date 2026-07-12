@@ -1,9 +1,51 @@
 import type { Readable } from "node:stream";
 import type { EventEmitter } from "node:events";
+import { once } from "node:events";
+import { createServer } from "node:net";
 
 export interface OutputCapture {
   diagnostics(): string;
   dispose(): void;
+}
+
+export async function allocateLoopbackPort(): Promise<number> {
+  const server = createServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") { server.close(); throw new Error("Could not allocate a loopback port."); }
+  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  return address.port;
+}
+
+interface ExitProcess extends EventEmitter { exitCode: number | null; pid?: number }
+
+export function waitForProcessExit(child: ExitProcess, timeoutMs: number): Promise<void> {
+  if (child.exitCode !== null) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const finish = (error?: Error) => {
+      clearTimeout(timeout); child.off("exit", onExit);
+      error ? reject(error) : resolve();
+    };
+    const onExit = () => finish();
+    child.once("exit", onExit);
+    const timeout = setTimeout(() => finish(new Error(`PID ${child.pid ?? "unknown"} did not exit within ${timeoutMs} ms.`)), timeoutMs);
+    if (child.exitCode !== null) finish();
+  });
+}
+
+export function waitForPidExit(pid: number, timeoutMs: number, isAlive: (pid: number) => boolean = (candidate) => {
+  try { process.kill(candidate, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+}): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + timeoutMs;
+    const check = () => {
+      if (!isAlive(pid)) resolve();
+      else if (Date.now() >= deadline) reject(new Error(`PID ${pid} did not exit within ${timeoutMs} ms.`));
+      else setTimeout(check, 50);
+    };
+    check();
+  });
 }
 
 export function captureBoundedOutput(stdout: Readable, stderr: Readable, limit = 16_384): OutputCapture {
@@ -59,17 +101,18 @@ interface ProcessEvents extends EventEmitter { exitCode: number | null }
 
 export function waitForProcessConnection(options: {
   child: ProcessEvents;
-  isConnected(): boolean;
+  isConnected(): boolean | Promise<boolean>;
   diagnostics(): string;
   timeoutMs: number;
   pollMs?: number;
 }): Promise<void> {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let poll: ReturnType<typeof setTimeout> | undefined;
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
-      clearInterval(poll);
+      if (poll) clearTimeout(poll);
       clearTimeout(timeout);
       options.child.off("error", onError);
       options.child.off("exit", onExit);
@@ -79,10 +122,13 @@ export function waitForProcessConnection(options: {
     const onExit = (code: number | null) => finish(new Error(`Godot exited with code ${code ?? "unknown"} before connecting\n${options.diagnostics()}`));
     options.child.on("error", onError);
     options.child.on("exit", onExit);
-    const poll = setInterval(() => { if (options.isConnected()) finish(); }, options.pollMs ?? 50);
+    const check = async () => {
+      try { if (await options.isConnected()) finish(); else if (!settled) poll = setTimeout(check, options.pollMs ?? 50); }
+      catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
+    };
+    void check();
     const timeout = setTimeout(() => finish(new Error(`Godot plugin connection timed out\n${options.diagnostics()}`)), options.timeoutMs);
     if (options.child.exitCode !== null) onExit(options.child.exitCode);
-    else if (options.isConnected()) finish();
   });
 }
 

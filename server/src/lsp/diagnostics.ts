@@ -1,5 +1,6 @@
 import { GodotMcpError } from "../errors.js";
 import type { LspNotification } from "./protocol.js";
+import { fileURLToPath } from "node:url";
 
 export const DIAGNOSTIC_LIMITS = { maxUris: 128, maxPerUri: 500, maxMessageBytes: 8_192, maxAuxiliaryStringBytes: 1_024, maxUriBytes: 1_024, maxRelatedInformation: 32, maxWaiters: 128, minWaitMs: 100, maxWaitMs: 15_000 } as const;
 export interface LspPosition { line: number; character: number }
@@ -74,6 +75,14 @@ export class LspDiagnostics {
     for (const waiter of [...this.waiters]) if (waiter.uri === uri && waiter.generation === event.generation && publication.sequence > waiter.afterSequence) {
       this.waiters.delete(waiter); clearTimeout(waiter.timer); waiter.resolve({ ...publication, fresh: true });
     }
+  }
+
+  remap(fromUri: string, toUri: string): void {
+    if (fromUri === toUri || this.closed) return;
+    const canonical = (value: string) => { try { return fileURLToPath(value); } catch { return value; } };
+    const source = [...this.publications.keys()].find((value) => canonical(value) === canonical(fromUri));
+    if (!source) return; const publication = this.publications.get(source)!;
+    this.publications.delete(source); this.publications.set(toUri, { ...publication, uri: toUri });
   }
 
   waitFor(uri: string, generation: number, afterSequence: number, waitMs: number): Promise<DiagnosticSnapshot> {

@@ -6,7 +6,7 @@ import { connect } from "node:net";
 import { GodotMcpError } from "../errors.js";
 
 export type LspOwnership = "attached" | "owned";
-type HostChild = Pick<ChildProcess, "on" | "once" | "off" | "kill" | "stdout" | "stderr">;
+type HostChild = Pick<ChildProcess, "on" | "once" | "off" | "kill" | "stdout" | "stderr" | "pid">;
 export interface LspHostConfig { lspPort: number; lspAutoStart: boolean; godotPath?: string; projectPath?: string }
 export interface LspHostDependencies {
   probe?: (host: "127.0.0.1", port: number, deadlineMs: number) => Promise<boolean>;
@@ -47,7 +47,9 @@ async function terminate(child: HostChild): Promise<void> {
   try {
     child.kill("SIGTERM");
     if (await Promise.race([exited.then(() => true), delay(5_000).then(() => false)])) return;
-    child.kill("SIGKILL");
+    if (process.platform === "win32" && child.pid !== undefined) {
+      await new Promise<void>((resolve) => nodeSpawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true }).once("exit", () => resolve()));
+    } else child.kill("SIGKILL");
     await Promise.race([exited, delay(2_000)]);
   } finally { child.off("exit", onExit); }
 }
@@ -125,7 +127,7 @@ export class LspHost {
       this.assertOpen();
       child.stdout?.on("data", onStdout); child.stderr?.on("data", onStderr);
       child.once("error", onError); child.once("exit", onExit);
-      // Each attempt can consume the 500 ms probe deadline plus the 50 ms interval.
+      // Thirty condition-driven attempts span at least 15 seconds even when connection refusal is immediate.
       for (let elapsed = 0; elapsed < 15_000; elapsed += 550) {
         this.assertOpen();
         if (failure) {
@@ -147,7 +149,7 @@ export class LspHost {
           this.installOwnedListeners(child, onStdout, onStderr);
           return this.ownership = "owned";
         }
-        await this.deps.delay(50);
+        await this.deps.delay(500);
       }
       throw new GodotMcpError("timeout", "Godot language server did not start within 15 seconds.", "Check the captured host diagnostics and Godot project path.", this.diagnostics());
     } catch (error) {

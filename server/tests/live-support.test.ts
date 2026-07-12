@@ -1,9 +1,36 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, expect, test, vi } from "vitest";
-import { captureBoundedOutput, launchWithPortRetry, liveTimeoutBudget, waitForProcessConnection } from "./live-support.js";
+import { allocateLoopbackPort, captureBoundedOutput, launchWithPortRetry, liveTimeoutBudget, waitForPidExit, waitForProcessConnection, waitForProcessExit } from "./live-support.js";
 
 describe("live Godot process support", () => {
+  test("allocates a currently unused loopback port", async () => {
+    const port = await allocateLoopbackPort();
+    expect(port).toBeGreaterThan(0);
+    expect(port).toBeLessThanOrEqual(65_535);
+  });
+
+  test("waits for the exact child process exit without polling process names", async () => {
+    const child = new EventEmitter() as EventEmitter & { exitCode: number | null; pid?: number };
+    child.exitCode = null; child.pid = 1234;
+    const pending = waitForProcessExit(child, 1_000);
+    child.exitCode = 0; child.emit("exit", 0);
+    await expect(pending).resolves.toBeUndefined();
+    expect(child.listenerCount("exit")).toBe(0);
+  });
+
+  test("reports the exact PID when teardown misses its deadline", async () => {
+    const child = new EventEmitter() as EventEmitter & { exitCode: number | null; pid?: number };
+    child.exitCode = null; child.pid = 5678;
+    await expect(waitForProcessExit(child, 5)).rejects.toThrow("PID 5678 did not exit");
+    expect(child.listenerCount("exit")).toBe(0);
+  });
+
+  test("condition-polls exact PID liveness without process-name searches", async () => {
+    let probes = 0;
+    await waitForPidExit(2468, 1_000, () => ++probes < 3);
+    expect(probes).toBe(3);
+  });
   test("continuously drains output while retaining only the bounded diagnostic tail", () => {
     const stdout = new PassThrough();
     const stderr = new PassThrough();

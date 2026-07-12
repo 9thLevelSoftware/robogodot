@@ -1,46 +1,85 @@
-# Task 6 report
+# Task 6 report: live Godot 4.6 editor and owned-host acceptance
 
-## Outcome
+## Status
 
-Phase 3 exposes exactly 31 public MCP tools (8 existing plus 23 curated, no aliases). `createServer` constructs one `MutationLane` and shares it across node, signal, instance, and project-setting mutation registrations. The public live acceptance uses an authenticated `JsonRpcClient`, in-memory MCP transport, and curated tools for authoring, persistence, reads, FIFO proof, and restart proof. A public `godot_script_run` call is used only as the headless equivalent of human Ctrl-Z; it is not presented as an undo API.
+Implemented and verified. The live Phase 4 suite passes against the exact supplied Godot 4.6.2 Mono console executable, and the full server regression/typecheck/build pass.
 
-## RED evidence
+## Commands and outputs
 
-1. `npm run test:live:phase3` failed against Godot 4.6.2 when typed string literals were not JSON-quoted at the Godot Variant boundary. The acceptance fixture was corrected to use the documented literal representation.
-2. The next live run failed because JSON numeric signal flags arrive in Godot as a float and `edit.gd` required the runtime type `int`, rejecting valid public input `flags: 0`. This proved a production boundary defect.
-3. `node --test tests/architecture/phase3-review-regressions.test.mjs` failed before documentation/CI changes because README lacked the Phase 3 contract, Q-005 remained proposed, and CI lacked the new live command.
-4. The first full architecture run failed three stale assertions that still required Q-005 to be unresolved and the old Phase 3 handoff label.
+### TDD red/green support tests
 
-## GREEN evidence
+`cd server; npm test -- --run tests/live-support.test.ts`
 
-- Signal flags now accept only integral numeric values whose integer value is within the existing 0–15 mask; fractional and out-of-range values remain rejected.
-- `npm run test:live:phase3`: 1 passed against pinned Godot 4.6.2, covering scene creation, typed nodes/properties, fixture instancing, signal connection, resource create/save/load, exact absent project setting, concurrent FIFO mutations, save/open persistence, full undo verification, restart invalidation of handles, and bridge reconnection.
-- `npm test -- --run`: 178 passed, 2 live tests skipped without `GODOT_PATH`.
-- `npm run typecheck && npm run build && npm run docs:check`: passed.
-- Architecture/process-runner matrix: 91 passed, 1 documented external-archive skip.
-- Repository architecture renderer regenerated views 03/04/05/07 and `node docs/architecture/render.mjs --check` passed.
-- Godot smoke command exited successfully; the existing harness emits expected negative-fixture diagnostics and an environment .NET SDK warning.
+- RED: 3 failures (`allocateLoopbackPort is not a function`; `waitForProcessExit is not a function`).
+- GREEN: 1 file passed, 10 tests passed. After exact-PID polling coverage was added: 11 support tests pass as part of the full suite.
 
-## Documentation and architecture
+`cd server; npm test -- --run tests/lsp-diagnostics.test.ts tests/lsp-tools.test.ts`
 
-README documents the 31/23 inventory, annotations by operation class, normal Ctrl-Z semantics, lifecycle/persistence exclusions, FIFO lane, canonical path and byte/page/depth bounds, exact read-only method allowlist, session-scoped resource handles, fail-closed dirty and project-setting recovery behavior, overwrite TOCTOU, and deferred Phase 6/7 realpath/atomic no-replace hardening. Q-005 is accepted as exact prior-presence/value restoration or rejection. Atlas source, traceability, rendered SVGs, and manifest were updated through the repository renderer.
+- RED: missing diagnostic URI remap and disconnected native-symbol returned `feature_disabled` instead of `not_connected`.
+- GREEN: targeted diagnostics/tools regressions pass in the subsequent 81-test targeted run.
 
-## CI
+`cd server; npm test -- --run tests/lsp-session.test.ts -t "serverInfo is omitted"`
 
-Both OS jobs retain pinned Godot 4.6.2 and all existing checks. `npm run test:live:phase3` runs immediately after the existing live acceptance.
+- RED: expected native-symbol support `true`, received `false`.
+- GREEN: Godot 4.6 capability-shape fallback added and included in passing targeted/full runs.
 
-## Review finding follow-up
+### Live debugging runs
 
-### RED
+All live commands used:
 
-- Replaced the independent `Promise.all` adds with two concurrently submitted, order-dependent public calls: rename `FifoSeed` to `FifoRenamed`, then add `Dependent` under the renamed path. The second promise is created immediately without awaiting the first; it can succeed only when the shared lane executes submission order.
-- Added a direct authenticated plugin regression for signal flags `1.000001`, with editor-history version and curated signal-list snapshots. Against commit `42a8ef7`, `npm run test:live:phase3` failed because the call resolved successfully with `flags: 1`; `is_equal_approx` incorrectly treated the near-integer as integral.
-- The first exact-equality implementation produced a Godot compile RED (`Cannot infer the type of flags_are_integral`), proving the live test also loads the copied plugin rather than exercising stale code.
+`$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; $env:GODOT_PROJECT_PATH=(Resolve-Path '..\tests\fixtures\godot_project'); npm run test:live:phase4`
 
-### GREEN
+Observed red sequence and root causes:
 
-- Signal parsing now requires an integer or a finite float exactly equal to `float(int(raw_flags))`, followed by the unchanged 0–15 range/mask check. The boolean has an explicit GDScript type.
-- The authenticated near-integer call rejects with `godot_error`; editor history version remains unchanged and curated `godot_signal_list` reports zero connections. The subsequent public MCP call with JSON `flags: 0` succeeds.
-- The FIFO proof asserts both dependent results and verifies `Dependent` through `godot_node_get`; it no longer infers execution order from `Promise.all` result ordering.
-- After explicit save/open, curated reads verify `Button.text == "configured"`, the `FixtureInstance` path/name, and one `pressed` signal connection before full undo.
-- `npm run test:live:phase3`: 1 passed against Godot 4.6.2 after these review fixes.
+1. Diagnostics timed out because Godot parsed the invalid workspace fixture before synchronization and did not republish on the first open.
+2. Unavailable native-symbol returned `feature_disabled` because capability gating happened before session readiness.
+3. Owned startup timed out after about 1.7 seconds because immediate connection refusals made the nominal 15-second attempt loop elapse too quickly.
+4. Godot's initialize response omitted `serverInfo`; its exact capability payload had document symbols enabled, workspace symbols disabled, and completion trigger characters including `.` and `$`.
+5. Godot emitted diagnostics URIs as `file:///C%3A/...`, while Node canonicalized the same path as `file:///C:/...`.
+6. Godot first published empty diagnostics, then the undeclared-identifier diagnostic; the public tool now waits within the same caller budget for the later publication.
+7. Godot completion labels are display labels such as `queue_free()`; public normalization now exposes the symbol label `queue_free` while preserving insert text.
+8. Godot document symbols are hierarchical; the live assertion recursively consumes the public hierarchy to check `phase4_sum`.
+9. Windows signal termination did not reliably reap the Godot console child. The owned host now falls back to exact spawned PID tree termination (`taskkill /pid <pid> /t /f`), never a process-name search, and acceptance condition-polls that PID until absent.
+
+Final live output:
+
+```
+Test Files  1 passed (1)
+Tests       2 passed (2)
+Duration    10.28s (fresh final run; an earlier passing run was 9.81s)
+Exit code   0
+```
+
+### Targeted regression
+
+`cd server; npm run typecheck; npm test -- --run tests/lsp-host.test.ts tests/lsp-documents.test.ts tests/lsp-session.test.ts tests/lsp-diagnostics.test.ts tests/lsp-tools.test.ts tests/live-support.test.ts`
+
+Output before the final small URI/completion additions: typecheck exit 0; 6 files passed; 81 tests passed. All additions are covered by the final full run below.
+
+### Final full verification
+
+`cd server; npm test -- --run; npm run typecheck; npm run build`
+
+```
+Test Files  28 passed | 3 skipped (31)
+Tests       290 passed | 4 skipped (294)
+typecheck   exit 0
+build       exit 0
+```
+
+The skips are the existing environment-gated live/archive suites. The explicitly enabled Phase 4 live suite was run separately and passed fail-closed.
+
+## Godot quirks / environment notes
+
+- The supplied Mono editor logs `.NET Sdk not found. The required version is '8.0.28'.` This does not prevent GDScript LSP acceptance.
+- The fixture project references the RoboGodot editor addon but the fixture directory does not include it, so Godot logs that the addon directory was not found and disables it. This does not affect the standalone Godot LSP.
+- The fixture is temporarily made valid before launch, synchronized through public MCP, then restored to its exact required invalid contents to deterministically force a valid-to-invalid diagnostic publication. A `finally` restores the required fixture bytes on every test exit.
+- No fixed readiness sleeps or process-name kills are used. Polling is bounded and condition-driven; ports are OS-assigned.
+
+## Self-review
+
+- CI preserves the pinned download/checksum behavior and adds `GODOT_PROJECT_PATH` plus the fail-closed Phase 4 invocation without `continue-on-error`.
+- Public MCP is used for every acceptance assertion.
+- Unavailable hints include exact allocated `--lsp-port` and `--path` arguments.
+- Owned teardown observes the exact child PID captured from the production host spawn.
+- `git diff --check` passed (only Git's local LF-to-CRLF warnings were printed).

@@ -3,11 +3,13 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../src/server.js";
 import type { LspToolClient } from "../src/tools/lsp.js";
+import { GodotMcpError } from "../src/errors.js";
 
 const document = { uri: "res://phase4/player.gd", fileUri: "file:///game/phase4/player.gd", path: "/game/phase4/player.gd", text: "func x():\n\tqueue_free()\n", version: 1, generation: 2 };
 function fake(result: unknown, capabilities = ["completion", "hover", "signatureHelp", "documentSymbols", "workspaceSymbols", "nativeSymbol"]): LspToolClient {
   return {
     diagnostics: { sequence: 0, waitFor: vi.fn().mockResolvedValue({ uri: document.uri, generation: 2, sequence: 1, diagnostics: [], fresh: true }) },
+    ensureReady: vi.fn().mockResolvedValue({ generation: 2 }),
     sync: vi.fn().mockResolvedValue(document), assertPosition: vi.fn(), supports: vi.fn((value) => capabilities.includes(value)),
     request: vi.fn().mockResolvedValue(result),
   };
@@ -38,6 +40,12 @@ describe("public LSP tools", () => {
     } finally { await h.close(); }
   });
 
+  it("normalizes Godot callable completion display labels to the symbol name", async () => {
+    const h = await harness(fake([{ label: "queue_free()", insertText: "queue_free()" }, { label: "phase4_sum(…)", insertText: "phase4_sum(" }])); try {
+      expect(await h.client.callTool({ name: "godot_lsp_completion", arguments: { uri: document.uri, position: { line: 1, character: 2 }, limit: 20 } })).toMatchObject({ structuredContent: { items: [{ label: "queue_free" }, { label: "phase4_sum" }] } });
+    } finally { await h.close(); }
+  });
+
   it("gates capabilities and sends the exact native-symbol payload", async () => {
     const disabled = fake([], []); const a = await harness(disabled); try {
       const value = await a.client.callTool({ name: "godot_lsp_workspace_symbols", arguments: { query: "Player" } });
@@ -49,6 +57,15 @@ describe("public LSP tools", () => {
       expect(value).toMatchObject({ structuredContent: { found: true, symbol: { name: "Sprite2D" } } });
       expect(native.request).toHaveBeenCalledWith("textDocument/nativeSymbol", { native_class: "Sprite2D", symbol_name: "" });
     } finally { await b.close(); }
+  });
+
+  it("establishes readiness before capability gating", async () => {
+    const lsp = fake([], []); lsp.ensureReady = vi.fn().mockRejectedValue(new GodotMcpError("not_connected", "unavailable", "start Godot"));
+    const h = await harness(lsp); try {
+      const value = await h.client.callTool({ name: "godot_lsp_native_symbol", arguments: { nativeClass: "Sprite2D" } });
+      expect(value).toMatchObject({ isError: true, structuredContent: { code: "not_connected" } });
+      expect(lsp.supports).not.toHaveBeenCalled();
+    } finally { await h.close(); }
   });
 
   it("normalizes null hover and disconnected fallback", async () => {
@@ -129,6 +146,16 @@ describe("public LSP tools", () => {
     const lsp = fake(null); lsp.diagnostics.waitFor = vi.fn().mockResolvedValue({ uri: document.uri, generation: 2, sequence: 1, diagnostics: [], fresh: true, truncated: true, truncation: { diagnostics: true, tags: false, relatedInformation: false, strings: false, positions: false, malformed: false } });
     const h = await harness(lsp); try {
       expect(await h.client.callTool({ name: "godot_lsp_diagnostics", arguments: { uri: document.uri } })).toMatchObject({ structuredContent: { truncated: true, truncation: { diagnostics: true } } });
+    } finally { await h.close(); }
+  });
+
+  it("waits past an empty diagnostics publication for a later parse result", async () => {
+    const lsp = fake(null); lsp.diagnostics.waitFor = vi.fn()
+      .mockResolvedValueOnce({ uri: document.uri, generation: 2, sequence: 1, diagnostics: [], fresh: true, truncated: false, truncation: {} })
+      .mockResolvedValueOnce({ uri: document.uri, generation: 2, sequence: 2, diagnostics: [{ message: "phase4_missing_identifier" }], fresh: true, truncated: false, truncation: {} });
+    const h = await harness(lsp); try {
+      expect(await h.client.callTool({ name: "godot_lsp_diagnostics", arguments: { uri: document.uri, waitMs: 1_000 } })).toMatchObject({ structuredContent: { diagnostics: [{ message: "phase4_missing_identifier" }] } });
+      expect(lsp.diagnostics.waitFor).toHaveBeenCalledTimes(2);
     } finally { await h.close(); }
   });
 

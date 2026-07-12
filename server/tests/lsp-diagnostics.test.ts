@@ -19,6 +19,21 @@ describe("LspDiagnostics", () => {
     await expect(store.waitFor(uri, 3, store.sequence, DIAGNOSTIC_LIMITS.minWaitMs)).resolves.toMatchObject({ fresh: false, diagnostics: [] });
   });
 
+  it("remaps a workspace-startup file publication after the res document is authorized", async () => {
+    const fileUri = "file:///project/phase4/broken.gd";
+    const store = new LspDiagnostics();
+    store.accept(notification(3, fileUri, [{ message: "phase4_missing_identifier" }]));
+    store.remap(fileUri, uri);
+    await expect(store.waitFor(uri, 3, 0, DIAGNOSTIC_LIMITS.minWaitMs)).resolves.toMatchObject({ diagnostics: [{ message: "phase4_missing_identifier" }] });
+  });
+
+  it("remaps Godot's percent-encoded Windows drive URI to Node's canonical file URI", async () => {
+    const store = new LspDiagnostics();
+    store.accept(notification(3, "file:///C%3A/project/phase4/broken.gd", [{ message: "phase4_missing_identifier" }]));
+    store.remap("file:///C:/project/phase4/broken.gd", uri);
+    await expect(store.waitFor(uri, 3, 0, DIAGNOSTIC_LIMITS.minWaitMs)).resolves.toMatchObject({ diagnostics: [{ message: "phase4_missing_identifier" }] });
+  });
+
   it("ignores malformed notifications and requires matching generation", async () => {
     const store = new LspDiagnostics(() => uri); store.accept({ generation: 3, method: "other" });
     store.accept(notification(2, "file:///project/phase4/broken.gd", [{ message: "old" }]));
