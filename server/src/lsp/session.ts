@@ -57,6 +57,10 @@ export class LspSession {
   }
 
   async notify(method: string, params: unknown): Promise<void> { await this.ensureReady(); await this.transport.notify(method, params); }
+  async notifyForGeneration(generation: number, method: string, params: unknown): Promise<void> {
+    if (this.isClosing() || !this.transport.isAttached || this.transport.generation !== generation || (this.state !== "initializing" && this.state !== "ready")) throw unavailable();
+    await this.transport.notify(method, params);
+  }
   onNotification(listener: (event: LspNotification) => void): () => void { this.notificationListeners.add(listener); return () => this.notificationListeners.delete(listener); }
   setReplayHook(hook: (generation: number) => Promise<void>): void { this.replayHook = hook; }
 
