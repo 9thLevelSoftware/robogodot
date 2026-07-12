@@ -4,6 +4,7 @@ extends RefCounted
 const TypeParse = preload("../util/type_parse.gd")
 const EditController = preload("../edit_controller.gd")
 const Compat = preload("../godot_compat.gd")
+static var _last_tree_visit_count := 0
 
 static func _root() -> Node:
 	return Compat.edited_scene_root()
@@ -74,15 +75,16 @@ static func scene_tree(params: Dictionary) -> Dictionary:
 	if not cursor_text.is_valid_int() or str(cursor_text.to_int()) != cursor_text or cursor_text.to_int() < 0 or cursor_text.length() > 10: return _failure("Cursor must be a canonical non-negative decimal traversal offset.")
 	var offset := cursor_text.to_int()
 	if offset > 100000: return _failure("Cursor exceeds the bounded traversal skip limit.")
-	var stack: Array[Dictionary] = [{"node": root, "depth": 0}]
+	var stack: Array[Dictionary] = [{"node": root, "depth": 0, "next_child_index": -1}]
 	var nodes: Array[Dictionary] = []; var visited := 0; var byte_limit := 261632
+	_last_tree_visit_count = 0
 	while not stack.is_empty() and nodes.size() < limit:
-		var entry := stack.pop_back() as Dictionary; var node := entry.node as Node; var depth := int(entry.depth); var children := node.get_children()
-		if depth < max_depth:
-			for child_index in range(children.size() - 1, -1, -1): stack.append({"node": children[child_index], "depth": depth + 1})
+		var entry := stack.back() as Dictionary; var node := entry.node as Node; var depth := int(entry.depth)
+		_last_tree_visit_count += 1
+		_advance_tree_stack(stack, max_depth)
 		if visited < offset: visited += 1; continue
 		var child_paths: Array[String] = []; if depth < max_depth:
-			for child in children: child_paths.append(_path(child))
+			for child_index in range(node.get_child_count()): child_paths.append(_path(node.get_child(child_index)))
 		var record := {"name": String(node.name), "class": node.get_class(), "path": _path(node), "depth": depth, "children": child_paths}
 		if node != root: record["parent"] = _path(node.get_parent())
 		var candidate: Array[Dictionary] = nodes.duplicate(); candidate.append(record)
@@ -95,6 +97,19 @@ static func scene_tree(params: Dictionary) -> Dictionary:
 	var result := {"nodes": nodes, "truncated": truncated}
 	if truncated: result["nextCursor"] = str(index)
 	return _success(result)
+
+static func _advance_tree_stack(stack: Array[Dictionary], max_depth: int) -> void:
+	while not stack.is_empty():
+		var frame := stack.back() as Dictionary; var node := frame.node as Node; var depth := int(frame.depth)
+		var next_index := int(frame.next_child_index) + 1
+		frame.next_child_index = next_index; stack[stack.size() - 1] = frame
+		if depth < max_depth and next_index < node.get_child_count():
+			stack.append({"node": node.get_child(next_index), "depth": depth + 1, "next_child_index": -1})
+			return
+		stack.pop_back()
+
+static func scene_tree_last_visit_count() -> int:
+	return _last_tree_visit_count
 
 static func node_add(params: Dictionary) -> Dictionary:
 	var parent := _node(params.get("parent"))

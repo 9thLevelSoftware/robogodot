@@ -49,3 +49,11 @@ Tree traversal is now streaming iterative preorder with a 100,000-record skip ce
 Lifecycle history validation uses per-result scene histories: open/new/reopen assert the resulting scene history has no undo action. Save, save-as, and confirmed overwrite compare the same live scene history version before/after and assert invariance. This avoids comparing histories belonging to freed/replaced roots.
 
 Direct Godot compatibility tests accept an exact 1024-byte multibyte canonical `res://` path and reject the over-boundary value. Server tests enforce the same byte boundary and reject noncanonical decimal cursors without bridge dispatch. Corrupt existing scenes are preflighted as `PackedScene` and rejected before editor switching.
+
+## Router-envelope and traversal follow-up
+
+RED added to `phase_1_smoke.gd`: a successful command returned 140,000 multibyte characters under a valid 128-byte maximally JSON-escaped control-character ID. Before the central router guard, the complete serialized JSON-RPC response exceeded 262,144 bytes. GREEN: `command_router.gd` now serializes the exact complete response with the actual ID and replaces an oversized success with a bounded structured error carrying the same ID. Error construction is also measured and reduced to a bounded fallback; the accepted 128-byte ID ceiling makes the same-ID fallback safely fit. The smoke test asserts same ID and complete response size.
+
+Tree preorder now uses only depth-proportional frames `{node,next_child_index,depth}`. It advances via `get_child_count()` and one `get_child(index)` at a time, never `get_children()` and never a pushed sibling set. A live wide-tree invariant requests cursor 1/limit 1 and asserts the internal visit count is exactly two (the skipped root and requested first child), demonstrating traversal does not visit/store the remaining 499 wide siblings. Stable order, cursor progress, and concatenated-page coverage remain green.
+
+The overwrite TOCTOU limitation is narrowed to the unavoidable interval after the immediate target-existence revalidation and before Godot performs its write. Atomic filesystem replacement is intentionally outside Task 3 scope.
