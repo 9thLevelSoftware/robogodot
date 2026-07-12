@@ -47,14 +47,18 @@ func _run() -> void:
 	var bad_object: Dictionary = Edit.node_set_property({"path": "/root/Main/Renamed", "property": "owner", "value": 9})
 	_check(not bad_primitive.ok and not bad_object.ok and added_node.position == Vector2(7, 8), "primitive and object/class mismatches rejected")
 	_check(Compat.undo_history_version(undo, added_node) == invalid_property_version, "invalid properties leave history unchanged")
+	var source_child := Node2D.new(); source_child.name = "SourceChild"; source_child.position = Vector2(41, 42); added_node.add_child(source_child)
+	added_node.owner = null; source_child.owner = null
 	root_version = Compat.undo_history_version(undo, root)
 	var duplicated: Dictionary = Edit.node_duplicate({"path": "/root/Main/Renamed", "parent": "/root/Main", "name": "Copy", "flags": 15})
 	_check(duplicated.ok and root.get_node_or_null("Copy") != null, "duplicate")
 	var copy: Node2D = root.get_node("Copy")
-	_check(copy.position == added_node.position and copy != added_node, "duplicate is isolated with copied state")
+	var copied_child: Node2D = copy.get_node("SourceChild")
+	_check(copy.position == added_node.position and copied_child.position == source_child.position and copy != added_node and copied_child != source_child, "duplicate subtree is isolated with copied state")
+	_check(copy.owner == root and copied_child.owner == root, "duplicate assigns edited root recursively for ownerless source")
 	_check(Compat.undo_history_version(undo, root) == root_version + 1, "duplicate increments history once")
 	Compat.undo_history_undo(undo, root); _check(copy.get_parent() == null, "undo duplicate removes only copy")
-	Compat.undo_history_redo(undo, root); _check(copy.get_parent() == root, "redo duplicate")
+	Compat.undo_history_redo(undo, root); _check(copy.get_parent() == root and copy.owner == root and copied_child.owner == root, "redo duplicate restores recursive persistence owner")
 	var old_global: Transform2D = copy.global_transform
 	var old_index := copy.get_index()
 	var old_owner: Node = copy.owner

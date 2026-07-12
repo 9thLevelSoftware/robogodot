@@ -69,7 +69,7 @@ static func node_duplicate(params: Dictionary) -> Dictionary:
 	var source := _node(params.get("path")); var parent := _node(params.get("parent", params.get("path")))
 	if source != null and not params.has("parent"): parent = source.get_parent()
 	if source == null or parent == null: return _failure("Provide valid source and parent paths.")
-	var result: Dictionary = _controller().duplicate_node(source, parent, int(params.get("flags", 15)), String(params.get("name", "")), "Duplicate %s" % source.name)
+	var result: Dictionary = _controller().duplicate_node(source, parent, int(params.get("flags", 15)), String(params.get("name", "")), "Duplicate %s" % source.name, _root())
 	if not result.ok: return result
 	return _success({"path": _path(result.node)})
 
@@ -97,9 +97,6 @@ static func _property(node: Node, name: StringName) -> Dictionary:
 	for entry in node.get_property_list():
 		if StringName(entry.name) == name and int(entry.usage) & (PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_EDITOR) and not int(entry.usage) & PROPERTY_USAGE_READ_ONLY: return entry
 	return {}
-static func _set_owner_recursive(node: Node, owner: Node) -> void:
-	if owner == node or owner.is_ancestor_of(node): node.owner = owner
-	for child in node.get_children(): _set_owner_recursive(child, owner)
 static func _value_matches(value: Variant, descriptor: Dictionary) -> bool:
 	var expected := int(descriptor.get("type", TYPE_NIL))
 	if value == null: return expected in [TYPE_NIL, TYPE_OBJECT]

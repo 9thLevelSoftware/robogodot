@@ -68,13 +68,13 @@ func reparent_node(node: Node, parent: Node, index: int, action_name: String) ->
 	_last_history_target = node
 	return {"ok": true}
 
-func duplicate_node(source: Node, parent: Node, duplicate_flags: int, requested_name: String, action_name: String) -> Dictionary:
+func duplicate_node(source: Node, parent: Node, duplicate_flags: int, requested_name: String, action_name: String, persistent_owner: Node) -> Dictionary:
 	if not is_instance_valid(source) or not is_instance_valid(parent):
 		return _failure("Valid source and parent nodes are required.")
 	var copy := source.duplicate(duplicate_flags)
 	if copy == null: return _failure("Godot could not duplicate the node.")
 	if not requested_name.is_empty(): copy.name = requested_name
-	var result := add_node(parent, copy, action_name, source.owner)
+	var result := add_node(parent, copy, action_name, persistent_owner)
 	if result.ok: result.node = copy
 	return result
 

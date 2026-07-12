@@ -125,3 +125,21 @@ Full bounded Godot command:
 `$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; $env:GODOT_MCP_SMOKE_PORT='19226'; node tests/godot/run-smoke.mjs`
 
 Observed: exit 0 in 27.9 seconds, including `PASS phase 3 edit controller foundation`, `PASS phase 3 undoable node tools`, and all bounded runner pass markers.
+
+## Ownerless duplicate persistence follow-up
+
+Focused RED used a clean fixture copy, fresh port 19227, and `phase_3_node_smoke.gd`.
+
+Observed: exit 1. The ownerless source subtree duplicated with correct isolated values, but failed both `duplicate assigns edited root recursively for ownerless source` and `redo duplicate restores recursive persistence owner`.
+
+The duplicate controller interface now requires an explicit `persistent_owner`; `commands/edit.gd` passes the edited scene root and never derives persistence from `source.owner`. The obsolete `_set_owner_recursive` command helper was removed.
+
+Focused GREEN repeated the node smoke with port 19228.
+
+Observed: exit 0 in 5.3 seconds with `PASS phase 3 undoable node tools`; copied root and descendant owners equal the edited root initially and after redo, and copied nodes remain isolated from their ownerless source counterparts.
+
+Full bounded command:
+
+`$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; $env:GODOT_MCP_SMOKE_PORT='19229'; node tests/godot/run-smoke.mjs`
+
+Observed: exit 0 in 27.5 seconds, including `PASS phase 3 undoable node tools` and all bounded pass markers.
