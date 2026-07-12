@@ -2,11 +2,15 @@
 extends RefCounted
 
 const Compat = preload("godot_compat.gd")
+const Exact = preload("exact_variant.gd")
 var _undo: EditorUndoRedoManager
 var _last_history_target: Object
+var _save_project_settings: Callable
+var _project_settings_blocked := false
 
-func _init(undo: EditorUndoRedoManager) -> void:
+func _init(undo: EditorUndoRedoManager, save_project_settings: Callable = Callable()) -> void:
 	_undo = undo
+	_save_project_settings = save_project_settings if save_project_settings.is_valid() else Compat.project_settings_save
 
 func add_node(parent: Node, node: Node, action_name: String, persistent_owner: Node = null) -> Dictionary:
 	if not is_instance_valid(parent) or not is_instance_valid(node) or node.get_parent() != null:
@@ -126,42 +130,45 @@ func set_property(target: Object, property: StringName, value: Variant, action_n
 	return {"ok": true}
 
 func set_project_setting(key: String, value: Variant, action_name: String) -> Dictionary:
-	if key.is_empty() or not _setting_value_supported(value): return _failure("A supported project-setting value is required.")
+	if _project_settings_blocked: return _failure("Project-setting mutations are blocked after an unproven recovery; restart the plugin and inspect with godot_script_run.")
+	if key.is_empty() or value == null or not Exact.supported(value): return _tier_b_failure("A non-null exactly supported project-setting value is required.")
 	var existed := ProjectSettings.has_setting(key)
 	var old_value: Variant = ProjectSettings.get_setting(key) if existed else null
-	if not _setting_value_supported(old_value): return _failure("The previous value cannot be restored exactly.")
+	if existed and (old_value == null or not Exact.supported(old_value)): return _tier_b_failure("The previous value cannot be restored exactly.")
 	if not _apply_project_setting(key, true, value):
-		_apply_project_setting(key, existed, old_value)
-		return _failure("The new project setting could not be persisted exactly.")
+		return _recover_project_setting(key, existed, old_value, value, "The new project setting could not be persisted exactly.")
 	if not _apply_project_setting(key, existed, old_value):
-		return _failure("The previous project setting could not be restored exactly during preflight.")
+		return _recover_project_setting(key, existed, old_value, value, "The previous project setting could not be restored exactly during preflight.")
 	_undo.create_action(action_name, UndoRedo.MERGE_DISABLE, ProjectSettings)
 	_undo.add_do_method(self, "_apply_project_setting", key, true, value)
 	_undo.add_undo_method(self, "_apply_project_setting", key, existed, old_value)
 	_undo.add_do_reference(self)
 	_undo.commit_action()
 	_last_history_target = ProjectSettings
-	if not ProjectSettings.has_setting(key) or ProjectSettings.get_setting(key) != value:
+	if not ProjectSettings.has_setting(key) or not Exact.equal(ProjectSettings.get_setting(key), value):
 		return _failure("Godot did not retain the exact new project-setting value.")
 	return {"ok": true, "before_exists": existed, "before": old_value}
 
 func _apply_project_setting(key: String, should_exist: bool, value: Variant) -> bool:
 	ProjectSettings.set_setting(key, value if should_exist else null)
-	if Compat.project_settings_save() != OK: return false
+	if _save_project_settings.call() != OK: return false
 	if ProjectSettings.has_setting(key) != should_exist: return false
-	return not should_exist or ProjectSettings.get_setting(key) == value
+	return not should_exist or Exact.equal(ProjectSettings.get_setting(key), value)
 
-func _setting_value_supported(value: Variant, depth: int = 0) -> bool:
-	if depth > 32: return false
-	var kind := typeof(value)
-	if kind in [TYPE_OBJECT, TYPE_CALLABLE, TYPE_SIGNAL, TYPE_RID]: return value == null
-	if kind == TYPE_ARRAY:
-		for item in value:
-			if not _setting_value_supported(item, depth + 1): return false
-	if kind == TYPE_DICTIONARY:
-		for item_key in value:
-			if not item_key is String or not _setting_value_supported(value[item_key], depth + 1): return false
-	return true
+func _recover_project_setting(key: String, existed: bool, old_value: Variant, attempted: Variant, reason: String) -> Dictionary:
+	for _attempt in range(3):
+		if _apply_project_setting(key, existed, old_value): return _failure(reason + " Exact prior state was recovered.")
+	_project_settings_blocked = true
+	_undo.create_action("Recover project setting %s" % key, UndoRedo.MERGE_DISABLE, ProjectSettings)
+	_undo.add_do_method(self, "_apply_project_setting", key, true, attempted)
+	_undo.add_undo_method(self, "_apply_project_setting", key, existed, old_value)
+	_undo.add_do_reference(self)
+	_undo.commit_action()
+	_last_history_target = ProjectSettings
+	return {"ok": false, "hint": reason + " Recovery could not be proven; mutations are blocked and a recovery UndoRedo action was retained.", "recovery": {"key": key, "priorExists": existed, "prior": old_value, "attempted": attempted}}
+
+func _tier_b_failure(message: String) -> Dictionary:
+	return _failure(message + " Use godot_script_run (Tier B) to inspect or perform this unsupported setting change explicitly.")
 
 func undo() -> void:
 	Compat.undo_history_undo(_undo, _last_history_target)

@@ -3,11 +3,11 @@ extends RefCounted
 
 static var _resources: Dictionary = {}
 
-static func create(resource: Resource) -> String:
+static func create(resource: Resource, random_source: Callable = Callable()) -> String:
 	if resource == null: return ""
 	var crypto := Crypto.new()
 	for _attempt in range(16):
-		var bytes := crypto.generate_random_bytes(16)
+		var bytes: PackedByteArray = random_source.call(16) if random_source.is_valid() else crypto.generate_random_bytes(16)
 		if bytes.size() != 16: return ""
 		var token := Marshalls.raw_to_base64(bytes).replace("+", "-").replace("/", "_").trim_suffix("==")
 		var handle := "res_%s" % token

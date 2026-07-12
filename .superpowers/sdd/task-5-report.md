@@ -37,3 +37,15 @@ Implemented resource handles and exactly restorable project settings from approv
 - Corrected fixture mutation by restoring exact original `project.godot` bytes in the smoke.
 - No Task 5 correctness blocker found.
 - Environment concern: Godot Mono reports a missing `.NET SDK 8.0.28` and known headless RID/ObjectDB leak diagnostics; the named targeted and full smoke commands still exit 0. The existing lifecycle tail also emits expected/error-path plugin diagnostics and pre-existing fixture compile noise while its runner exits 0.
+
+## Review-fix RED/GREEN (follow-up)
+
+- RED command: `$env:GODOT_MCP_TOKEN='0123456789abcdef0123456789abcdef'; Godot --headless --editor --path tests/fixtures/godot_project --script tests/godot/phase_3_resource_project_smoke.gd`.
+- RED result: parse failures for missing `exact_variant.gd`, injected random/persistence seams, and bounded descriptor helper. First implementation run then exposed two genuine assertion failures in negative-zero semantics and the mutable injected-save fixture; both were corrected and rerun.
+- Focused GREEN server: `cd server && npm test -- --run tests/phase3-resource-project-tools.test.ts` — 5/5 passed.
+- Focused GREEN Godot: the editor command above — exit 0 with `PASS phase 3 resource project`.
+- Full server: `cd server && npm test -- --run && npm run typecheck && npm run build` — 177 passed, 1 skipped; typecheck/build exit 0.
+- Full Godot: `$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; node tests/godot/run-smoke.mjs` — exit 0.
+- Added one recursive exact comparator, exact resource post-set checking, bounded 20,000-setting scan, injected collision/exhaustion and persistence-failure tests, three-attempt rollback recovery, blocked fail-safe with explicit recovery data/history, Tier B guidance, and `ConfigFile` disk readback after do/undo.
+- Scope decisions: symlink/junction containment remains deferred to Phase 6/7 `FsGuard`; atomic no-replace resource publication is unavailable through the current public Godot API and remains the accepted narrow external overwrite TOCTOU risk for Task 6 documentation.
+- Float definition: non-finite floats are unsupported; Godot normalizes negative-zero Variant values, so exact comparison follows that normalized equality.

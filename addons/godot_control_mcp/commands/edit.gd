@@ -5,6 +5,7 @@ const TypeParse = preload("../util/type_parse.gd")
 const EditController = preload("../edit_controller.gd")
 const Compat = preload("../godot_compat.gd")
 const ResourceHandles = preload("../resource_handles.gd")
+const Exact = preload("../exact_variant.gd")
 static var _last_tree_visit_count := 0
 static var _last_tree_child_reference_count := 0
 const MAX_TREE_CHILD_PATHS := 64
@@ -61,6 +62,7 @@ static func resource_create(params: Dictionary) -> Dictionary:
 		var parsed := TypeParse.parse_variant_literal(properties[property])
 		if not parsed.ok or not _value_matches(parsed.value, descriptor): return _failure(parsed.get("error", "Property value has the wrong type."))
 		resource.set(property, parsed.value)
+		if not Exact.equal(resource.get(property), parsed.value): return _failure("Property '%s' was coerced and could not be set exactly." % property)
 	var handle := ResourceHandles.create(resource)
 	if handle.is_empty(): return _failure("A secure session handle could not be generated.")
 	return _success({"handle": handle, "class": resource.get_class(), "path": ""})
@@ -95,12 +97,16 @@ static func project_setting_set(params: Dictionary) -> Dictionary:
 	return _success(output)
 
 static func project_setting_list(params: Dictionary) -> Dictionary:
+	return project_setting_list_from_descriptors(ProjectSettings.get_property_list(), params)
+
+static func project_setting_list_from_descriptors(descriptors: Array, params: Dictionary) -> Dictionary:
 	var prefix = params.get("prefix", "")
 	if not prefix is String or String(prefix).to_utf8_buffer().size() > 1024: return _failure("Prefix must be a bounded string.")
 	var cursor_text := String(params.get("cursor", "0")); var limit := clampi(int(params.get("limit", 100)), 1, 500)
 	if not cursor_text.is_valid_int() or str(cursor_text.to_int()) != cursor_text or cursor_text.to_int() < 0 or cursor_text.length() > 10: return _failure("Cursor must be canonical non-negative decimal.")
 	var keys: Array[String] = []
-	for descriptor in ProjectSettings.get_property_list():
+	if descriptors.size() > 20000: return _failure("Project settings exceed the explicit 20000-descriptor scan ceiling; narrow the project or use Tier B inspection.")
+	for descriptor in descriptors:
 		var key := String(descriptor.name)
 		if ProjectSettings.has_setting(key) and key.begins_with(prefix): keys.append(key)
 	keys.sort()

@@ -47,6 +47,8 @@ describe("Phase 3 resource and project tools", () => {
       expect(call).toHaveBeenLastCalledWith("edit.resource_save", { handle, path: "res://data/a.tres", overwrite: true }, expect.any(Object));
       for (const arguments_ of [
         { handle: "res_forged", path: "res://data/a.tres" },
+        { handle: 42, path: "res://data/a.tres" },
+        { handle: "__proto__", path: "res://data/a.tres" },
         { handle, path: "res://data/../a.tres" },
         { handle, path: "C:\\a.tres" },
       ]) expect((await h.client.callTool({ name: "godot_resource_save", arguments: arguments_ })).isError).toBe(true);
