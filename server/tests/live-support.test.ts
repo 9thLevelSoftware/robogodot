@@ -1,9 +1,20 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, expect, test, vi } from "vitest";
-import { allocateLoopbackPort, captureBoundedOutput, launchWithPortRetry, liveTimeoutBudget, waitForPidExit, waitForProcessConnection, waitForProcessExit } from "./live-support.js";
+import { allocateLoopbackPort, captureBoundedOutput, launchWithPortRetry, liveTimeoutBudget, runCleanupSteps, waitForPidExit, waitForProcessConnection, waitForProcessExit } from "./live-support.js";
 
 describe("live Godot process support", () => {
+  test("attempts every cleanup step and preserves the primary failure", async () => {
+    const primary = new Error("assertion failed"); const calls: number[] = [];
+    await runCleanupSteps(primary, [async () => { calls.push(1); throw new Error("restore failed"); }, async () => { calls.push(2); throw new Error("close failed"); }, async () => { calls.push(3); }]);
+    expect(calls).toEqual([1, 2, 3]); expect(primary.message).toContain("restore failed"); expect(primary.message).not.toContain("close failed");
+  });
+
+  test("attempts every cleanup step and throws the first cleanup failure without a primary", async () => {
+    const calls: number[] = [];
+    await expect(runCleanupSteps(undefined, [async () => { calls.push(1); throw new Error("first"); }, async () => { calls.push(2); throw new Error("second"); }])).rejects.toThrow("first");
+    expect(calls).toEqual([1, 2]);
+  });
   test("allocates a currently unused loopback port", async () => {
     const port = await allocateLoopbackPort();
     expect(port).toBeGreaterThan(0);

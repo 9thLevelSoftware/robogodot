@@ -145,7 +145,7 @@ describe("LspSession", () => {
   it("affirms native symbols from the Godot-only request when serverInfo is omitted", async () => {
     const { mock, session } = await setup();
     mock.onRequest("initialize", ({ id }) => mock.result(id, { capabilities: { completionProvider: { triggerCharacters: [".", "$", "'", "\""] }, documentSymbolProvider: true, workspaceSymbolProvider: false } }));
-    mock.onRequest("textDocument/nativeSymbol", ({ id }) => mock.result(id, { name: "Node", kind: "class" }));
+    mock.onRequest("textDocument/nativeSymbol", ({ id }) => mock.result(id, { name: "Node", native_class: "Node", kind: 5, detail: "<Native> class Node extends Object", children: [] }));
     await session.ensureReady();
     expect(session.supports("nativeSymbol")).toBe(true);
   });
@@ -156,6 +156,21 @@ describe("LspSession", () => {
     mock.onRequest("textDocument/nativeSymbol", ({ id }) => mock.error(id, -32601, "Method not found"));
     await session.ensureReady();
     expect(session.supports("nativeSymbol")).toBe(false);
+  });
+
+  for (const malformed of [{}, []]) it(`rejects malformed native-symbol probe ${JSON.stringify(malformed)}`, async () => {
+    const { mock, session } = await setup();
+    mock.onRequest("initialize", ({ id }) => mock.result(id, { capabilities: {} }));
+    mock.onRequest("textDocument/nativeSymbol", ({ id }) => mock.result(id, malformed));
+    await session.ensureReady(); expect(session.supports("nativeSymbol")).toBe(false);
+  });
+
+  it("does not probe when an explicit non-Godot identity is present", async () => {
+    const { mock, session } = await setup();
+    mock.onRequest("initialize", ({ id }) => mock.result(id, { capabilities: {}, serverInfo: { name: "Impostor", version: "4.6.2" } }));
+    mock.onRequest("textDocument/nativeSymbol", ({ id }) => mock.result(id, { name: "Node", native_class: "Node", kind: 5, detail: "<Native> class Node", children: [] }));
+    await session.ensureReady(); expect(session.supports("nativeSymbol")).toBe(false);
+    expect(mock.messages.some((message) => message.method === "textDocument/nativeSymbol")).toBe(false);
   });
 
   it("prevents application requests before initialization completes", async () => {

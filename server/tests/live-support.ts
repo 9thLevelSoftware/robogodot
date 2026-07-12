@@ -8,6 +8,17 @@ export interface OutputCapture {
   dispose(): void;
 }
 
+export async function runCleanupSteps(primaryFailure: unknown, steps: Array<() => Promise<void>>): Promise<void> {
+  let firstCleanupFailure: unknown;
+  for (const step of steps) { try { await step(); } catch (error) { firstCleanupFailure ??= error; } }
+  if (firstCleanupFailure === undefined) return;
+  if (primaryFailure instanceof Error) {
+    primaryFailure.message += `\nCleanup failure: ${firstCleanupFailure instanceof Error ? firstCleanupFailure.message : String(firstCleanupFailure)}`;
+    return;
+  }
+  throw firstCleanupFailure;
+}
+
 export async function allocateLoopbackPort(): Promise<number> {
   const server = createServer();
   server.listen(0, "127.0.0.1");

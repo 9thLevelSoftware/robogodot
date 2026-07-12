@@ -134,3 +134,42 @@ typecheck:    exit 0
 build:        exit 0
 overall:      exit 0
 ```
+
+## Final capability and cleanup tightening
+
+- Native-symbol fallback probing now occurs only when `serverInfo` is absent. Explicit non-Godot or non-4.6 identities are never probed and remain disabled.
+- Captured the actual Godot `Node` native-symbol root. Validation now requires a bounded record with `name: "Node"`, `native_class: "Node"`, symbol `kind: 5`, a detail containing `class Node`, and a children array. Empty objects/arrays and method-not-found impostors remain disabled.
+- Visible cleanup uses an independently executed cleanup sequence: fixture restoration, MCP/LSP harness closure, and exact-PID editor termination all run even if an earlier cleanup step fails. The primary test failure is retained; without one, the first cleanup failure is reported.
+- Unavailable acceptance now asserts the exact allocated port string and resolved project path in addition to both flags.
+
+Focused final command:
+
+`cd server; npm test -- --run tests/live-support.test.ts tests/lsp-session.test.ts tests/lsp-host.test.ts; npm run typecheck`
+
+```
+Test Files  3 passed (3)
+Tests       55 passed (55)
+typecheck   exit 0
+```
+
+Final Phase 4 live:
+
+```
+Test Files  1 passed (1)
+Tests       2 passed (2)
+Duration    8.65s
+Exit code   0
+```
+
+The first all-live parallel full run had one existing `live-godot` plugin connection timeout because multiple Godot suites shared the fixture concurrently. A condition-confirming serial all-live run passed:
+
+`npm test -- --run --maxWorkers=1`
+
+```
+Test Files  31 passed (31)
+Tests       303 passed (303)
+Duration    51.73s
+Exit code   0
+```
+
+The standard full regression also passed with 28 files / 299 tests, 4 environment-gated skips. Typecheck and build both exited 0.

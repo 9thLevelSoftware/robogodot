@@ -9,7 +9,7 @@ import { LspClient } from "../src/lsp/client.js";
 import { LspHost, terminateWindowsProcessTree } from "../src/lsp/host.js";
 import { LspSession } from "../src/lsp/session.js";
 import { createServer } from "../src/server.js";
-import { allocateLoopbackPort, captureBoundedOutput, launchWithPortRetry, waitForPidExit, waitForProcessConnection, waitForProcessExit } from "./live-support.js";
+import { allocateLoopbackPort, captureBoundedOutput, launchWithPortRetry, runCleanupSteps, waitForPidExit, waitForProcessConnection, waitForProcessExit } from "./live-support.js";
 
 const godotPath = process.env.GODOT_PATH;
 const liveDescribe = godotPath ? describe : describe.skip;
@@ -73,7 +73,7 @@ async function call<T extends Record<string, unknown>>(client: Client, name: str
 
 liveDescribe("Phase 4 live Godot 4.6 LSP acceptance (set GODOT_PATH to enable)", () => {
   test("attaches through public MCP and exposes honest editor intelligence", async () => {
-    let editor: Launched | undefined; let harness: Awaited<ReturnType<typeof mcpHarness>> | undefined;
+    let editor: Launched | undefined; let harness: Awaited<ReturnType<typeof mcpHarness>> | undefined; let primaryFailure: unknown;
     const diagnosticPath = resolve(projectPath, "phase4/diagnostic_error.gd");
     const diagnosticSource = await readFile(diagnosticPath, "utf8");
     try {
@@ -114,10 +114,16 @@ liveDescribe("Phase 4 live Godot 4.6 LSP acceptance (set GODOT_PATH to enable)",
       expect(JSON.stringify(nativeSymbol)).toContain("Sprite2D");
       const workspace = await harness.client.callTool({ name: "godot_lsp_workspace_symbols", arguments: { query: "phase4", limit: 50 } });
       expect(workspace.structuredContent).toMatchObject({ code: "feature_disabled" });
-    } catch (error) {
+    } catch (error) { primaryFailure = error;
       if (editor && error instanceof Error && !error.message.includes(editor.capture.diagnostics())) error.message += `\n${editor.capture.diagnostics()}`;
       throw error;
-    } finally { await writeFile(diagnosticPath, diagnosticSource, "utf8"); await harness?.close(); if (editor) await terminateEditor(editor); }
+    } finally {
+      await runCleanupSteps(primaryFailure, [
+        () => writeFile(diagnosticPath, diagnosticSource, "utf8"),
+        () => harness?.close() ?? Promise.resolve(),
+        () => editor ? terminateEditor(editor) : Promise.resolve(),
+      ]);
+    }
   }, 75_000);
 
   test("fails closed when unavailable and tears down the exact auto-started PID", async () => {
@@ -126,8 +132,9 @@ liveDescribe("Phase 4 live Godot 4.6 LSP acceptance (set GODOT_PATH to enable)",
     try {
       const result = await unavailable.client.callTool({ name: "godot_lsp_native_symbol", arguments: { nativeClass: "Sprite2D" } });
       expect(result.structuredContent).toMatchObject({ code: "not_connected" });
-      expect(JSON.stringify(result.structuredContent)).toContain("--lsp-port");
-      expect(JSON.stringify(result.structuredContent)).toContain("--path");
+      const hint = String((result.structuredContent as { hint?: unknown }).hint);
+      expect(hint).toContain("--lsp-port"); expect(hint).toContain(String(unavailablePort));
+      expect(hint).toContain("--path"); expect(hint).toContain(projectPath);
     } finally { await unavailable.close(); }
 
     const ownedPort = await allocateLoopbackPort(); let ownedChild: ChildProcess | undefined; let primaryFailure: unknown;
@@ -137,12 +144,6 @@ liveDescribe("Phase 4 live Godot 4.6 LSP acceptance (set GODOT_PATH to enable)",
       expect(owned.host.ownership).toBe("owned");
       expect(ownedChild?.pid).toBeTypeOf("number");
     } catch (error) { primaryFailure = error; throw error; }
-    finally {
-      try { await owned.close(); if (ownedChild?.pid !== undefined) await waitForPidExit(ownedChild.pid, 7_000); }
-      catch (cleanupError) {
-        if (primaryFailure instanceof Error) primaryFailure.message += `\nCleanup failure: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`;
-        else throw cleanupError;
-      }
-    }
+    finally { await runCleanupSteps(primaryFailure, [() => owned.close(), () => ownedChild?.pid === undefined ? Promise.resolve() : waitForPidExit(ownedChild.pid, 7_000)]); }
   }, 45_000);
 });

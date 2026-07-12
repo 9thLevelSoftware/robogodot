@@ -20,6 +20,7 @@ const reconnectDelays = [1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 60_000] as 
 const DEFAULT_EXTERNAL_PHASE_MS = 5_000;
 const unavailable = () => new GodotMcpError("not_connected", "Godot language server session is not ready.", "Wait for the Godot language server connection to recover and try again.");
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+const own = (value: Record<string, unknown>, key: string): unknown => { try { const descriptor = Object.getOwnPropertyDescriptor(value, key); return descriptor && "value" in descriptor ? descriptor.value : undefined; } catch { return undefined; } };
 
 export class LspSession {
   state: LspSessionState = "disconnected";
@@ -95,7 +96,7 @@ export class LspSession {
       const initialized = this.validateInitialize(raw);
       await this.transport.notify("initialized", {});
       this.assertGenerationActive(generation);
-      this.nativeSymbolAffirmed = this.isGodot46Info(initialized.serverInfo) || await this.probeNativeSymbol();
+      this.nativeSymbolAffirmed = initialized.serverInfo === undefined ? await this.probeNativeSymbol() : this.isGodot46Info(initialized.serverInfo);
       this.assertGenerationActive(generation);
       if (reconnecting && this.replayHook) {
         await this.withExternalDeadline("replay", this.replayHook(generation));
@@ -187,7 +188,8 @@ export class LspSession {
   private async probeNativeSymbol(): Promise<boolean> {
     try {
       const raw = await this.transport.request<unknown>("textDocument/nativeSymbol", { native_class: "Node", symbol_name: "" }, this.options.connectTimeoutMs);
-      if (raw === null || (!isRecord(raw) && !Array.isArray(raw))) return false;
+      if (!isRecord(raw) || own(raw, "name") !== "Node" || own(raw, "native_class") !== "Node" || own(raw, "kind") !== 5 || !Array.isArray(own(raw, "children"))) return false;
+      const detail = own(raw, "detail"); if (typeof detail !== "string" || !detail.includes("class Node")) return false;
       return Buffer.byteLength(JSON.stringify(raw), "utf8") <= LSP_LIMITS.maxFrameBytes;
     } catch { return false; }
   }
