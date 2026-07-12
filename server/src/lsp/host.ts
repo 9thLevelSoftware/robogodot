@@ -1,5 +1,7 @@
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
-import { stat } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import path from "node:path";
 import { connect } from "node:net";
 import { GodotMcpError } from "../errors.js";
 
@@ -29,17 +31,25 @@ async function probe(host: "127.0.0.1", port: number, deadlineMs: number): Promi
 }
 
 async function validatePaths(godotPath: string, projectPath: string): Promise<void> {
-  const [executable, project] = await Promise.all([stat(godotPath), stat(projectPath)]);
+  const projectFile = path.join(projectPath, "project.godot");
+  const [executable, project, marker] = await Promise.all([stat(godotPath), stat(projectPath), stat(projectFile)]);
   if (!executable.isFile()) throw new Error(`GODOT_PATH is not a file: ${godotPath}`);
   if (!project.isDirectory()) throw new Error(`GODOT_PROJECT_PATH is not a directory: ${projectPath}`);
+  if (!marker.isFile()) throw new Error(`GODOT_PROJECT_PATH must contain a regular project.godot: ${projectFile}`);
+  if (process.platform !== "win32") await access(godotPath, constants.X_OK);
 }
 
 async function terminate(child: HostChild): Promise<void> {
-  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-  child.kill("SIGTERM");
-  if (await Promise.race([exited.then(() => true), delay(5_000).then(() => false)])) return;
-  child.kill("SIGKILL");
-  await Promise.race([exited, delay(2_000)]);
+  let resolveExit!: () => void;
+  const exited = new Promise<void>((resolve) => { resolveExit = resolve; });
+  const onExit = () => resolveExit();
+  child.once("exit", onExit);
+  try {
+    child.kill("SIGTERM");
+    if (await Promise.race([exited.then(() => true), delay(5_000).then(() => false)])) return;
+    child.kill("SIGKILL");
+    await Promise.race([exited, delay(2_000)]);
+  } finally { child.off("exit", onExit); }
 }
 
 function display(value: string): string { return `"${value.replaceAll('"', '\\"').replaceAll("\r", "\\r").replaceAll("\n", "\\n")}"`; }
@@ -51,6 +61,7 @@ export class LspHost {
   private stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   private ensuring: Promise<LspOwnership> | undefined;
   private closing: Promise<void> | undefined;
+  private state: "open" | "closing" | "closed" = "open";
   private readonly deps: Required<LspHostDependencies>;
 
   constructor(private readonly config: LspHostConfig, dependencies: LspHostDependencies = {}) {
@@ -64,6 +75,7 @@ export class LspHost {
   }
 
   ensureAvailable(): Promise<LspOwnership> {
+    if (this.state !== "open") return Promise.reject(this.closedError());
     if (this.ownership) return Promise.resolve(this.ownership);
     if (!this.ensuring) this.ensuring = this.performEnsure().catch((error) => { this.ensuring = undefined; throw error; });
     return this.ensuring;
@@ -72,12 +84,16 @@ export class LspHost {
   diagnostics() { return { ownership: this.ownership, stdout: this.stdout.toString("utf8"), stderr: this.stderr.toString("utf8") }; }
 
   close(): Promise<void> {
-    if (!this.closing) this.closing = this.performClose();
+    if (!this.closing) {
+      this.state = "closing";
+      this.closing = this.performClose();
+    }
     return this.closing;
   }
 
   private async performEnsure(): Promise<LspOwnership> {
-    if (await this.deps.probe("127.0.0.1", this.config.lspPort, 500)) return this.ownership = "attached";
+    if (await this.deps.probe("127.0.0.1", this.config.lspPort, 500)) { this.assertOpen(); return this.ownership = "attached"; }
+    this.assertOpen();
     const godotPath = this.config.godotPath;
     const projectPath = this.config.projectPath;
     const command = `${display(godotPath ?? "<GODOT_PATH>")} --editor --headless --lsp-port ${this.config.lspPort} --path ${display(projectPath ?? "<GODOT_PROJECT_PATH>")}`;
@@ -85,32 +101,62 @@ export class LspHost {
     if (!godotPath) throw new Error("GODOT_PATH is required when GODOT_MCP_LSP_AUTO_START is enabled");
     if (!projectPath) throw new Error("GODOT_PROJECT_PATH is required when GODOT_MCP_LSP_AUTO_START is enabled");
     await this.deps.validatePaths(godotPath, projectPath);
-    const child = this.deps.spawn(godotPath, ["--editor", "--headless", "--lsp-port", String(this.config.lspPort), "--path", projectPath], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-    this.ownedChild = child;
-    child.stdout?.on("data", (chunk) => { this.stdout = append(this.stdout, chunk); });
-    child.stderr?.on("data", (chunk) => { this.stderr = append(this.stderr, chunk); });
+    this.assertOpen();
+    let child: HostChild | undefined;
     let failure: Error | undefined;
-    child.once("error", (error: Error) => { failure = error; });
-    child.once("exit", (code, signal) => { failure ??= new Error(`Godot LSP host exited before startup (code ${String(code)}, signal ${String(signal)})`); });
-    // Each attempt can consume the 500 ms probe deadline plus the 50 ms interval.
-    for (let elapsed = 0; elapsed < 15_000; elapsed += 550) {
-      if (failure) {
-        if (await this.deps.probe("127.0.0.1", this.config.lspPort, 500)) { this.ownedChild = undefined; return this.ownership = "attached"; }
-        this.ownedChild = undefined;
-        try { await this.deps.terminate(child); } catch { /* preserve the startup failure */ }
-        throw failure;
+    const onStdout = (chunk: unknown) => { this.stdout = append(this.stdout, chunk); };
+    const onStderr = (chunk: unknown) => { this.stderr = append(this.stderr, chunk); };
+    const onError = (error: Error) => { failure = error; };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => { failure ??= new Error(`Godot LSP host exited before startup (code ${String(code)}, signal ${String(signal)})`); };
+    const detach = () => {
+      if (!child) return;
+      child.off("error", onError); child.off("exit", onExit);
+      child.stdout?.off("data", onStdout); child.stderr?.off("data", onStderr);
+    };
+    try {
+      child = this.deps.spawn(godotPath, ["--editor", "--headless", "--lsp-port", String(this.config.lspPort), "--path", projectPath], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+      this.ownedChild = child;
+      this.assertOpen();
+      child.stdout?.on("data", onStdout); child.stderr?.on("data", onStderr);
+      child.once("error", onError); child.once("exit", onExit);
+      // Each attempt can consume the 500 ms probe deadline plus the 50 ms interval.
+      for (let elapsed = 0; elapsed < 15_000; elapsed += 550) {
+        this.assertOpen();
+        if (failure) {
+          const external = await this.deps.probe("127.0.0.1", this.config.lspPort, 500);
+          this.assertOpen();
+          if (external) { detach(); this.ownedChild = undefined; return this.ownership = "attached"; }
+          throw failure;
+        }
+        const reachable = await this.deps.probe("127.0.0.1", this.config.lspPort, 500);
+        this.assertOpen();
+        if (failure) {
+          const external = await this.deps.probe("127.0.0.1", this.config.lspPort, 500);
+          this.assertOpen();
+          if (external) { detach(); this.ownedChild = undefined; return this.ownership = "attached"; }
+          throw failure;
+        }
+        if (reachable) { detach(); return this.ownership = "owned"; }
+        await this.deps.delay(50);
       }
-      if (await this.deps.probe("127.0.0.1", this.config.lspPort, 500)) return this.ownership = "owned";
-      await this.deps.delay(50);
+      throw new GodotMcpError("timeout", "Godot language server did not start within 15 seconds.", "Check the captured host diagnostics and Godot project path.", this.diagnostics());
+    } catch (error) {
+      detach();
+      if (child && this.ownedChild === child) {
+        this.ownedChild = undefined;
+        try { await this.deps.terminate(child); } catch { /* preserve the startup/closing error */ }
+      }
+      throw error;
     }
-    const timeout = new GodotMcpError("timeout", "Godot language server did not start within 15 seconds.", "Check the captured host diagnostics and Godot project path.", this.diagnostics());
-    this.ownedChild = undefined;
-    try { await this.deps.terminate(child); } catch { /* preserve the startup timeout */ }
-    throw timeout;
   }
 
   private async performClose(): Promise<void> {
+    try { await this.ensuring; } catch { /* cleanup continues */ }
     const child = this.ownedChild; this.ownedChild = undefined;
-    if (child) await this.deps.terminate(child);
+    try { if (child) await this.deps.terminate(child); }
+    finally { this.ownership = undefined; this.state = "closed"; }
   }
+
+  private assertOpen(): void { if (this.state !== "open") throw this.closedError(); }
+  private closedError(): GodotMcpError { return new GodotMcpError("not_connected", "Godot language server host is closing or closed.", "Create a new LSP host before reconnecting."); }
 }

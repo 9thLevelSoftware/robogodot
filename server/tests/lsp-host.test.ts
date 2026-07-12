@@ -1,4 +1,7 @@
 import { EventEmitter } from "node:events";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { LspHost } from "../src/lsp/host.js";
 
@@ -8,13 +11,19 @@ function child() {
   return value;
 }
 
-function fixture(overrides: { autoStart?: boolean; probe?: ReturnType<typeof vi.fn> } = {}) {
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function fixture(overrides: { autoStart?: boolean; probe?: ReturnType<typeof vi.fn>; validatePaths?: ReturnType<typeof vi.fn> } = {}) {
   const ownedChild = child();
   const probe = overrides.probe ?? vi.fn().mockResolvedValue(true);
   const spawn = vi.fn().mockReturnValue(ownedChild);
   const terminate = vi.fn().mockResolvedValue(undefined);
   const host = new LspHost({ lspPort: 6005, lspAutoStart: overrides.autoStart ?? true, godotPath: "C:\\Godot\\godot.exe", projectPath: "C:\\game" },
-    { probe, spawn, terminate, delay: vi.fn().mockResolvedValue(undefined), validatePaths: vi.fn().mockResolvedValue(undefined) });
+    { probe, spawn, terminate, delay: vi.fn().mockResolvedValue(undefined), validatePaths: overrides.validatePaths ?? vi.fn().mockResolvedValue(undefined) });
   return { host, probe, spawn, terminate, ownedChild };
 }
 
@@ -75,5 +84,70 @@ describe("LspHost", () => {
     await expect(host.ensureAvailable()).resolves.toBe("attached");
     await host.close();
     expect(terminate).not.toHaveBeenCalled();
+  });
+
+  it("serializes close with a delayed attach probe and rejects later ensure", async () => {
+    const answer = deferred<boolean>();
+    const { host, spawn, terminate } = fixture({ probe: vi.fn().mockReturnValue(answer.promise) });
+    const ensuring = host.ensureAvailable(); const closing = host.close(); answer.resolve(true);
+    await expect(ensuring).rejects.toMatchObject({ code: "not_connected" });
+    await closing;
+    await expect(host.ensureAvailable()).rejects.toMatchObject({ code: "not_connected" });
+    expect(spawn).not.toHaveBeenCalled(); expect(terminate).not.toHaveBeenCalled();
+  });
+
+  it("does not spawn when close races delayed path validation", async () => {
+    const validation = deferred<void>(); const validationStarted = deferred<void>();
+    const validatePaths = vi.fn().mockImplementation(() => { validationStarted.resolve(); return validation.promise; });
+    const { host, spawn, terminate } = fixture({ probe: vi.fn().mockResolvedValue(false), validatePaths });
+    const ensuring = host.ensureAvailable(); await validationStarted.promise;
+    const closing = host.close(); validation.resolve();
+    await expect(ensuring).rejects.toMatchObject({ code: "not_connected" }); await closing;
+    expect(spawn).not.toHaveBeenCalled(); expect(terminate).not.toHaveBeenCalled();
+  });
+
+  it("terminates a child spawned immediately before close without leaking ownership", async () => {
+    const ownedChild = child(); const terminate = vi.fn().mockResolvedValue(undefined); let host!: LspHost;
+    const spawned = deferred<void>(); const nextProbe = deferred<boolean>();
+    host = new LspHost({ lspPort: 6005, lspAutoStart: true, godotPath: "godot", projectPath: "game" }, {
+      probe: vi.fn().mockResolvedValueOnce(false).mockReturnValue(nextProbe.promise),
+      spawn: vi.fn().mockImplementation(() => { spawned.resolve(); return ownedChild; }), terminate,
+      delay: vi.fn().mockResolvedValue(undefined), validatePaths: vi.fn().mockResolvedValue(undefined),
+    });
+    const ensuring = host.ensureAvailable(); await spawned.promise; const closing = host.close(); nextProbe.resolve(true);
+    await expect(ensuring).rejects.toMatchObject({ code: "not_connected" }); await closing;
+    expect(terminate).toHaveBeenCalledTimes(1); expect(terminate).toHaveBeenCalledWith(ownedChild);
+    expect(host.ownership).toBeUndefined();
+  });
+
+  it("rejects a project directory without a regular project.godot", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "robogodot-host-"));
+    try {
+      const godot = path.join(root, "godot.exe"); const project = path.join(root, "project");
+      await writeFile(godot, "binary"); await mkdir(project);
+      const spawn = vi.fn();
+      const host = new LspHost({ lspPort: 6005, lspAutoStart: true, godotPath: godot, projectPath: project }, { probe: vi.fn().mockResolvedValue(false), spawn });
+      await expect(host.ensureAvailable()).rejects.toThrow(/project\.godot/);
+      expect(spawn).not.toHaveBeenCalled();
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("rechecks child failure after a successful probe before assigning ownership", async () => {
+    const ownedChild = child(); const successfulProbe = deferred<boolean>(); const terminate = vi.fn().mockResolvedValue(undefined);
+    const probe = vi.fn().mockResolvedValueOnce(false).mockReturnValueOnce(successfulProbe.promise).mockResolvedValue(true);
+    const host = new LspHost({ lspPort: 6005, lspAutoStart: true, godotPath: "godot", projectPath: "game" }, {
+      probe, spawn: vi.fn().mockReturnValue(ownedChild), terminate, delay: vi.fn().mockResolvedValue(undefined), validatePaths: vi.fn().mockResolvedValue(undefined),
+    });
+    const ensuring = host.ensureAvailable(); await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2));
+    ownedChild.emit("exit", 1, null); successfulProbe.resolve(true);
+    await expect(ensuring).resolves.toBe("attached"); await host.close();
+    expect(probe).toHaveBeenCalledTimes(3); expect(terminate).not.toHaveBeenCalled();
+  });
+
+  it("removes startup listeners after ownership is decided", async () => {
+    const probe = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true);
+    const { host, ownedChild } = fixture({ probe }); await host.ensureAvailable();
+    expect(ownedChild.listenerCount("error")).toBe(0); expect(ownedChild.listenerCount("exit")).toBe(0);
+    expect(ownedChild.stdout.listenerCount("data")).toBe(0); expect(ownedChild.stderr.listenerCount("data")).toBe(0);
   });
 });
