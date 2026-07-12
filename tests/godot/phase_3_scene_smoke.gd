@@ -34,6 +34,8 @@ func _run() -> void:
 		var wide := Node.new(); wide.name = "N%03d_%s" % [index, "é".repeat(120)]; root.add_child(wide); wide_nodes.append(wide)
 	var router := Router.new(); router.register_command("edit.scene_tree", Edit.scene_tree)
 	var maximum_id := String.chr(1).repeat(128)
+	var root_only: Dictionary = Edit.scene_tree({"maxDepth": 1, "limit": 1, "cursor": "0"})
+	_check(root_only.ok and root_only.result.nodes[0].childCount == 502 and root_only.result.nodes[0].children.size() == 64 and root_only.result.nodes[0].childrenTruncated and Edit.scene_tree_last_child_reference_count() == 64, "wide root materializes at most 64 child references")
 	var response := router.dispatch({"jsonrpc": "2.0", "id": maximum_id, "method": "edit.scene_tree", "params": {"maxDepth": 1, "limit": 500}})
 	var response_bytes := JSON.stringify(response).to_utf8_buffer().size()
 	_check(response_bytes <= Router.MAX_RESPONSE_BYTES and response.result.truncated and int(response.result.nextCursor) > 0, "multibyte wide tree stays in complete router envelope and advances cursor")

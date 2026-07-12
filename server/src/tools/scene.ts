@@ -11,7 +11,7 @@ const projectPath = z.string().min(7).refine(path => Buffer.byteLength(path, "ut
 }, "Path must be a canonical project-relative res:// path without traversal.");
 const nodePath = z.string().min(1).max(1024);
 const currentResponse = z.object({ path: z.union([projectPath, z.literal("")]), unsaved: z.boolean(), state: z.enum(["clean", "dirty", "unknown"]), reason: z.string() }).strict();
-const treeNode = z.object({ name: z.string(), class: z.string(), path: nodePath, parent: nodePath.optional(), depth: z.number().int().nonnegative(), children: z.array(nodePath) }).strict();
+const treeNode = z.object({ name: z.string(), class: z.string(), path: nodePath, parent: nodePath.optional(), depth: z.number().int().nonnegative(), children: z.array(nodePath).max(64), childCount: z.number().int().nonnegative(), childrenTruncated: z.boolean() }).strict();
 const treeResponse = z.object({ nodes: z.array(treeNode), truncated: z.boolean(), nextCursor: z.string().optional() }).strict();
 const lifecycle = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const;
 const persistence = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } as const;

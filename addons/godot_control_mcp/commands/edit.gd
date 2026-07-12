@@ -5,6 +5,8 @@ const TypeParse = preload("../util/type_parse.gd")
 const EditController = preload("../edit_controller.gd")
 const Compat = preload("../godot_compat.gd")
 static var _last_tree_visit_count := 0
+static var _last_tree_child_reference_count := 0
+const MAX_TREE_CHILD_PATHS := 64
 
 static func _root() -> Node:
 	return Compat.edited_scene_root()
@@ -78,14 +80,17 @@ static func scene_tree(params: Dictionary) -> Dictionary:
 	var stack: Array[Dictionary] = [{"node": root, "depth": 0, "next_child_index": -1}]
 	var nodes: Array[Dictionary] = []; var visited := 0; var byte_limit := 261632
 	_last_tree_visit_count = 0
+	_last_tree_child_reference_count = 0
 	while not stack.is_empty() and nodes.size() < limit:
 		var entry := stack.back() as Dictionary; var node := entry.node as Node; var depth := int(entry.depth)
 		_last_tree_visit_count += 1
 		_advance_tree_stack(stack, max_depth)
 		if visited < offset: visited += 1; continue
-		var child_paths: Array[String] = []; if depth < max_depth:
-			for child_index in range(node.get_child_count()): child_paths.append(_path(node.get_child(child_index)))
-		var record := {"name": String(node.name), "class": node.get_class(), "path": _path(node), "depth": depth, "children": child_paths}
+		var child_count := node.get_child_count(); var child_paths: Array[String] = []
+		if depth < max_depth:
+			for child_index in range(mini(child_count, MAX_TREE_CHILD_PATHS)):
+				child_paths.append(_path(node.get_child(child_index))); _last_tree_child_reference_count += 1
+		var record := {"name": String(node.name), "class": node.get_class(), "path": _path(node), "depth": depth, "children": child_paths, "childCount": child_count, "childrenTruncated": child_paths.size() < child_count}
 		if node != root: record["parent"] = _path(node.get_parent())
 		var candidate: Array[Dictionary] = nodes.duplicate(); candidate.append(record)
 		var probe := {"nodes": candidate, "truncated": true, "nextCursor": str(offset + candidate.size())}
@@ -110,6 +115,9 @@ static func _advance_tree_stack(stack: Array[Dictionary], max_depth: int) -> voi
 
 static func scene_tree_last_visit_count() -> int:
 	return _last_tree_visit_count
+
+static func scene_tree_last_child_reference_count() -> int:
+	return _last_tree_child_reference_count
 
 static func node_add(params: Dictionary) -> Dictionary:
 	var parent := _node(params.get("parent"))

@@ -72,7 +72,7 @@ describe("Phase 3 scene tools", () => {
   });
 
   it("preserves stable ordered tree pages and cursor", async () => {
-    const page = { nodes: [{ name: "A", class: "Node", path: "/root/Main/A", parent: "/root/Main", depth: 1, children: [] }, { name: "B", class: "Node", path: "/root/Main/B", parent: "/root/Main", depth: 1, children: [] }], truncated: true, nextCursor: "2" };
+    const page = { nodes: [{ name: "A", class: "Node", path: "/root/Main/A", parent: "/root/Main", depth: 1, children: [], childCount: 0, childrenTruncated: false }, { name: "B", class: "Node", path: "/root/Main/B", parent: "/root/Main", depth: 1, children: [], childCount: 0, childrenTruncated: false }], truncated: true, nextCursor: "2" };
     const h = await harness(vi.fn().mockResolvedValue(page));
     try {
       const result = await h.client.callTool({ name: "godot_scene_tree", arguments: { root: "/root/Main", maxDepth: 2, cursor: "0", limit: 2 } });
