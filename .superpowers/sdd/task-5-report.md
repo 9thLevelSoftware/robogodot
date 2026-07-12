@@ -63,3 +63,28 @@ No process-name kill, shell invocation, default auto-start, or live-Godot unit d
 - Production validation requires a regular Godot file (plus executable access on non-Windows), a project directory, and a regular `project.godot` marker before spawn.
 - Child failure observed while a successful probe is awaited triggers a fresh probe; an external winner is classified attached and the dead child is never owned.
 - Startup error, exit, stdout, and stderr listeners are detached on every decision/error path. Default teardown removes its one-shot exit listener even on timeout/escalation.
+
+## Final lifetime-listener fix cycle
+
+### RED evidence
+
+- Added tests distinguishing startup listeners from owned-lifetime listeners, clearing an exited owned child before attaching an external replacement, and bounded post-readiness/shutdown output capture.
+- Command: `npm test -- --run tests/lsp-host.test.ts`
+- Result: exit 1, 3 failed / 12 passed. The owned child had no lifetime exit listener, retained stale `owned` state after exit, and captured zero post-readiness output bytes.
+
+### GREEN evidence
+
+- Host cycle: 15/15 passed; typecheck passed.
+- Final focused command: `npm test -- --run tests/lsp-host.test.ts tests/server.test.ts`
+  - 2 files passed; 23 tests passed.
+- `npm run typecheck`: exit 0.
+- `npm run build`: exit 0.
+- Full suite `npm test -- --run`: 28 files passed, 2 skipped; 277 tests passed, 2 skipped.
+
+### Fixes
+
+- Startup listeners are still removed at readiness, then replaced with distinct owned-lifetime exit/stdout/stderr listeners.
+- The exact child exit callback clears `ownedChild` and ownership only when the stored identity is still that child, then detaches its lifetime listeners.
+- `close()` leaves the lifetime exit/output listeners active during exact-child termination and detaches them after termination completes, without killing an already-exited child or an attached external replacement.
+- Output emitted after readiness and during shutdown remains bounded to the final 16,384 bytes per stream.
+- Completed ensure promises are cleared, allowing an exited owned child to be followed by a fresh attach probe rather than returning stale ownership.

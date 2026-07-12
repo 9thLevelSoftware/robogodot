@@ -17,11 +17,11 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function fixture(overrides: { autoStart?: boolean; probe?: ReturnType<typeof vi.fn>; validatePaths?: ReturnType<typeof vi.fn> } = {}) {
+function fixture(overrides: { autoStart?: boolean; probe?: ReturnType<typeof vi.fn>; validatePaths?: ReturnType<typeof vi.fn>; terminate?: ReturnType<typeof vi.fn> } = {}) {
   const ownedChild = child();
   const probe = overrides.probe ?? vi.fn().mockResolvedValue(true);
   const spawn = vi.fn().mockReturnValue(ownedChild);
-  const terminate = vi.fn().mockResolvedValue(undefined);
+  const terminate = overrides.terminate ?? vi.fn().mockResolvedValue(undefined);
   const host = new LspHost({ lspPort: 6005, lspAutoStart: overrides.autoStart ?? true, godotPath: "C:\\Godot\\godot.exe", projectPath: "C:\\game" },
     { probe, spawn, terminate, delay: vi.fn().mockResolvedValue(undefined), validatePaths: overrides.validatePaths ?? vi.fn().mockResolvedValue(undefined) });
   return { host, probe, spawn, terminate, ownedChild };
@@ -144,10 +144,38 @@ describe("LspHost", () => {
     expect(probe).toHaveBeenCalledTimes(3); expect(terminate).not.toHaveBeenCalled();
   });
 
-  it("removes startup listeners after ownership is decided", async () => {
+  it("replaces startup listeners with owned-lifetime listeners", async () => {
     const probe = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true);
     const { host, ownedChild } = fixture({ probe }); await host.ensureAvailable();
-    expect(ownedChild.listenerCount("error")).toBe(0); expect(ownedChild.listenerCount("exit")).toBe(0);
+    expect(ownedChild.listenerCount("error")).toBe(0);
+    expect(ownedChild.listenerCount("exit")).toBe(1);
+    expect(ownedChild.stdout.listenerCount("data")).toBe(1); expect(ownedChild.stderr.listenerCount("data")).toBe(1);
+  });
+
+  it("clears an exited owned child before attaching an external replacement", async () => {
+    const probe = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true).mockResolvedValue(true);
+    const { host, ownedChild, terminate } = fixture({ probe });
+    await expect(host.ensureAvailable()).resolves.toBe("owned");
+    ownedChild.emit("exit", 0, null);
+    expect(host.ownership).toBeUndefined();
+    await expect(host.ensureAvailable()).resolves.toBe("attached");
+    await host.close();
+    expect(terminate).not.toHaveBeenCalled();
+    expect(ownedChild.listenerCount("exit")).toBe(0);
+  });
+
+  it("captures bounded output for the full owned lifetime and detaches on close", async () => {
+    const probe = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true);
+    const terminate = vi.fn().mockImplementation(async (ownedChild: ReturnType<typeof child>) => { ownedChild.stdout.emit("data", "shutdown-tail"); });
+    const { host, ownedChild } = fixture({ probe, terminate }); await host.ensureAvailable();
+    ownedChild.stdout.emit("data", Buffer.from(`discard-${"x".repeat(20_000)}stdout-tail`));
+    ownedChild.stderr.emit("data", Buffer.from(`discard-${"y".repeat(20_000)}stderr-tail`));
+    const diagnostics = host.diagnostics();
+    expect(Buffer.byteLength(diagnostics.stdout)).toBe(16_384); expect(diagnostics.stdout.endsWith("stdout-tail")).toBe(true);
+    expect(Buffer.byteLength(diagnostics.stderr)).toBe(16_384); expect(diagnostics.stderr.endsWith("stderr-tail")).toBe(true);
+    await host.close();
+    expect(host.diagnostics().stdout.endsWith("shutdown-tail")).toBe(true);
+    expect(ownedChild.listenerCount("exit")).toBe(0);
     expect(ownedChild.stdout.listenerCount("data")).toBe(0); expect(ownedChild.stderr.listenerCount("data")).toBe(0);
   });
 });

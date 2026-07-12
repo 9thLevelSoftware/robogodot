@@ -62,6 +62,7 @@ export class LspHost {
   private ensuring: Promise<LspOwnership> | undefined;
   private closing: Promise<void> | undefined;
   private state: "open" | "closing" | "closed" = "open";
+  private ownedListeners: { child: HostChild; detach: () => void } | undefined;
   private readonly deps: Required<LspHostDependencies>;
 
   constructor(private readonly config: LspHostConfig, dependencies: LspHostDependencies = {}) {
@@ -77,7 +78,12 @@ export class LspHost {
   ensureAvailable(): Promise<LspOwnership> {
     if (this.state !== "open") return Promise.reject(this.closedError());
     if (this.ownership) return Promise.resolve(this.ownership);
-    if (!this.ensuring) this.ensuring = this.performEnsure().catch((error) => { this.ensuring = undefined; throw error; });
+    if (!this.ensuring) {
+      const attempt = this.performEnsure();
+      this.ensuring = attempt;
+      const clear = () => { if (this.ensuring === attempt) this.ensuring = undefined; };
+      void attempt.then(clear, clear);
+    }
     return this.ensuring;
   }
 
@@ -136,7 +142,11 @@ export class LspHost {
           if (external) { detach(); this.ownedChild = undefined; return this.ownership = "attached"; }
           throw failure;
         }
-        if (reachable) { detach(); return this.ownership = "owned"; }
+        if (reachable) {
+          detach();
+          this.installOwnedListeners(child, onStdout, onStderr);
+          return this.ownership = "owned";
+        }
         await this.deps.delay(50);
       }
       throw new GodotMcpError("timeout", "Godot language server did not start within 15 seconds.", "Check the captured host diagnostics and Godot project path.", this.diagnostics());
@@ -154,7 +164,27 @@ export class LspHost {
     try { await this.ensuring; } catch { /* cleanup continues */ }
     const child = this.ownedChild; this.ownedChild = undefined;
     try { if (child) await this.deps.terminate(child); }
-    finally { this.ownership = undefined; this.state = "closed"; }
+    finally {
+      const listeners = this.ownedListeners;
+      if (listeners && listeners.child === child) { listeners.detach(); this.ownedListeners = undefined; }
+      this.ownership = undefined; this.state = "closed";
+    }
+  }
+
+  private installOwnedListeners(child: HostChild, onStdout: (chunk: unknown) => void, onStderr: (chunk: unknown) => void): void {
+    this.ownedListeners?.detach();
+    const onExit = () => {
+      if (this.ownedChild === child) { this.ownedChild = undefined; this.ownership = undefined; }
+      detach();
+      if (this.ownedListeners?.child === child) this.ownedListeners = undefined;
+    };
+    const detach = () => {
+      child.off("exit", onExit);
+      child.stdout?.off("data", onStdout); child.stderr?.off("data", onStderr);
+    };
+    child.stdout?.on("data", onStdout); child.stderr?.on("data", onStderr);
+    child.once("exit", onExit);
+    this.ownedListeners = { child, detach };
   }
 
   private assertOpen(): void { if (this.state !== "open") throw this.closedError(); }
