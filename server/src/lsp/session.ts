@@ -17,6 +17,7 @@ export interface LspSessionOptions {
 
 type InitializeResult = { capabilities: Record<string, unknown>; serverInfo?: { name: string; version?: string }; [key: string]: unknown };
 const reconnectDelays = [1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 60_000] as const;
+const DEFAULT_EXTERNAL_PHASE_MS = 5_000;
 const unavailable = () => new GodotMcpError("not_connected", "Godot language server session is not ready.", "Wait for the Godot language server connection to recover and try again.");
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -43,7 +44,7 @@ export class LspSession {
   ensureReady(): Promise<LspReadyState> {
     if (this.state === "ready" && this.ready) return Promise.resolve(this.ready);
     if (this.state === "shutting_down" || this.state === "exited") return Promise.reject(unavailable());
-    if (!this.readiness) this.readiness = this.connectAndInitialize(false);
+    if (!this.readiness) this.readiness = this.runAttempt(false);
     return this.readiness;
   }
 
@@ -72,20 +73,42 @@ export class LspSession {
   }
 
   private async connectAndInitialize(reconnecting: boolean): Promise<LspReadyState> {
-    this.state = reconnecting ? "reconnecting" : "connecting";
-    await this.options.beforeConnect?.();
-    const socket = await this.createSocket();
-    if (this.isClosing()) { socket.destroy(); throw unavailable(); }
-    const generation = ++this.generation;
-    this.transport.attach(socket, generation); this.state = "initializing";
-    const raw = await this.transport.request<unknown>("initialize", this.initializeParams(), this.options.connectTimeoutMs);
-    const initialized = this.validateInitialize(raw);
-    await this.transport.notify("initialized", {});
-    if (reconnecting && this.replayHook) await this.replayHook(generation);
-    const ready: LspReadyState = initialized.serverInfo === undefined
-      ? { generation, capabilities: initialized.capabilities }
-      : { generation, capabilities: initialized.capabilities, serverInfo: initialized.serverInfo };
-    this.ready = ready; this.reconnectAttempt = 0; this.state = "ready"; return ready;
+    let generation: number | undefined;
+    try {
+      this.state = reconnecting ? "reconnecting" : "connecting";
+      if (this.options.beforeConnect) await this.withExternalDeadline("beforeConnect", this.options.beforeConnect());
+      this.assertPreAttachActive();
+      const socket = await this.withExternalDeadline("socket connection", this.createSocket());
+      if (this.isClosing()) { socket.destroy(); throw unavailable(); }
+      generation = ++this.generation;
+      this.transport.attach(socket, generation); this.state = "initializing";
+      const raw = await this.transport.request<unknown>("initialize", this.initializeParams(), this.options.connectTimeoutMs);
+      this.assertGenerationActive(generation);
+      const initialized = this.validateInitialize(raw);
+      await this.transport.notify("initialized", {});
+      this.assertGenerationActive(generation);
+      if (reconnecting && this.replayHook) {
+        await this.withExternalDeadline("replay", this.replayHook(generation));
+        this.assertGenerationActive(generation);
+      }
+      const ready: LspReadyState = initialized.serverInfo === undefined
+        ? { generation, capabilities: initialized.capabilities }
+        : { generation, capabilities: initialized.capabilities, serverInfo: initialized.serverInfo };
+      this.ready = ready; this.reconnectAttempt = 0; this.state = "ready"; return ready;
+    } catch (error) {
+      if (!this.isClosing() && generation !== undefined && this.transport.isAttached && this.transport.generation === generation) {
+        await this.transport.close(error instanceof Error ? error : unavailable());
+      } else if (!this.isClosing() && generation === undefined) {
+        this.state = "reconnecting"; this.scheduleReconnect();
+      }
+      throw error;
+    }
+  }
+
+  private runAttempt(reconnecting: boolean): Promise<LspReadyState> {
+    const attempt = this.connectAndInitialize(reconnecting);
+    void attempt.catch(() => { if (this.readiness === attempt) this.readiness = undefined; });
+    return attempt;
   }
 
   private initializeParams(): Record<string, unknown> {
@@ -129,14 +152,27 @@ export class LspSession {
     const work = () => {
       this.cancelReconnect = undefined;
       if (this.state === "shutting_down" || this.state === "exited") return;
-      this.readiness = this.connectAndInitialize(true);
-      void this.readiness.catch(() => { this.readiness = undefined; if (this.state !== "shutting_down" && this.state !== "exited") this.scheduleReconnect(); });
+      const attempt = this.runAttempt(true); this.readiness = attempt;
+      void attempt.catch(() => { if (this.readiness === attempt) this.readiness = undefined; });
     };
     this.cancelReconnect = this.options.schedule ? this.options.schedule(delay, work) : (() => { const timer = setTimeout(work, delay); return () => clearTimeout(timer); })();
   }
 
   private isPinnedGodot46(): boolean { const info = this.ready?.serverInfo; return info?.name.toLowerCase().includes("godot") === true && info.version?.startsWith("4.6.") === true; }
   private isClosing(): boolean { return this.state === "shutting_down" || this.state === "exited"; }
+  private assertPreAttachActive(): void { if (this.isClosing()) throw unavailable(); }
+  private assertGenerationActive(generation: number): void {
+    if (this.isClosing() || this.state !== "initializing" || !this.transport.isAttached || this.transport.generation !== generation) throw unavailable();
+  }
+  private withExternalDeadline<T>(phase: string, work: Promise<T>): Promise<T> {
+    const deadline = Math.max(1, Math.min(LSP_LIMITS.maxRequestMs, this.options.connectTimeoutMs ?? DEFAULT_EXTERNAL_PHASE_MS));
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const finish = (fn: () => void) => { if (settled) return; settled = true; clearTimeout(timer); fn(); };
+      const timer = setTimeout(() => finish(() => reject(new GodotMcpError("timeout", `LSP ${phase} timed out.`, "Retry after confirming the Godot language server is responsive."))), deadline);
+      void work.then((value) => finish(() => resolve(value)), (error: unknown) => finish(() => reject(error)));
+    });
+  }
   private hasGodotNativeExtension(): boolean {
     const caps = this.ready?.capabilities; if (!caps) return false;
     const experimental = caps.experimental;

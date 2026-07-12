@@ -59,3 +59,46 @@ Result: 24 files passed, 2 skipped; 206 tests passed, 2 skipped.
 ## Concerns
 
 None. The only scope expansion is the minimal transport write-completion integration fix described above.
+
+## Review Fixes — 2026-07-12
+
+### RED evidence
+
+Added regression tests before implementation for stale replay publication, close-during-replay, failed first connection recovery, invalid initialize recovery, bounded external hooks, and stalled notification writes.
+
+Command: `cd server && npm test -- --run tests/lsp-session.test.ts tests/lsp-transport.test.ts`
+
+Result: exit 1; 5 failed and 29 passed. Exact failures:
+
+- replay completion changed an explicitly closed session from `exited` back to `ready`;
+- `beforeConnect` never settled and timed out the Vitest test itself at 5000 ms;
+- first socket rejection remained in `connecting` rather than recovering;
+- invalid initialize remained in `initializing` rather than recovering;
+- stalled notification write never settled and timed out the Vitest test itself at 5000 ms.
+
+The first GREEN attempt exposed one additional bounded-reconnect regression (1 delay observed instead of 8) and TypeScript rejected the generalized close reason. Both were corrected before final verification.
+
+### GREEN evidence
+
+Expanded focused command: `cd server && npm test -- --run tests/lsp-session.test.ts tests/lsp-transport.test.ts`
+
+Result: 2 files passed; 38 tests passed. Coverage now also includes disconnect during a controlled replay, ensuring a stale replay cannot close generation 3; replay-hook timeout; before-connect timeout; connect rejection; initialize error, timeout, and invalid result recovery; and fail-closed stalled notification write behavior.
+
+Typecheck: `npm run typecheck` passed.
+
+Build: `npm run build` passed.
+
+Required full server suite, run once after the final corrections: `npm test -- --run` passed with 24 files passed, 2 skipped; 216 tests passed, 2 skipped.
+
+`git diff --check` passed with only Git LF-to-CRLF advisories.
+
+### Review-fix implementation notes
+
+- Every externally awaited initialization phase is followed by attachment, state, closing, and generation ownership checks before later state can be published.
+- Failed attempts close only the transport generation they own, release cached readiness, and enter bounded reconnect without allowing an older replay failure to close a newer transport.
+- `beforeConnect`, socket creation, and replay use the named finite external-phase deadline.
+- Notification write completion uses the named `writeCompletionMs` limit, validates and clamps it to transport request bounds, and fails the transport closed on timeout while safely ignoring a late callback.
+
+### Review-fix concerns
+
+None.

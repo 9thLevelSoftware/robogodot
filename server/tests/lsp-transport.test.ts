@@ -1,4 +1,5 @@
 import { connect } from "node:net";
+import { Duplex } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { LspTransport } from "../src/lsp/transport.js";
 import { LSP_LIMITS } from "../src/lsp/protocol.js";
@@ -14,6 +15,17 @@ async function setup(options = {}) {
 afterEach(async () => { await Promise.all(mocks.splice(0).map((m) => m.stop())); });
 
 describe("LspTransport", () => {
+  it("fails closed when notification write completion stalls", async () => {
+    class StalledDuplex extends Duplex {
+      _read(): void {}
+      _write(_chunk: Buffer, _encoding: BufferEncoding, _callback: (error?: Error | null) => void): void {}
+    }
+    const transport = new LspTransport({ ...LSP_LIMITS, minRequestMs: 10, defaultRequestMs: 20, writeCompletionMs: 10 });
+    transport.attach(new StalledDuplex(), 1);
+    await expect(transport.notify("initialized", {})).rejects.toMatchObject({ code: "timeout" });
+    expect(transport.isAttached).toBe(false);
+    await expect(transport.close()).resolves.toBeUndefined();
+  });
   it("uses UTF-8 byte length and correlates out-of-order responses", async () => {
     const { mock, transport } = await setup();
     const first = transport.request<string>("alpha", { text: "é" }, 1_000);

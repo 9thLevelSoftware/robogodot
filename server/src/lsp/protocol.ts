@@ -5,6 +5,7 @@ export const LSP_LIMITS = {
   defaultRequestMs: 5_000,
   minRequestMs: 100,
   maxRequestMs: 15_000,
+  writeCompletionMs: 1_000,
 } as const;
 
 export interface LspNotification { generation: number; method: string; params?: unknown }

@@ -5,10 +5,12 @@ import { LSP_LIMITS, parseJsonRpcEnvelope, type LspNotification, type LspRespons
 interface TransportOptions {
   maxFrameBytes: number; maxBufferBytes: number; maxPending: number;
   defaultRequestMs?: number; minRequestMs?: number; maxRequestMs?: number;
+  writeCompletionMs?: number;
 }
 interface NormalizedTransportOptions {
   readonly maxFrameBytes: number; readonly maxBufferBytes: number; readonly maxPending: number;
   readonly defaultRequestMs: number; readonly minRequestMs: number; readonly maxRequestMs: number;
+  readonly writeCompletionMs: number;
 }
 interface Pending { resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout; generation: number }
 
@@ -36,6 +38,7 @@ export class LspTransport {
       defaultRequestMs: options.defaultRequestMs ?? LSP_LIMITS.defaultRequestMs,
       minRequestMs: options.minRequestMs ?? LSP_LIMITS.minRequestMs,
       maxRequestMs: options.maxRequestMs ?? LSP_LIMITS.maxRequestMs,
+      writeCompletionMs: Math.min(options.maxRequestMs ?? LSP_LIMITS.maxRequestMs, Math.max(options.minRequestMs ?? LSP_LIMITS.minRequestMs, options.writeCompletionMs ?? LSP_LIMITS.writeCompletionMs)),
     });
   }
   get generation(): number { return this.currentGeneration; }
@@ -72,14 +75,21 @@ export class LspTransport {
     catch (error) { throw error instanceof GodotMcpError ? error : protocolError("LSP notification is not JSON-serializable."); }
     const socket = this.socket;
     await new Promise<void>((resolve, reject) => {
-      try { socket.write(frame, (error) => error ? reject(notConnected(error.message)) : resolve()); }
-      catch { reject(notConnected()); }
+      let settled = false;
+      let timer: NodeJS.Timeout | undefined;
+      const finish = (error?: Error) => { if (settled) return; settled = true; if (timer) clearTimeout(timer); error ? reject(error) : resolve(); };
+      timer = setTimeout(() => {
+        const error = new GodotMcpError("timeout", `LSP notification ${method} write timed out.`, "Retry after confirming the Godot language server is responsive.");
+        this.fail(error); finish(error);
+      }, this.options.writeCompletionMs);
+      try { socket.write(frame, (error) => finish(error ? notConnected(error.message) : undefined)); }
+      catch { finish(notConnected()); }
     });
   }
   onNotification(listener: (event: LspNotification) => void): () => void { this.notificationListeners.add(listener); return () => this.notificationListeners.delete(listener); }
   onClosed(listener: (error: Error) => void): () => void { this.closedListeners.add(listener); return () => this.closedListeners.delete(listener); }
 
-  async close(reason = notConnected("Godot language server connection closed.")): Promise<void> {
+  async close(reason: Error = notConnected("Godot language server connection closed.")): Promise<void> {
     const socket = this.socket; if (!socket) return;
     this.closing = true; this.fail(reason); socket.destroy();
   }
@@ -93,6 +103,7 @@ export class LspTransport {
       options.defaultRequestMs ?? LSP_LIMITS.defaultRequestMs,
       options.minRequestMs ?? LSP_LIMITS.minRequestMs,
       options.maxRequestMs ?? LSP_LIMITS.maxRequestMs];
+    values.push(options.writeCompletionMs ?? LSP_LIMITS.writeCompletionMs);
     const [frame, buffer, , defaultMs, minMs, maxMs] = values as [number, number, number, number, number, number];
     if (values.some((value) => !Number.isFinite(value) || !Number.isInteger(value) || value <= 0)
       || frame > buffer || minMs > defaultMs || defaultMs > maxMs) {
