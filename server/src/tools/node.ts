@@ -13,6 +13,7 @@ const nodeName = utf8("node name", 255);
 const propertyName = utf8("property name", 256);
 const methodName = utf8("method name", 256);
 const className = utf8("class name", 255);
+const projectPath = utf8("resource path", 1024).refine(path => path.startsWith("res://") && !path.includes("\\") && path.slice(6).split("/").every(p => p !== "" && p !== "." && p !== ".."), "Path must be canonical res://.");
 const pathResponse = z.object({ path: nodePath }).strict();
 const setResponse = z.object({ path: nodePath, property: propertyName, before: variantLiteralSchema, after: variantLiteralSchema }).strict();
 const callResponse = z.object({ path: nodePath, method: methodName, value: variantLiteralSchema }).strict();
@@ -41,4 +42,5 @@ export function registerNodeTools(server: McpServer, bridge: CoreBridge, lane: M
       return callCurated(bridge, "edit.node_call_readonly", input, callResponse);
     },
   });
+  mutation("godot_scene_instance", "edit.node_instance", z.object({ parent: nodePath, scenePath: projectPath, name: nodeName.optional() }).strict(), z.object({ path: nodePath, type: className, scenePath: projectPath }).strict(), i => ["scene", `node:${i.parent}`, "resources"]);
 }

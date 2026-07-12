@@ -8,6 +8,7 @@ import type { DocsIndex } from "./docs/class-docs.js";
 import { MutationLane } from "./mutation/lane.js";
 import { registerNodeTools } from "./tools/node.js";
 import { registerSceneTools } from "./tools/scene.js";
+import { registerSignalTools } from "./tools/signal.js";
 
 export interface ServerDependencies { bridge?: CoreBridge; mode?: SafetyMode; docsLoader?: () => Promise<DocsIndex> }
 
@@ -22,7 +23,9 @@ export function createServer(dependencies: ServerDependencies): McpServer {
   registerCoreTools(server, bridge);
   registerScriptTool(server, bridge, dependencies.mode ?? "full");
   registerIntrospectionTools(server, bridge, dependencies.docsLoader);
-  registerNodeTools(server, bridge, new MutationLane());
+  const mutationLane = new MutationLane();
+  registerNodeTools(server, bridge, mutationLane);
   registerSceneTools(server, bridge);
+  registerSignalTools(server, bridge, mutationLane);
   return server;
 }

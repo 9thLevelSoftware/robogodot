@@ -78,6 +78,42 @@ func duplicate_node(source: Node, parent: Node, duplicate_flags: int, requested_
 	if result.ok: result.node = copy
 	return result
 
+func instance_scene(parent: Node, instance: Node, persistent_owner: Node, action_name: String) -> Dictionary:
+	if not is_instance_valid(parent) or not is_instance_valid(instance) or instance.get_parent() != null or instance.scene_file_path.is_empty():
+		return _failure("A valid parent and detached PackedScene instance are required.")
+	_undo.create_action(action_name, UndoRedo.MERGE_DISABLE, parent)
+	_undo.add_do_method(parent, "add_child", instance, true)
+	if is_instance_valid(persistent_owner): _undo.add_do_property(instance, "owner", persistent_owner)
+	_undo.add_do_reference(instance)
+	_undo.add_undo_method(parent, "remove_child", instance)
+	_undo.commit_action()
+	_last_history_target = parent
+	return {"ok": true}
+
+func connect_signal(source: Object, signal_name: StringName, callable: Callable, flags: int, action_name: String) -> Dictionary:
+	if not _valid_signal_callable(source, signal_name, callable) or source.is_connected(signal_name, callable):
+		return _failure("A live signal and unconnected callable are required.")
+	_undo.create_action(action_name, UndoRedo.MERGE_DISABLE, source)
+	_undo.add_do_method(source, "connect", signal_name, callable, flags)
+	_undo.add_undo_method(source, "disconnect", signal_name, callable)
+	_undo.commit_action()
+	_last_history_target = source
+	return {"ok": true}
+
+func disconnect_signal(source: Object, signal_name: StringName, callable: Callable, action_name: String) -> Dictionary:
+	if not _valid_signal_callable(source, signal_name, callable) or not source.is_connected(signal_name, callable):
+		return _failure("A live signal and connected callable are required.")
+	var flags := -1
+	for entry in source.get_signal_connection_list(signal_name):
+		if entry.callable == callable: flags = int(entry.flags); break
+	if flags < 0: return _failure("The exact live connection could not be snapshotted.")
+	_undo.create_action(action_name, UndoRedo.MERGE_DISABLE, source)
+	_undo.add_do_method(source, "disconnect", signal_name, callable)
+	_undo.add_undo_method(source, "connect", signal_name, callable, flags)
+	_undo.commit_action()
+	_last_history_target = source
+	return {"ok": true, "flags": flags}
+
 func set_property(target: Object, property: StringName, value: Variant, action_name: String) -> Dictionary:
 	if not is_instance_valid(target) or not _is_writable_property(target, property):
 		return _failure("A valid target and property are required.")
@@ -105,6 +141,11 @@ func _is_writable_property(target: Object, property: StringName) -> bool:
 
 func _failure(hint: String) -> Dictionary:
 	return {"ok": false, "hint": hint}
+
+func _valid_signal_callable(source: Object, signal_name: StringName, callable: Callable) -> bool:
+	if not is_instance_valid(source) or not source.has_signal(signal_name) or not callable.is_valid(): return false
+	var target := callable.get_object()
+	return is_instance_valid(target) and target.has_method(callable.get_method())
 
 func _add_do_owner_recursive(node: Node, owner: Node) -> void:
 	_undo.add_do_property(node, "owner", owner)

@@ -55,8 +55,9 @@ describe("freshly built stdio server", () => {
       "godot_connection_status", "godot_get_version", "godot_ping", "godot_script_run",
       "godot_api_list_classes", "godot_api_describe_class", "godot_api_search", "godot_api_class_doc",
       "godot_node_add", "godot_node_delete", "godot_node_reparent", "godot_node_rename",
-      "godot_node_duplicate", "godot_node_get", "godot_node_set_property", "godot_node_call_method",
+      "godot_node_duplicate", "godot_node_get", "godot_node_set_property", "godot_node_call_method", "godot_scene_instance",
       "godot_scene_open", "godot_scene_new", "godot_scene_save", "godot_scene_tree", "godot_scene_current",
+      "godot_signal_list", "godot_signal_connect", "godot_signal_disconnect",
     ]);
   });
 

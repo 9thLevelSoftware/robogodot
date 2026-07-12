@@ -163,6 +163,54 @@ static func node_duplicate(params: Dictionary) -> Dictionary:
 	if not result.ok: return result
 	return _success({"path": _path(result.node)})
 
+static func node_instance(params: Dictionary) -> Dictionary:
+	var parent := _node(params.get("parent")); var path := Compat.canonical_project_path(params.get("scenePath"))
+	if parent == null or path.is_empty() or not FileAccess.file_exists(path): return _failure("Provide a live parent and existing canonical res:// scene path.")
+	var resource := ResourceLoader.load(path, "PackedScene", ResourceLoader.CACHE_MODE_IGNORE)
+	if not resource is PackedScene: return _failure("The resource is not a PackedScene.")
+	var instance := (resource as PackedScene).instantiate()
+	if instance == null: return _failure("The PackedScene could not be instantiated.")
+	if params.has("name"):
+		var requested = params.get("name")
+		if not requested is String or requested.is_empty() or requested.validate_node_name() != requested: instance.free(); return _failure("Provide a valid instance name.")
+		instance.name = requested
+	var result: Dictionary = _controller().instance_scene(parent, instance, _root(), "Instance %s" % path)
+	if not result.ok: instance.free(); return result
+	return _success({"path": _path(instance), "type": instance.get_class(), "scenePath": path})
+
+static func signal_list(params: Dictionary) -> Dictionary:
+	var source := _node(params.get("path")); if source == null: return _failure("Provide a live source node.")
+	var cursor_text := String(params.get("cursor", "0")); var limit := clampi(int(params.get("limit", 100)), 1, 500)
+	if not cursor_text.is_valid_int() or str(cursor_text.to_int()) != cursor_text or cursor_text.to_int() < 0 or cursor_text.length() > 10: return _failure("Cursor must be canonical non-negative decimal.")
+	var descriptors := source.get_signal_list(); descriptors.sort_custom(func(a, b): return String(a.name) < String(b.name))
+	var offset := cursor_text.to_int(); if offset > 100000: return _failure("Cursor exceeds bounded skip limit.")
+	var output: Array[Dictionary] = []
+	for index in range(offset, mini(descriptors.size(), offset + limit)):
+		var descriptor := descriptors[index] as Dictionary; var arguments: Array[Dictionary] = []
+		for argument in descriptor.get("args", []).slice(0, 64): arguments.append({"name": String(argument.name), "type": int(argument.type)})
+		var connections: Array[Dictionary] = []
+		for entry in source.get_signal_connection_list(StringName(descriptor.name)).slice(0, 256):
+			var cb := entry.callable as Callable; var target = cb.get_object()
+			if target is Node and _root() != null and (target == _root() or _root().is_ancestor_of(target)): connections.append({"callable": {"target": _path(target), "method": String(cb.get_method())}, "flags": int(entry.flags)})
+		connections.sort_custom(func(a, b): return [a.callable.target, a.callable.method, a.flags] < [b.callable.target, b.callable.method, b.flags])
+		output.append({"name": String(descriptor.name), "arguments": arguments, "connections": connections})
+	var next := offset + output.size(); var response := {"signals": output, "truncated": next < descriptors.size()}
+	if response.truncated: response.nextCursor = str(next)
+	if JSON.stringify(response).to_utf8_buffer().size() > 261632: return _failure("Signal page exceeds safe response envelope; request a smaller limit.")
+	return _success(response)
+
+static func signal_connect(params: Dictionary) -> Dictionary: return _signal_mutation(params, true)
+static func signal_disconnect(params: Dictionary) -> Dictionary: return _signal_mutation(params, false)
+static func _signal_mutation(params: Dictionary, connecting: bool) -> Dictionary:
+	var source := _node(params.get("source")); var signal_name = params.get("signal"); var callable_data = params.get("callable")
+	if source == null or not signal_name is String or not callable_data is Dictionary: return _failure("Provide a live source, signal, and callable.")
+	var target := _node(callable_data.get("target")); var method = callable_data.get("method")
+	if target == null or not method is String or not source.has_signal(signal_name) or not target.has_method(method): return _failure("Signal and callable must resolve live.")
+	var cb := Callable(target, StringName(method)); var flags := int(params.get("flags", 0))
+	var result: Dictionary = _controller().connect_signal(source, StringName(signal_name), cb, flags, "Connect %s" % signal_name) if connecting else _controller().disconnect_signal(source, StringName(signal_name), cb, "Disconnect %s" % signal_name)
+	if not result.ok: return result
+	return _success({"source": _path(source), "signal": signal_name, "callable": {"target": _path(target), "method": method}, "flags": flags if connecting else int(result.flags)})
+
 static func node_get(params: Dictionary) -> Dictionary:
 	var node := _node(params.get("path")); if node == null: return _failure(_tree_hint())
 	var properties := {}; for entry in node.get_property_list():

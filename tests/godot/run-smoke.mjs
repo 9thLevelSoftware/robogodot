@@ -34,6 +34,7 @@ try {
   await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/phase_3_edit_controller_smoke.gd")], { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" });
   await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/phase_3_node_smoke.gd")], { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" });
   await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/phase_3_scene_smoke.gd")], { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" });
+  await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/phase_3_signal_instance_smoke.gd")], { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" });
   const lifecyclePort = process.env.GODOT_MCP_SMOKE_PORT ?? String(await freePort());
   if (!/^\d+$/.test(lifecyclePort) || Number(lifecyclePort) < 1 || Number(lifecyclePort) > 65535) throw new Error("GODOT_MCP_SMOKE_PORT must be an integer from 1 to 65535");
   const missingTokenEnv = { ...process.env, GODOT_MCP_PORT: lifecyclePort };

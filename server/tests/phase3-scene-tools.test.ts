@@ -15,7 +15,7 @@ describe("Phase 3 scene tools", () => {
   it("registers five scene tools with lifecycle, persistence, and read annotations", async () => {
     const h = await harness();
     try {
-      const tools = (await h.client.listTools()).tools.slice(16);
+      const tools = (await h.client.listTools()).tools.slice(17, 22);
       expect(tools.map(t => t.name)).toEqual(["godot_scene_open", "godot_scene_new", "godot_scene_save", "godot_scene_tree", "godot_scene_current"]);
       expect(tools.every(t => t.inputSchema.additionalProperties === false)).toBe(true);
       const lifecycle = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
