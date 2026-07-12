@@ -56,6 +56,25 @@ describe("LspDocuments", () => {
     await expect(docs.sync("res://phase4/escape/secret.gd")).rejects.toMatchObject({ code: "invalid_args" });
   });
 
+  it("only synchronizes case-appropriate GDScript files", async () => {
+    const { root, session } = await setup(); const docs = new LspDocuments(root, session);
+    await writeFile(join(root, "phase4", "notes.txt"), "extends Node");
+    await writeFile(join(root, "phase4", "upper.GD"), "extends Node");
+    await expect(docs.sync("res://phase4/notes.txt")).rejects.toMatchObject({ code: "invalid_args" });
+    await expect(docs.sync("res://phase4/upper.GD")).rejects.toMatchObject({ code: "invalid_args" });
+  });
+
+  it("denies a target whose canonical path changes after its handle is opened", async () => {
+    const { root, session } = await setup(); const file = join(root, "phase4", "race.gd"); await writeFile(file, "extends Node");
+    const outside = await mkdtemp(join(tmpdir(), "robogodot-race-")); roots.push(outside); const escaped = join(outside, "race.gd"); await writeFile(escaped, "escape");
+    let targetCalls = 0;
+    const docs = new LspDocuments(root, session, { realpath: async (value) => {
+      if (value === file && ++targetCalls === 2) return escaped;
+      return (await import("node:fs/promises")).realpath(value);
+    } });
+    await expect(docs.sync("res://phase4/race.gd")).rejects.toMatchObject({ code: "invalid_args" });
+  });
+
   it("validates UTF-16 positions and excludes line terminators", async () => {
     const { root, session } = await setup(); await writeFile(join(root, "phase4", "unicode.gd"), "a😀b\r\nnext", "utf8");
     const docs = new LspDocuments(root, session); const document = await docs.sync("res://phase4/unicode.gd");

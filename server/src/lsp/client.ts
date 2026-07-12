@@ -18,5 +18,5 @@ export class LspClient {
   request<T>(method: string, params: unknown, timeoutMs?: number): Promise<T> { return this.session.request<T>(method, params, timeoutMs); }
   supports(capability: LspCapability): boolean { return this.session.supports(capability); }
   ensureReady() { return this.session.ensureReady(); }
-  async close(): Promise<void> { this.unsubscribe(); await this.session.close(); }
+  async close(): Promise<void> { this.unsubscribe(); this.diagnostics.close(); await this.session.close(); }
 }

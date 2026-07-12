@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFile, realpath, stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { open, realpath as fsRealpath } from "node:fs/promises";
+import { extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { GodotMcpError } from "../errors.js";
 
@@ -13,6 +13,7 @@ interface DocumentSession {
   notifyForGeneration?(generation: number, method: string, params: unknown): Promise<void>;
 }
 type StoredDocument = SyncedDocument & { hash: string };
+export interface LspDocumentOptions { realpath?: (path: string) => Promise<string> }
 
 const invalid = (message: string) => new GodotMcpError("invalid_args", message, "Pass a res:// URI for a readable file inside the project root.");
 const hash = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
@@ -20,12 +21,14 @@ const hash = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex")
 export class LspDocuments {
   private readonly documents = new Map<string, StoredDocument>();
   private realRoot: Promise<string>;
-  constructor(private readonly projectRoot: string, private readonly session: DocumentSession) { this.realRoot = realpath(projectRoot); }
+  private readonly canonicalize: (path: string) => Promise<string>;
+  constructor(private readonly projectRoot: string, private readonly session: DocumentSession, options: LspDocumentOptions = {}) {
+    this.canonicalize = options.realpath ?? fsRealpath; this.realRoot = this.canonicalize(projectRoot);
+  }
 
   async sync(uri: string): Promise<SyncedDocument> {
-    const target = await this.resolveUri(uri);
-    const bytes = await readFile(target).catch(() => { throw invalid("Document target does not exist or cannot be read."); });
-    if (bytes.length > DOCUMENT_LIMITS.maxBytes) throw invalid("Document exceeds the 2 MiB synchronization limit.");
+    const { root, target } = await this.resolveUri(uri);
+    const bytes = await this.readAuthorizedTarget(root, target);
     let text: string;
     try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { throw invalid("Document is not valid UTF-8."); }
     const ready = await this.session.ensureReady();
@@ -61,7 +64,7 @@ export class LspDocuments {
     return undefined;
   }
 
-  private async resolveUri(uri: string): Promise<string> {
+  private async resolveUri(uri: string): Promise<{ root: string; target: string }> {
     if (typeof uri !== "string" || Buffer.byteLength(uri, "utf8") > DOCUMENT_LIMITS.maxUriBytes || !uri.startsWith("res://")) throw invalid("Document URI must be a bounded res:// URI.");
     const encoded = uri.slice(6); if (!encoded || encoded.startsWith("/") || encoded.startsWith("\\")) throw invalid("Document URI must be project-relative.");
     let decoded: string; try { decoded = decodeURIComponent(encoded); } catch { throw invalid("Document URI contains invalid encoding."); }
@@ -70,11 +73,29 @@ export class LspDocuments {
     if (segments.length > DOCUMENT_LIMITS.maxSegments || segments.some((part) => part === "" || part === "." || part === "..")) throw invalid("Document URI contains invalid path segments.");
     const root = await this.realRoot.catch(() => { throw invalid("Project root is unavailable."); });
     const candidate = resolve(root, ...segments); if (isAbsolute(decoded)) throw invalid("Document URI must be project-relative.");
-    const target = await realpath(candidate).catch(() => { throw invalid("Document target does not exist."); });
-    const info = await stat(target).catch(() => { throw invalid("Document target is unavailable."); }); if (!info.isFile()) throw invalid("Document target must be a file.");
+    const target = await this.canonicalize(candidate).catch(() => { throw invalid("Document target does not exist."); });
     const rel = relative(root, target);
     if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw invalid("Document target escapes the project root.");
-    return target;
+    if (extname(target) !== ".gd") throw invalid("Document target must have a .gd extension.");
+    return { root, target };
+  }
+
+  private async readAuthorizedTarget(root: string, target: string): Promise<Buffer> {
+    const handle = await open(target, "r").catch(() => { throw invalid("Document target does not exist or cannot be read."); });
+    try {
+      const info = await handle.stat(); if (!info.isFile()) throw invalid("Document target must be a regular file.");
+      // This narrows mutable-path races, but portable Node cannot atomically bind realpath authorization to open(2).
+      const revalidated = await this.canonicalize(target).catch(() => { throw invalid("Document target changed during authorization."); });
+      const rel = relative(root, revalidated);
+      if (revalidated !== target || !rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw invalid("Document target changed during authorization.");
+      if (info.size > DOCUMENT_LIMITS.maxBytes) throw invalid("Document exceeds the 2 MiB synchronization limit.");
+      const buffer = Buffer.allocUnsafe(DOCUMENT_LIMITS.maxBytes + 1); let offset = 0;
+      while (offset < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset); if (bytesRead === 0) break; offset += bytesRead;
+      }
+      if (offset > DOCUMENT_LIMITS.maxBytes) throw invalid("Document exceeds the 2 MiB synchronization limit.");
+      return buffer.subarray(0, offset);
+    } finally { await handle.close(); }
   }
 
   private publicDocument(document: StoredDocument): SyncedDocument {

@@ -71,3 +71,31 @@ Result: exit 0; 3 files passed, 25 tests passed.
 - Verified reconnect replay uses the supplied generation and preserves sorted URI order and current versions/text.
 - Verified cached diagnostics from a different generation cannot satisfy a fresh or stale wait.
 - No unresolved correctness concerns found. Live Godot integration was not required or run; behavior is covered with filesystem and session/mock tests.
+
+## Review fixes: extension, bounded waits, normalization, and path-race narrowing
+
+### Review RED evidence
+
+1. `npm test -- --run tests/lsp-documents.test.ts tests/lsp-diagnostics.test.ts` exited 1 with six intended failures: existing `.txt` synchronized, named waiter limits/close were absent, and retained related diagnostics were not normalized.
+2. After adding the client shutdown test while temporarily retaining the old client close behavior, `npm test -- --run tests/lsp-diagnostics.test.ts` exited 1 by timing out: the pending diagnostics wait remained live after `LspClient.close()`.
+3. `npm test -- --run tests/lsp-documents.test.ts` exited 1 because the injected canonical-target change after handle open was not observed and synchronization incorrectly resolved.
+4. The final normalization boundary RED, `npm test -- --run tests/lsp-diagnostics.test.ts`, exited 1 with two intended failures: tag `999` was retained and an oversized publication URI incremented the retained publication sequence.
+5. The close-state RED, `npm test -- --run tests/lsp-diagnostics.test.ts`, exited 1 because close left publication sequence state populated. Rejection expectations were then attached before invoking close so cleanup rejection testing produces no unhandled promises.
+
+### Review GREEN evidence
+
+- Added exact lowercase `.gd` extension enforcement after canonical target validation.
+- Added named 100..15,000 ms wait bounds, a 128-waiter cap, fail-closed excess handling, and idempotent `LspDiagnostics.close(reason?)` cleanup. `LspClient.close()` now unsubscribes, closes diagnostics, then closes the session.
+- Replaced diagnostic object spreading with narrow normalization. Every retained string is capped: primary and related messages at 8,192 UTF-8 bytes; code/source/publication URI/related location URI at 1,024 bytes. Ranges, severity, tags, and numeric/string code are validated and copied; unknown/nested fields are dropped. Diagnostic and related-entry count caps remain 500 and 32.
+- Reads now open the authorized canonical path, fstat the same handle as a regular file, immediately revalidate canonical path identity and root containment, and read bounded bytes from that same handle with guaranteed handle close.
+
+Final review verification:
+
+- Focused `documents + diagnostics + session`: 3 files passed, 32 tests passed.
+- `npm run typecheck`: exit 0.
+- `npm run build`: exit 0.
+- Final review-cycle full suite run after all changes: 26 files passed, 2 skipped; 233 tests passed, 2 skipped.
+
+### Remaining filesystem limitation
+
+Portable Node APIs cannot make mutable pathname authorization and `open()` fully atomic across platforms. The post-open canonical revalidation and same-handle read narrow the race but do not claim to eliminate every hostile-filesystem substitution. Broader hostile-filesystem hardening remains explicitly deferred to Phase 6/7.
