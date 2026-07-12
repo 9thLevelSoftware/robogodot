@@ -301,7 +301,8 @@ static func _signal_mutation(params: Dictionary, connecting: bool) -> Dictionary
 	var target := _node(callable_data.get("target")); var method = callable_data.get("method")
 	if target == null or not method is String or not source.has_signal(signal_name) or not target.has_method(method): return _failure("Signal and callable must resolve live.")
 	var cb := Callable(target, StringName(method)); var raw_flags = params.get("flags", 0); var flags := int(raw_flags)
-	if connecting and (not raw_flags is int or flags < 0 or flags > 15): return _failure("Connect flags must be an integer using only the Godot ConnectFlags mask 0..15.")
+	var flags_are_integral := raw_flags is int or (raw_flags is float and is_equal_approx(raw_flags, float(flags)))
+	if connecting and (not flags_are_integral or flags < 0 or flags > 15): return _failure("Connect flags must be an integer using only the Godot ConnectFlags mask 0..15.")
 	var result: Dictionary = _controller().connect_signal(source, StringName(signal_name), cb, flags, "Connect %s" % signal_name) if connecting else _controller().disconnect_signal(source, StringName(signal_name), cb, "Disconnect %s" % signal_name)
 	if not result.ok: return result
 	return _success({"source": _path(source), "signal": signal_name, "callable": {"target": _path(target), "method": method}, "flags": flags if connecting else int(result.flags)})

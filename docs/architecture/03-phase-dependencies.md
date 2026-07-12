@@ -34,7 +34,7 @@ flowchart TB
 
   %% Phases 3–6 share the same dependency depth so Dagre keeps them on one rank.
   %% atlas-node: PHASE-03
-  PHASE_03["PHASE-03 · Curated Tier A editing<br/>EditController + UndoRedo"]
+  PHASE_03["PHASE-03 · 23 curated tools<br/>shared FIFO lane · EditController + UndoRedo"]
   %% atlas-node: PHASE-04
   PHASE_04["PHASE-04 · Code intelligence<br/>LSP client + document synchronization"]
   %% atlas-node: PHASE-05
@@ -75,7 +75,7 @@ flowchart TB
   %% atlas-flow: FLOW-PH-013
   PHASE_02 -->|"execution guard"| PHASE_07
   %% atlas-flow: FLOW-PH-014
-  PHASE_03 -->|"Tier A tools"| PHASE_07
+  PHASE_03 -->|"23 curated tools · shared mutation lane"| PHASE_07
   %% atlas-flow: FLOW-PH-015
   PHASE_04 -->|"LSP tools"| PHASE_07
   %% atlas-flow: FLOW-PH-016

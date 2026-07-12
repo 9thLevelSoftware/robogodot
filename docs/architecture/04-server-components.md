@@ -40,7 +40,7 @@ flowchart TB
       %% atlas-node: CMP-SAFETY
       CMP_SAFETY["CMP-SAFETY<br/>mode · annotation<br/>path + exec policy"]
       %% atlas-node: CMP-REQUEST-QUEUE
-      CMP_REQUEST_QUEUE["CMP-REQUEST-QUEUE<br/>single mutation lane"]
+      CMP_REQUEST_QUEUE["CMP-REQUEST-QUEUE<br/>one shared FIFO MutationLane"]
       %% atlas-node: CMP-READ-CACHE
       CMP_READ_CACHE["CMP-READ-CACHE<br/>read cache + invalidation"]
       %% atlas-node: CMP-AUDIT
@@ -67,9 +67,9 @@ flowchart TB
     %% atlas-node: CMP-EXEC-COMMANDS
     CMP_EXEC_COMMANDS["CMP-EXEC-COMMANDS<br/>Tier B editor-script execution"]
     %% atlas-node: CMP-EDIT-COMMANDS
-    CMP_EDIT_COMMANDS["CMP-EDIT-COMMANDS<br/>Tier A curated mutations"]
+    CMP_EDIT_COMMANDS["CMP-EDIT-COMMANDS<br/>23 curated tools<br/>edit.gd"]
     %% atlas-node: CMP-EDIT-CONTROLLER
-    CMP_EDIT_CONTROLLER["CMP-EDIT-CONTROLLER<br/>validated mutation actions"]
+    CMP_EDIT_CONTROLLER["CMP-EDIT-CONTROLLER<br/>exact do/undo actions<br/>fail-closed setting recovery"]
     %% atlas-node: CMP-GODOT-COMPAT
     CMP_GODOT_COMPAT["CMP-GODOT-COMPAT<br/>version-sensitive shim<br/>godot_compat.gd"]
   end

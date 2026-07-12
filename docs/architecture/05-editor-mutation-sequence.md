@@ -114,8 +114,8 @@ sequenceDiagram
     Note over EDIT,UNDO_REDO: Separate source-conflict overlay — not a post-response happy-path step
     opt Destructive project-setting mutation requested
       %% atlas-flow: FLOW-MUT-018
-      EDIT->>EDIT: [UNRESOLVED] destructive project-setting exception (Q-005)
-      Note over EDIT,UNDO_REDO: [UNRESOLVED] Q-005 — Tier A requires exact undo, but the source permits a destructive non-undoable exception
+      EDIT->>EDIT: [ACCEPTED] reject unless prior setting presence/value restores exactly (Q-005)
+      Note over EDIT,UNDO_REDO: [ACCEPTED] persistence failure recovers exactly or blocks later setting mutations until restart
     end
   end
 ```
@@ -160,7 +160,7 @@ The participants below are indexed in the [Traceability index](traceability.md#a
 | `FLOW-MUT-015` | `CMP-REQUEST-QUEUE` → `CMP-READ-CACHE` | Invalidate affected cache tags after commit. | Explicit | Phases 3 and 7 / tagged cache invalidation | Phase 3 §§6,10; Phase 7 §§4,7 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-MUT-016` | `CMP-REGISTRY` → `CMP-AUDIT` | Append redacted audit outcome. | Explicit | Phase 7 / audit middleware | Phase 7 §§4–6 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-MUT-017` | `CMP-REGISTRY` → `CNT-MCP-CLIENT` | Return `structuredContent`. | Explicit | Phases 1 and 3 / MCP structured result | Phase 1 §4; Phase 3 §4 · [trace](traceability.md#architecture-atlas-traceability) |
-| `FLOW-MUT-018` | `CMP-EDIT-CONTROLLER` → `CMP-EDIT-CONTROLLER` | Destructive project-setting exception. | Unresolved | Phase 3 / Tier A undo contract | Phase 3 §§1,2,5,6,9 · [Q-005](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
+| `FLOW-MUT-018` | `CMP-EDIT-CONTROLLER` → `CMP-EDIT-CONTROLLER` | Reject unless prior project-setting presence/value can be restored exactly. | Accepted | Phase 3 / Tier A undo contract | Phase 3 §§1,2,5,6,9 · [Q-005](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
 
 ## Failure ownership and consequences
 
@@ -177,5 +177,5 @@ The participants below are indexed in the [Traceability index](traceability.md#a
 
 - One policy-approved Tier A write occupies one FIFO mutation item and issues one correlated JSON-RPC call. Retries, if any, are a caller decision and cannot silently duplicate the editor action.
 - A successful curated edit creates one named undo action, registers paired do/undo operations, and commits once before cache invalidation.
-- The final red band is a documentary exception overlay, not a continuation after the client response. `FLOW-MUT-018` is **[UNRESOLVED]** under `Q-005`: the source simultaneously requires every Tier A mutation to be exactly undoable and permits a destructive project-setting exception.
+- `FLOW-MUT-018` records the accepted Q-005 resolution: project-setting writes preflight exact prior presence/value restoration and fail closed; an unproven recovery blocks later setting mutations until plugin restart.
 - Evidence status is carried in message and note text. Sequence arrows retain their ordinary call/response meaning.
