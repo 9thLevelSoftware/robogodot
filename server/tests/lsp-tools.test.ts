@@ -64,7 +64,7 @@ describe("public LSP tools", () => {
     const lsp = fake({ contents: "ok", range: { start: { line: 1_000_001, character: 0 }, end: { line: "2", character: 4 } } });
     const h = await harness(lsp); try {
       const value = await h.client.callTool({ name: "godot_lsp_hover", arguments: { uri: document.uri, position: { line: 0, character: 1 } } });
-      expect(value.structuredContent).toEqual({ found: true, contents: "ok" });
+      expect(value.structuredContent).toEqual({ found: true, contents: "ok", truncated: true });
     } finally { await h.close(); }
   });
 
@@ -120,6 +120,46 @@ describe("public LSP tools", () => {
     const lsp = fake(null); lsp.diagnostics.waitFor = vi.fn().mockResolvedValue({ uri: document.uri, generation: 2, sequence: 1, diagnostics: [], fresh: true, truncated: true, truncation: { diagnostics: true, tags: false, relatedInformation: false, strings: false, positions: false, malformed: false } });
     const h = await harness(lsp); try {
       expect(await h.client.callTool({ name: "godot_lsp_diagnostics", arguments: { uri: document.uri } })).toMatchObject({ structuredContent: { truncated: true, truncation: { diagnostics: true } } });
+    } finally { await h.close(); }
+  });
+
+  it("never reads proxied array length through a get trap", async () => {
+    let lengthGets = 0; const proxied = new Proxy([{ label: "safe" }], { get: (target, key, receiver) => { if (key === "length") { lengthGets++; throw new Error("length get"); } return Reflect.get(target, key, receiver); } });
+    const h = await harness(fake(proxied)); try {
+      expect(await h.client.callTool({ name: "godot_lsp_completion", arguments: { uri: document.uri, position: { line: 0, character: 1 } } })).toMatchObject({ structuredContent: { items: [{ label: "safe" }] } });
+    } finally { await h.close(); }
+    expect(lengthGets).toBe(0);
+  });
+
+  it("bounds documentation array work independently of byte truncation", async () => {
+    const huge = new Array(1_000_000_000); huge[0] = "first"; huge[999_999_999] = "last";
+    const h = await harness(fake({ contents: huge })); try {
+      expect(await h.client.callTool({ name: "godot_lsp_hover", arguments: { uri: document.uri, position: { line: 0, character: 1 } } })).toMatchObject({ structuredContent: { found: true, contents: "first", truncated: true } });
+    } finally { await h.close(); }
+    let lengthGets = 0; const dense = Array.from({ length: 10_000 }, () => "x"); const proxied = new Proxy(dense, { get: (target, key, receiver) => { if (key === "length") { lengthGets++; throw new Error("length get"); } return Reflect.get(target, key, receiver); } });
+    const p = await harness(fake({ contents: proxied })); try {
+      expect(await p.client.callTool({ name: "godot_lsp_hover", arguments: { uri: document.uri, position: { line: 0, character: 1 } } })).toMatchObject({ structuredContent: { found: true, truncated: true } });
+    } finally { await p.close(); }
+    expect(lengthGets).toBe(0);
+  });
+
+  it("honestly declares bounded-string and malformed-range omissions for each standard result tool", async () => {
+    const long = "€".repeat(4_000); const badRange = { start: { line: -1, character: 0 }, end: { line: 0, character: 1 } };
+    const cases = [
+      ["godot_lsp_completion", [{ label: long, textEdit: { newText: long, range: badRange } }], { uri: document.uri, position: { line: 0, character: 1 } }],
+      ["godot_lsp_hover", { contents: long, range: badRange }, { uri: document.uri, position: { line: 0, character: 1 } }],
+      ["godot_lsp_document_symbols", [{ name: long, range: badRange, location: { uri: long } }], { uri: document.uri }],
+      ["godot_lsp_workspace_symbols", [{ name: long, location: { uri: long, range: badRange } }], { query: "x" }],
+    ] as const;
+    for (const [name, result, args] of cases) { const h = await harness(fake(result)); try { expect(await h.client.callTool({ name, arguments: args })).toMatchObject({ structuredContent: { truncated: true } }); } finally { await h.close(); } }
+  });
+
+  it("omits nonfinite native values and declares bounded tree omissions", async () => {
+    const h = await harness(fake({ name: "x".repeat(9_000), finite: 1, nan: Number.NaN, infinity: Number.POSITIVE_INFINITY })); try {
+      const result = await h.client.callTool({ name: "godot_lsp_native_symbol", arguments: { nativeClass: "Node" } });
+      expect(result).toMatchObject({ structuredContent: { found: true, truncated: true, symbol: { finite: 1 } } });
+      expect((result.structuredContent as any).symbol).not.toHaveProperty("nan");
+      expect(result.content[0]).toEqual({ type: "text", text: JSON.stringify(result.structuredContent) });
     } finally { await h.close(); }
   });
 });

@@ -47,6 +47,13 @@ describe("LspDiagnostics", () => {
     expect(snapshot).toMatchObject({ truncated: true, truncation: { tags: true, positions: true, malformed: true } });
   });
 
+  it("does not execute array length getters while normalizing diagnostics", () => {
+    let lengthGets = 0; const diagnostics = new Proxy([{ message: "problem" }], { get: (target, key, receiver) => { if (key === "length") { lengthGets++; throw new Error("length getter"); } return Reflect.get(target, key, receiver); } });
+    const store = new LspDiagnostics(() => uri);
+    expect(() => store.accept(notification(4, "file:///project/phase4/broken.gd", diagnostics))).not.toThrow();
+    expect(lengthGets).toBe(0);
+  });
+
   it("rejects waits outside the named finite deadline bounds", async () => {
     const store = new LspDiagnostics(() => uri);
     await expect(store.waitFor(uri, 3, 0, DIAGNOSTIC_LIMITS.minWaitMs - 1)).rejects.toMatchObject({ code: "invalid_args" });

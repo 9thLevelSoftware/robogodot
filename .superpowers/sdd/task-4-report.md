@@ -79,3 +79,27 @@ Diagnostics snapshots now carry aggregate `truncated` plus category flags for di
 - Patch hygiene: `git diff --check` — passed.
 
 Review-fix concerns: none. The two skipped tests remain the repository's opt-in live tests.
+
+## Second hardening pass
+
+### RED 4 — bounded array work and complete omission reporting
+
+Added regressions covering guarded array length descriptors, throwing `get`/descriptor proxies, billion-slot sparse documentation, 10,000-item dense/proxied documentation, per-tool oversized strings and malformed ranges, incomplete symbol locations, oversized tree keys, and `NaN`/infinite native values.
+
+The initial focused run hung on the billion-slot sparse documentation array because `arrayValues` directly read and iterated `value.length`; it was terminated as the expected RED evidence. After the first implementation, focused tests still failed because hover did not declare its omitted range and the proxy observed direct length reads. A diagnostics-specific RED test also threw `Error: length getter`, proving its separate array helper had the same defect.
+
+### GREEN 4 — guarded lengths and scoped normalization state
+
+Both array helpers now obtain length only through guarded own data descriptors, validate a safe nonnegative integer, cap iteration before inspecting elements, and treat descriptor/proxy failures as omissions. Signature pair labels no longer read `.length` directly. Documentation arrays have a fixed 256-item work budget independent of their final 8,192-byte text bound.
+
+Shared string, documentation, position, range, completion, symbol, and tree normalizers now mutate scoped truncation state. Completion, hover, document symbols, workspace symbols, and native output declare all tested string/range/field/key/value omissions. Symbol locations emit only when both a bounded URI and valid range exist. Native trees omit nonfinite numbers and declare truncation; MCP text and structured output remain identical.
+
+### Second-pass verification
+
+- Focused public and diagnostics: `npm test -- --run tests/lsp-tools.test.ts tests/server.test.ts tests/mcp-stdio.test.ts tests/lsp-diagnostics.test.ts` — 4 files passed, 36 tests passed.
+- Typecheck: `npm run typecheck` — passed.
+- Build: `npm run build` — passed.
+- Full server suite: `npm test -- --run` — 27 files passed, 2 skipped; 251 tests passed, 2 skipped.
+- Patch hygiene: `git diff --check` — passed.
+
+Second-pass concerns: none. The two skipped tests remain the repository's opt-in live tests.
