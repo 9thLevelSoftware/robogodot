@@ -21,7 +21,7 @@ describe("Phase 3 signal and instance tools", () => {
   });
 
   it("maps callable, flags, pagination and scene response", async () => {
-    const call = vi.fn(async (method: string, p: any) => method === "edit.signal_list" ? { signals: [], truncated: false } : method === "edit.node_instance" ? { path: `${p.parent}/Child`, type: "Node2D", scenePath: p.scenePath } : { source: p.source, signal: p.signal, callable: p.callable, flags: p.flags ?? 0 });
+    const call = vi.fn(async (method: string, p: any) => method === "edit.signal_list" ? { signals: [], truncated: false } : method === "edit.node_instance" ? { path: `${p.parent}/Child`, type: "Node2D", scenePath: p.scenePath } : { source: p.source, signal: p.signal, callable: p.callable, flags: method === "edit.signal_connect" ? p.flags : 7 });
     const h = await harness(call); try {
       await h.client.callTool({ name: "godot_scene_instance", arguments: { parent: "/root/Main", scenePath: "res://phase3/instanced_child.tscn" } });
       expect(call).toHaveBeenLastCalledWith("edit.node_instance", { parent: "/root/Main", scenePath: "res://phase3/instanced_child.tscn" }, expect.any(Object));
@@ -29,7 +29,28 @@ describe("Phase 3 signal and instance tools", () => {
       expect(call).toHaveBeenLastCalledWith("edit.signal_list", { path: "/root/Main", cursor: "0", limit: 5 }, expect.any(Object));
       await h.client.callTool({ name: "godot_signal_connect", arguments: { source: "/root/Main", signal: "ready", callable: { target: "/root/Main/Child", method: "on_ready" }, flags: 3 } });
       expect(call).toHaveBeenLastCalledWith("edit.signal_connect", { source: "/root/Main", signal: "ready", callable: { target: "/root/Main/Child", method: "on_ready" }, flags: 3 }, expect.any(Object));
+      await h.client.callTool({ name: "godot_signal_disconnect", arguments: { source: "/root/Main", signal: "ready", callable: { target: "/root/Main/Child", method: "on_ready" } } });
+      expect(call).toHaveBeenLastCalledWith("edit.signal_disconnect", { source: "/root/Main", signal: "ready", callable: { target: "/root/Main/Child", method: "on_ready" } }, expect.any(Object));
     } finally { await h.close(); }
+  });
+
+  it("enforces ConnectFlags mask and strict disconnect shape before dispatch", async () => {
+    const h = await harness(); try {
+      const base = { source: "/root/Main", signal: "ready", callable: { target: "/root/Main", method: "on_ready" } };
+      for (const flags of [16, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) expect((await h.client.callTool({ name: "godot_signal_connect", arguments: { ...base, flags } })).isError).toBe(true);
+      expect((await h.client.callTool({ name: "godot_signal_disconnect", arguments: { ...base, flags: 1 } })).isError).toBe(true);
+      expect(h.call).not.toHaveBeenCalled();
+    } finally { await h.close(); }
+  });
+
+  it("accepts exact paginated list metadata and rejects malformed truncation fields", async () => {
+    const page = { signals: [{ name: "changed", arguments: [{ name: "value", type: 2 }], connections: [{ callable: { target: "/root/Main/A", method: "on_changed" }, flags: 1 }], connectionCount: 300, connectionsTruncated: true }], truncated: true, nextCursor: "1" };
+    const h = await harness(vi.fn().mockResolvedValue(page)); try {
+      expect((await h.client.callTool({ name: "godot_signal_list", arguments: { path: "/root/Main", limit: 1 } })).structuredContent).toEqual(page);
+    } finally { await h.close(); }
+    const bad = await harness(vi.fn().mockResolvedValue({ signals: [{ name: "x", arguments: [], connections: [], connectionCount: 0 }], truncated: false })); try {
+      expect((await bad.client.callTool({ name: "godot_signal_list", arguments: { path: "/root/Main" } })).isError).toBe(true);
+    } finally { await bad.close(); }
   });
 
   it("rejects noncanonical and byte-overflow inputs before dispatch", async () => {

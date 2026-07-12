@@ -25,3 +25,11 @@ Implemented undoable canonical PackedScene instancing and exactly three signal t
 - Instancing retains `scene_file_path`, assigns the instanced root to the edited-scene owner, and preserves nested scene ownership.
 - Signal list sorts signal descriptors and connection records, caps args/connections/page size, limits cursor skip, and enforces the response envelope.
 - Connect/disconnect validate the exact live signal and callable before `create_action`; invalid, duplicate, and missing operations cannot alter history.
+
+## Review-fix RED/GREEN evidence
+
+- RED: focused server suite failed three assertions: disconnect injected `flags: 0`, connect accepted mask bit 16, and the exact list response rejected missing `connectionCount`/`connectionsTruncated` support.
+- GREEN: focused server suite passes 6/6. Connect accepts only safe integer flags 0..15; disconnect has no flags field/default and rejects extras before dispatch.
+- Real Godot GREEN: the focused smoke covers inherited and script-declared signals, typed argument metadata, page-by-page cursor progression, invalid/end cursors, multibyte names, and 260 deliberately unordered eligible connections plus an out-of-scene connection. It verifies filter → stable sort → first-256 cap, `connectionCount: 260`, and truncation metadata.
+- A real regression exposed that Godot can emit compile diagnostics yet exit 0. `run-smoke.mjs` now requires the named `PASS phase 3 signal instance` output marker; a process-runner test proves a misleading successful exit without the marker is rejected.
+- Review-fix verification: focused server 6/6; full server 172 passed and 1 skipped; typecheck/build passed; focused Godot printed the named PASS marker; full Godot runner passed with the marker enforced.

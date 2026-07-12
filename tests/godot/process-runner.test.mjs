@@ -10,6 +10,13 @@ function child(pid) {
   return value;
 }
 
+test("required PASS marker rejects a misleading successful exit", async () => {
+  const godot = child(42); godot.stdout = new EventEmitter(); godot.stderr = new EventEmitter();
+  const pending = runBounded("godot", [], { spawnImpl: () => godot, expectedOutput: "PASS task" });
+  queueMicrotask(() => { godot.stdout.emit("data", "SCRIPT ERROR\n"); godot.emit("exit", 0); });
+  await assert.rejects(pending, /without required output marker/);
+});
+
 test("Windows timeout preserves the original error when taskkill errors", async () => {
   const calls = [];
   const godot = child(42);

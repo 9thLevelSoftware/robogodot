@@ -189,11 +189,16 @@ static func signal_list(params: Dictionary) -> Dictionary:
 		var descriptor := descriptors[index] as Dictionary; var arguments: Array[Dictionary] = []
 		for argument in descriptor.get("args", []).slice(0, 64): arguments.append({"name": String(argument.name), "type": int(argument.type)})
 		var connections: Array[Dictionary] = []
-		for entry in source.get_signal_connection_list(StringName(descriptor.name)).slice(0, 256):
+		for entry in source.get_signal_connection_list(StringName(descriptor.name)):
 			var cb := entry.callable as Callable; var target = cb.get_object()
 			if target is Node and _root() != null and (target == _root() or _root().is_ancestor_of(target)): connections.append({"callable": {"target": _path(target), "method": String(cb.get_method())}, "flags": int(entry.flags)})
-		connections.sort_custom(func(a, b): return [a.callable.target, a.callable.method, a.flags] < [b.callable.target, b.callable.method, b.flags])
-		output.append({"name": String(descriptor.name), "arguments": arguments, "connections": connections})
+		connections.sort_custom(func(a, b):
+			var a_key := "%s\n%s\n%010d" % [a.callable.target, a.callable.method, a.flags]
+			var b_key := "%s\n%s\n%010d" % [b.callable.target, b.callable.method, b.flags]
+			return a_key < b_key)
+		var connection_count := connections.size()
+		if connections.size() > 256: connections.resize(256)
+		output.append({"name": String(descriptor.name), "arguments": arguments, "connections": connections, "connectionCount": connection_count, "connectionsTruncated": connection_count > connections.size()})
 	var next := offset + output.size(); var response := {"signals": output, "truncated": next < descriptors.size()}
 	if response.truncated: response.nextCursor = str(next)
 	if JSON.stringify(response).to_utf8_buffer().size() > 261632: return _failure("Signal page exceeds safe response envelope; request a smaller limit.")
@@ -206,7 +211,8 @@ static func _signal_mutation(params: Dictionary, connecting: bool) -> Dictionary
 	if source == null or not signal_name is String or not callable_data is Dictionary: return _failure("Provide a live source, signal, and callable.")
 	var target := _node(callable_data.get("target")); var method = callable_data.get("method")
 	if target == null or not method is String or not source.has_signal(signal_name) or not target.has_method(method): return _failure("Signal and callable must resolve live.")
-	var cb := Callable(target, StringName(method)); var flags := int(params.get("flags", 0))
+	var cb := Callable(target, StringName(method)); var raw_flags = params.get("flags", 0); var flags := int(raw_flags)
+	if connecting and (not raw_flags is int or flags < 0 or flags > 15): return _failure("Connect flags must be an integer using only the Godot ConnectFlags mask 0..15.")
 	var result: Dictionary = _controller().connect_signal(source, StringName(signal_name), cb, flags, "Connect %s" % signal_name) if connecting else _controller().disconnect_signal(source, StringName(signal_name), cb, "Disconnect %s" % signal_name)
 	if not result.ok: return result
 	return _success({"source": _path(source), "signal": signal_name, "callable": {"target": _path(target), "method": method}, "flags": flags if connecting else int(result.flags)})
