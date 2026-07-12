@@ -12,7 +12,7 @@ Baseline: 22 test files passed, 2 skipped; 178 tests passed, 2 skipped.
 | 4 — seven MCP tools | `7ff5793..70eef90` | Approved after descriptor-safe, bounded normalization hardening | Compliant | 15 tool tests; final server suite 252 passed / 2 skipped; typecheck and build passed |
 | 5 — optional LSP host | `70eef90..638cff2` | Approved after close-race, child-lifetime, listener, and owned-error fixes | Compliant | 25 focused tests; final server suite 279 passed / 2 skipped; typecheck and build passed |
 | 6 — live acceptance | `638cff2..fe729ec` | Approved after capability, identity, cleanup, and fixture-isolation fixes | Compliant | Phase 4 live 2/2; two normal parallel all-live runs 305/305; standard suite/typecheck/build passed |
-| 7 — docs/integration | pending Task 7 commit | Controller-owned whole-branch review still required | Controller-owned final spec review still required | Final matrix recorded in `task-7-report.md`; do not mark Phase 4 complete before both gates pass |
+| 7 — docs/integration | Initial commit `5c5bd51`; correction commit pending | **Changes requested:** exact seven-tool input/output documentation and stronger contract assertions required; re-review pending | Final Task 7 spec approval and controller-owned whole-branch review pending | Initial matrix recorded in `task-7-report.md`; corrected range will be finalized by the controller after approval. Do not mark Phase 4 complete before both gates pass |
 
 ## Capability and deferral ledger
 

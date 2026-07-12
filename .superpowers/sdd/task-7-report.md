@@ -33,3 +33,9 @@ GREEN after documentation/source changes and rendering: `node --test tests/archi
 - Portable Node APIs do not provide a cross-platform atomic path-authorization-plus-open primitive. Phase 4's canonical pre/post-open checks and same-handle read narrow the race; broader hostile-filesystem containment remains deferred to Phase 6/7.
 - Phase 6's dependency strength under `Q-002`, broader `FsGuard`, and Phase 7 uniform hardening remain open and are not claimed here.
 - The controller must request and adjudicate the whole-branch review before marking Phase 4 complete.
+
+## Changes-requested correction
+
+Review of initial Task 7 commit `5c5bd51` requested exact public contract detail rather than summary output names. The correction expands all seven input schemas and normalized structured-output variants, including nested positions/ranges, completion trigger context, optional normalized fields, diagnostic and signature truncation categories, symbol recursion/location fields, native found variants, and workspace error outcomes. The architecture regression now cross-checks the production registrations/schema markers and requires representative nested/output tokens in the runbook.
+
+Task 7 remains in changes-requested / re-review-pending state. The correction commit is reported below when created; the controller will finalize the exact corrected review range in the ledger only after approval. Whole-branch review remains controller-owned and pending.

@@ -98,17 +98,19 @@ Live metadata comes from the connected editor. Documentation is generated from t
 
 ## Godot LSP runbook
 
-The seven `godot_lsp_*` tools all declare `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. They never write source files or apply edits. Their exact inputs and structured outputs are:
+The seven `godot_lsp_*` tools all declare `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. They never write source files or apply edits. Inputs are strict objects: undeclared fields are rejected. A `position` is `{ line, character }`; both are required integers from 0 through 1,000,000. A `range` is `{ start: position, end: position }`. These are the exact public inputs and normalized structured outputs (remote fields not listed are omitted):
 
 | Tool | Inputs | Output |
 | --- | --- | --- |
-| `godot_lsp_diagnostics` | `uri`, optional `waitMs` (100–15000; default 5000) | `uri`, document `version`, `fresh`, bounded `diagnostics`, and truncation detail |
-| `godot_lsp_completion` | `uri`, zero-based UTF-16 `position`, optional `limit` (1–500; default 500), optional trigger context | bounded `items` and `truncated` |
-| `godot_lsp_hover` | `uri`, zero-based UTF-16 `position` | `found`, bounded `contents`, optional `range`, and `truncated` |
-| `godot_lsp_signature_help` | `uri`, zero-based UTF-16 `position` | bounded signatures, active signature/parameter, and truncation detail |
-| `godot_lsp_document_symbols` | `uri` | bounded hierarchical `symbols` and `truncated` |
-| `godot_lsp_workspace_symbols` | `query`, optional `limit` (1–500; default 500) | bounded `symbols` and `truncated`, when advertised |
-| `godot_lsp_native_symbol` | `nativeClass`, optional `member` | `found`, and when found a bounded `symbol` plus `truncated` |
+| `godot_lsp_diagnostics` | required `uri`; optional `waitMs` integer 100–15000, default 5000 | `{ uri, version, fresh, diagnostics, truncated, truncation }`. Each diagnostic requires `message` and may include `range`, `severity`, string/number `code`, `source`, `tags`, and `relatedInformation`; each related item is `{ location: { uri, range }, message }`. `truncation` always has booleans `diagnostics`, `tags`, `relatedInformation`, `strings`, `positions`, and `malformed`. |
+| `godot_lsp_completion` | required `uri` and `position`; optional `limit` integer 1–500, default 500; optional strict `context` with required `triggerKind` integer 1–3 and optional `triggerCharacter` | `{ items, truncated }`. Each retained item requires `label` and may include `detail`, integer `kind`, `documentation`, `insertText`, `sortText`, `filterText`, and `textEdit: { range, newText }`. |
+| `godot_lsp_hover` | required `uri` and `position` | Not found: `{ found: false, truncated }`. Found: `{ found: true, contents, truncated }` plus optional `range`. |
+| `godot_lsp_signature_help` | required `uri` and `position` | `{ signatures, truncated, truncation }` plus optional integer `activeSignature` and `activeParameter`. Each signature is `{ label, parameters }` plus optional `documentation`; each parameter has `label` as a string or `[start, end]` integer pair and optional `documentation`. `truncation` always has booleans `signatures`, `parameters`, `malformed`, and `strings`. |
+| `godot_lsp_document_symbols` | required `uri` | `{ symbols, truncated }`. Each symbol requires `name` and may include `detail`, integer `kind`, `range`, `selectionRange`, `location: { uri, range }`, and recursive `children`. |
+| `godot_lsp_workspace_symbols` | required `query`; optional `limit` integer 1–500, default 500 | `{ symbols, truncated }` with the same normalized symbol fields. Before any result, it can return structured `not_connected`; unadvertised `workspaceSymbols` returns `feature_disabled`; invalid/malformed Godot replies can return `godot_error`. |
+| `godot_lsp_native_symbol` | required `nativeClass`; optional `member` | No match: `{ found: false }`. Match: `{ found: true, symbol, truncated }`, where `symbol` is the bounded Godot response tree. It can also return structured `not_connected`, `feature_disabled`, or `godot_error`. |
+
+All `uri`, `query`, `nativeClass`, `member`, and `triggerCharacter` strings are bounded to 1024 UTF-8 bytes. Completion/document/workspace arrays and recursive trees are bounded; `truncated: true` means fields or entries were omitted or shortened. Completion, hover, symbol, and native-tree outputs expose the aggregate boolean only. Diagnostics and signature help additionally expose the category objects listed above so callers can distinguish array, nested-data, string, position, and malformed omissions.
 
 `uri` accepts a project-relative `res://` path or an absolute path to an existing `.gd` file inside the configured project. The server reads the exact disk bytes, rejects escapes after canonical realpath checks, and synchronizes that exact text with `didOpen`/`didChange`; unsaved editor-buffer text is not copied into MCP. Positions are zero-based UTF-16 code-unit offsets, not UTF-8 byte or Unicode-code-point offsets.
 

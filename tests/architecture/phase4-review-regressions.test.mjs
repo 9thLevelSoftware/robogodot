@@ -15,8 +15,35 @@ const toolNames = [
 ];
 
 test("Phase 4 runbook documents the exact public surface and operating contract", async () => {
-  const readme = await read("README.md");
+  const [readme, tools] = await Promise.all([read("README.md"), read("server/src/tools/lsp.ts")]);
   for (const name of toolNames) assert.match(readme, new RegExp(`\\b${name}\\b`));
+  for (const name of toolNames) assert.match(tools, new RegExp(`name: "${name}"`));
+  assert.match(tools, /position = z\.object\(\{ line:[^]*character:[^]*\}\)\.strict\(\)/);
+  assert.match(tools, /context: z\.object\(\{ triggerKind:[^]*min\(1\)\.max\(3\)[^]*triggerCharacter:[^]*optional\(\)[^]*\}\)\.strict\(\)\.optional\(\)/);
+  assert.match(tools, /truncation: snapshot\.truncation[^]*diagnostics: false[^]*relatedInformation: false[^]*malformed: false/);
+  assert.match(tools, /flags = \{ signatures: false, parameters: false, malformed: false, strings: false \}/);
+
+  const requiredContractTokens = [
+    "line", "character", "start", "end", "triggerKind", "triggerCharacter",
+    "message", "severity", "code", "source", "tags", "relatedInformation", "location",
+    "detail", "kind", "documentation", "insertText", "sortText", "filterText", "textEdit", "newText",
+    "contents", "activeSignature", "activeParameter", "parameters", "selectionRange", "children",
+    "signatures", "strings", "positions", "malformed", "feature_disabled", "not_connected", "godot_error",
+  ];
+  for (const token of requiredContractTokens) assert.match(readme, new RegExp(`\\b${token}\\b`), `README contract token: ${token}`);
+  const row = (name) => readme.split(/\r?\n/).filter((line) => line.startsWith(`| \`${name}\``)).at(-1) ?? "";
+  const perTool = {
+    godot_lsp_diagnostics: ["uri", "waitMs", "message", "range", "relatedInformation", "diagnostics", "tags", "strings", "positions", "malformed"],
+    godot_lsp_completion: ["uri", "position", "limit", "context", "triggerKind", "triggerCharacter", "label", "textEdit", "newText", "truncated"],
+    godot_lsp_hover: ["uri", "position", "found: false", "found: true", "contents", "range", "truncated"],
+    godot_lsp_signature_help: ["uri", "position", "activeSignature", "activeParameter", "parameters", "signatures", "strings", "malformed"],
+    godot_lsp_document_symbols: ["uri", "name", "selectionRange", "location", "children", "truncated"],
+    godot_lsp_workspace_symbols: ["query", "limit", "symbols", "not_connected", "feature_disabled", "godot_error"],
+    godot_lsp_native_symbol: ["nativeClass", "member", "found: false", "found: true", "symbol", "truncated", "godot_error"],
+  };
+  for (const [name, tokens] of Object.entries(perTool)) {
+    for (const token of tokens) assert.ok(row(name).includes(token), `${name} contract token: ${token}`);
+  }
   assert.match(readme, /GODOT_LSP_PORT[^\n]*6005/);
   assert.match(readme, /GODOT_MCP_LSP_AUTO_START[^\n]*false/i);
   assert.match(readme, /godot --editor --headless --lsp-port 6005 --path <project>/);
