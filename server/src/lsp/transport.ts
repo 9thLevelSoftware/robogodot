@@ -1,10 +1,14 @@
 import type { Duplex } from "node:stream";
 import { GodotMcpError } from "../errors.js";
-import { encodeFrame, LSP_LIMITS, parseJsonRpcEnvelope, type LspNotification, type LspResponseError } from "./protocol.js";
+import { LSP_LIMITS, parseJsonRpcEnvelope, type LspNotification, type LspResponseError } from "./protocol.js";
 
 interface TransportOptions {
   maxFrameBytes: number; maxBufferBytes: number; maxPending: number;
   defaultRequestMs?: number; minRequestMs?: number; maxRequestMs?: number;
+}
+interface NormalizedTransportOptions {
+  readonly maxFrameBytes: number; readonly maxBufferBytes: number; readonly maxPending: number;
+  readonly defaultRequestMs: number; readonly minRequestMs: number; readonly maxRequestMs: number;
 }
 interface Pending { resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout; generation: number }
 
@@ -23,8 +27,17 @@ export class LspTransport {
   private closedListeners = new Set<(error: Error) => void>();
   private currentGeneration = 0;
   private closing = false;
+  private readonly options: NormalizedTransportOptions;
 
-  constructor(private readonly options: TransportOptions = LSP_LIMITS) { this.validateOptions(options); }
+  constructor(options: TransportOptions = LSP_LIMITS) {
+    this.validateOptions(options);
+    this.options = Object.freeze({
+      maxFrameBytes: options.maxFrameBytes, maxBufferBytes: options.maxBufferBytes, maxPending: options.maxPending,
+      defaultRequestMs: options.defaultRequestMs ?? LSP_LIMITS.defaultRequestMs,
+      minRequestMs: options.minRequestMs ?? LSP_LIMITS.minRequestMs,
+      maxRequestMs: options.maxRequestMs ?? LSP_LIMITS.maxRequestMs,
+    });
+  }
   get generation(): number { return this.currentGeneration; }
   get isAttached(): boolean { return this.socket !== undefined; }
 
@@ -38,20 +51,26 @@ export class LspTransport {
     if (!this.socket) return Promise.reject(notConnected());
     if (this.pending.size >= this.options.maxPending) return Promise.reject(new GodotMcpError("godot_error", "LSP request limit reached.", "Wait for an in-flight request to finish."));
     const id = this.nextId++;
+    let frame: Buffer;
+    try { frame = this.prepareFrame({ jsonrpc: "2.0", id, method, params }); }
+    catch (error) { return Promise.reject(error instanceof GodotMcpError ? error : protocolError("LSP request is not JSON-serializable.")); }
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new GodotMcpError("timeout", `LSP request ${method} timed out.`, "Retry after confirming the Godot language server is responsive."));
       }, this.clampDeadline(timeoutMs));
       this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject, timer, generation: this.currentGeneration });
-      try { this.write({ jsonrpc: "2.0", id, method, params }); }
+      try { this.socket!.write(frame); }
       catch (error) { clearTimeout(timer); this.pending.delete(id); reject(notConnected(error instanceof Error ? error.message : undefined)); }
     });
   }
 
   async notify(method: string, params: unknown): Promise<void> {
     if (!this.socket) throw notConnected();
-    try { this.write({ jsonrpc: "2.0", method, params }); } catch { throw notConnected(); }
+    let frame: Buffer;
+    try { frame = this.prepareFrame({ jsonrpc: "2.0", method, params }); }
+    catch (error) { throw error instanceof GodotMcpError ? error : protocolError("LSP notification is not JSON-serializable."); }
+    try { this.socket.write(frame); } catch { throw notConnected(); }
   }
   onNotification(listener: (event: LspNotification) => void): () => void { this.notificationListeners.add(listener); return () => this.notificationListeners.delete(listener); }
   onClosed(listener: (error: Error) => void): () => void { this.closedListeners.add(listener); return () => this.closedListeners.delete(listener); }
@@ -76,7 +95,13 @@ export class LspTransport {
       throw new GodotMcpError("godot_error", "Invalid LSP transport limits.", "Use finite positive integer limits with frame <= buffer and min deadline <= default deadline <= max deadline.");
     }
   }
-  private write(message: unknown): void { this.socket!.write(encodeFrame(message)); }
+  private prepareFrame(message: unknown): Buffer {
+    const body = Buffer.from(JSON.stringify(message), "utf8");
+    if (body.length > this.options.maxFrameBytes) {
+      throw new GodotMcpError("godot_error", "LSP outbound frame exceeds the configured size limit.", "Reduce the request or notification payload.");
+    }
+    return Buffer.concat([Buffer.from(`Content-Length: ${body.length}\r\n\r\n`, "ascii"), body]);
+  }
 
   private readonly onData = (chunk: Buffer | string): void => {
     const incoming = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);

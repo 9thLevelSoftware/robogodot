@@ -74,6 +74,33 @@ describe("LspTransport", () => {
     expect(calls).toEqual(["first", "second"]); expect(transport.isAttached).toBe(false);
   });
 
+  it("rejects oversized requests without writing or consuming a pending slot", async () => {
+    const { mock, transport } = await setup({ maxFrameBytes: 80, maxPending: 1 });
+    await expect(transport.request("huge", { text: "x".repeat(200) }, 1_000)).rejects.toMatchObject({ code: "godot_error" });
+    expect(mock.messages).toHaveLength(0);
+    const valid = transport.request<string>("ok", {}, 1_000);
+    await expect.poll(() => mock.messages.length).toBe(1);
+    mock.result(mock.messages[0].id, "accepted");
+    await expect(valid).resolves.toBe("accepted");
+  });
+
+  it("rejects oversized notifications without writing bytes", async () => {
+    const { mock, transport } = await setup({ maxFrameBytes: 80 });
+    await expect(transport.notify("huge", { text: "é".repeat(100) })).rejects.toMatchObject({ code: "godot_error" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mock.messages).toHaveLength(0);
+  });
+
+  it("copies validated options so caller mutation cannot change limits", async () => {
+    const mock = new MockLspServer(); mocks.push(mock); await mock.start();
+    const socket = connect(mock.port, "127.0.0.1"); await new Promise<void>((r) => socket.once("connect", r));
+    const options = { ...LSP_LIMITS, maxFrameBytes: 80 };
+    const transport = new LspTransport(options); transport.attach(socket, 1);
+    options.maxFrameBytes = 10_000;
+    await expect(transport.notify("huge", { text: "x".repeat(200) })).rejects.toMatchObject({ code: "godot_error" });
+    expect(mock.messages).toHaveLength(0);
+  });
+
   it("bounds the mock receive buffer and rejects oversized frames", async () => {
     const mock = new MockLspServer(); mocks.push(mock); await mock.start();
     const socket = connect(mock.port, "127.0.0.1"); await new Promise<void>((r) => socket.once("connect", r));
@@ -117,10 +144,10 @@ describe("LspTransport", () => {
   });
 
   it("enforces pending and buffer bounds", async () => {
-    const { mock, transport } = await setup({ maxPending: 1, maxFrameBytes: 16, maxBufferBytes: 16 });
+    const { mock, transport } = await setup({ maxPending: 1, maxFrameBytes: 80, maxBufferBytes: 80 });
     void transport.request("held", {}, 1_000).catch(() => undefined); await expect.poll(() => mock.messages.length).toBe(1);
     await expect(transport.request("extra", {}, 1_000)).rejects.toMatchObject({ code: "godot_error" });
-    const closed = new Promise<Error>((resolve) => transport.onClosed(resolve)); mock.sendRaw("x".repeat(17));
+    const closed = new Promise<Error>((resolve) => transport.onClosed(resolve)); mock.sendRaw("x".repeat(81));
     await expect(closed).resolves.toMatchObject({ code: "godot_error" });
   });
 });
