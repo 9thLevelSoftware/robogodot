@@ -1,6 +1,6 @@
 import { connect } from "node:net";
 import { Duplex } from "node:stream";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { LspTransport } from "../src/lsp/transport.js";
 import { LSP_LIMITS } from "../src/lsp/protocol.js";
 import { MOCK_LSP_LIMITS, MockLspServer, frame } from "./mock-lsp.js";
@@ -25,6 +25,36 @@ describe("LspTransport", () => {
     await expect(transport.notify("initialized", {})).rejects.toMatchObject({ code: "timeout" });
     expect(transport.isAttached).toBe(false);
     await expect(transport.close()).resolves.toBeUndefined();
+  });
+  it("fails the transport when a notification write callback reports an error", async () => {
+    const socket = new Duplex({ read() {}, write(_chunk, _encoding, callback) { callback(); } });
+    vi.spyOn(socket, "write").mockImplementation(((_chunk: unknown, encodingOrCallback?: unknown, callback?: unknown) => {
+      const completion = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
+      if (typeof completion === "function") queueMicrotask(() => completion(new Error("write failed")));
+      return false;
+    }) as typeof socket.write);
+    const transport = new LspTransport(); transport.attach(socket, 1);
+    const pending = transport.request("held", {}, 1_000);
+    await expect(transport.notify("initialized", {})).rejects.toMatchObject({ code: "not_connected", message: "write failed" });
+    expect(transport.isAttached).toBe(false);
+    await expect(pending).rejects.toMatchObject({ code: "not_connected" });
+  });
+  it("does not let a stale notification completion fail a replacement connection", async () => {
+    let complete: ((error?: Error | null) => void) | undefined;
+    const first = new Duplex({ read() {}, write(_chunk, _encoding, callback) { callback(); } });
+    vi.spyOn(first, "write").mockImplementation(((_chunk: unknown, encodingOrCallback?: unknown, callback?: unknown) => {
+      complete = (typeof encodingOrCallback === "function" ? encodingOrCallback : callback) as typeof complete;
+      return false;
+    }) as typeof first.write);
+    const second = new Duplex({ read() {}, write(_chunk, _encoding, callback) { callback(); } });
+    const transport = new LspTransport(); transport.attach(first, 1);
+    const notification = transport.notify("initialized", {});
+    transport.attach(second, 2);
+    complete?.(new Error("old connection failed"));
+    await expect(notification).rejects.toMatchObject({ code: "not_connected", message: "old connection failed" });
+    expect(transport.isAttached).toBe(true);
+    expect(transport.generation).toBe(2);
+    await transport.close();
   });
   it("uses UTF-8 byte length and correlates out-of-order responses", async () => {
     const { mock, transport } = await setup();

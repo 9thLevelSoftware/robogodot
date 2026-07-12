@@ -77,8 +77,8 @@ function display(value: string): string { return `"${value.replaceAll('"', '\\"'
 export class LspHost {
   ownership: LspOwnership | undefined;
   private ownedChild: HostChild | undefined;
-  private stdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
-  private stderr: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+  private stdout: Buffer = Buffer.alloc(0);
+  private stderr: Buffer = Buffer.alloc(0);
   private ensuring: Promise<LspOwnership> | undefined;
   private closing: Promise<void> | undefined;
   private state: "open" | "closing" | "closed" = "open";

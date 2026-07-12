@@ -112,7 +112,7 @@ The seven `godot_lsp_*` tools all declare `readOnlyHint: true`, `destructiveHint
 
 All `uri`, `query`, `nativeClass`, `member`, and `triggerCharacter` strings are bounded to 1024 UTF-8 bytes. Completion/document/workspace arrays and recursive trees are bounded; `truncated: true` means fields or entries were omitted or shortened. Completion, hover, symbol, and native-tree outputs expose the aggregate boolean only. Diagnostics and signature help additionally expose the category objects listed above so callers can distinguish array, nested-data, string, position, and malformed omissions.
 
-`uri` accepts a project-relative `res://` path or an absolute path to an existing `.gd` file inside the configured project. The server reads the exact disk bytes, rejects escapes after canonical realpath checks, and synchronizes that exact text with `didOpen`/`didChange`; unsaved editor-buffer text is not copied into MCP. Positions are zero-based UTF-16 code-unit offsets, not UTF-8 byte or Unicode-code-point offsets.
+`uri` accepts only a project-relative `res://` path to an existing `.gd` file inside the configured project. The server reads the exact disk bytes, rejects escapes after canonical realpath checks, and synchronizes that exact text with `didOpen`/`didChange`; unsaved editor-buffer text is not copied into MCP. Positions are zero-based UTF-16 code-unit offsets, not UTF-8 byte or Unicode-code-point offsets.
 
 Normally, open the project in the visible Godot editor; RoboGodot attaches to its LSP and never owns or shuts down that editor. For manual headless service, run exactly:
 

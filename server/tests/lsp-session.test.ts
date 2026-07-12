@@ -229,6 +229,15 @@ describe("LspSession", () => {
     expect(session.state).toBe("exited");
   });
 
+  it("allows a responsive but busy language server time to shut down", async () => {
+    const { mock, session } = await setup(); initializeGodot(mock); await session.ensureReady();
+    mock.onRequest("shutdown", ({ id }) => { setTimeout(() => mock.result(id, null), 150); });
+    const started = performance.now(); await session.close();
+    expect(performance.now() - started).toBeGreaterThanOrEqual(140);
+    await expect.poll(() => mock.messages.map((message) => message.method)).toContain("exit");
+    expect(mock.messages.map((message) => message.method)).toEqual(["initialize", "initialized", "shutdown", "exit"]);
+  });
+
   it("sends exit when shutdown fails", async () => {
     const { mock, session } = await setup(); initializeGodot(mock); await session.ensureReady();
     mock.onRequest("shutdown", ({ id }) => mock.error(id, -32603, "shutdown failed"));

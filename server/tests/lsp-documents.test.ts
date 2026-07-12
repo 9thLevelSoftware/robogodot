@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { LspDocuments } from "../src/lsp/documents.js";
 
@@ -115,7 +115,9 @@ describe("LspDocuments", () => {
     const outside = await mkdtemp(join(tmpdir(), "robogodot-race-")); roots.push(outside); const escaped = join(outside, "race.gd"); await writeFile(escaped, "escape");
     let targetCalls = 0;
     const docs = new LspDocuments(root, session, { realpath: async (value) => {
-      if (value === file && ++targetCalls === 2) return escaped;
+      // Compare the stable document identity rather than the pre-canonical path string.
+      // Windows realpath may normalize drive-letter casing before the second call.
+      if (basename(value) === "race.gd" && ++targetCalls === 2) return escaped;
       return (await import("node:fs/promises")).realpath(value);
     } });
     await expect(docs.sync("res://phase4/race.gd")).rejects.toMatchObject({ code: "invalid_args" });

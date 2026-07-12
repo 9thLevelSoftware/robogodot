@@ -108,11 +108,12 @@ export class LspDocuments {
       const rel = relative(root, revalidated);
       if (revalidated !== target || !rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw invalid("Document target changed during authorization.");
       if (info.size > DOCUMENT_LIMITS.maxBytes) throw invalid("Document exceeds the 2 MiB synchronization limit.");
-      const buffer = Buffer.allocUnsafe(DOCUMENT_LIMITS.maxBytes + 1); let offset = 0;
+      // One sentinel byte preserves post-fstat growth detection without reserving 2 MiB for every script.
+      const buffer = Buffer.alloc(info.size + 1); let offset = 0;
       while (offset < buffer.length) {
         const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset); if (bytesRead === 0) break; offset += bytesRead;
       }
-      if (offset > DOCUMENT_LIMITS.maxBytes) throw invalid("Document exceeds the 2 MiB synchronization limit.");
+      if (offset > info.size) throw invalid("Document target changed during authorization.");
       return buffer.subarray(0, offset);
     } finally { await handle.close(); }
   }

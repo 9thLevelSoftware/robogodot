@@ -216,7 +216,7 @@ export class LspSession {
   private async performClose(): Promise<void> {
     this.state = "shutting_down"; this.cancelReconnect?.(); this.cancelReconnect = undefined;
     if (this.transport.isAttached && this.ready) {
-      try { await this.transport.request("shutdown", null, LSP_LIMITS.minRequestMs); } catch { /* exit is mandatory */ }
+      try { await this.transport.request("shutdown", null, LSP_LIMITS.defaultRequestMs); } catch { /* exit is mandatory */ }
       try { await this.transport.notify("exit", null); } catch { /* transport may already be gone */ }
     }
     await this.transport.close(); this.ready = undefined; this.nativeSymbolAffirmed = false; this.readiness = undefined; this.state = "exited";

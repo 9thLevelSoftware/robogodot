@@ -50,11 +50,14 @@ test("Phase 4 runbook documents the exact public surface and operating contract"
   assert.match(readme, /GODOT_MCP_LSP_AUTO_START[^\n]*false/i);
   assert.match(readme, /godot --editor --headless --lsp-port 6005 --path <project>/);
   assert.match(readme, /zero-based[^\n]*UTF-16/i);
+  assert.match(readme, /uri[^\n]*only[^\n]*project-relative[^\n]*res:\/\//i);
+  assert.doesNotMatch(readme, /uri[^\n]*absolute path/i);
   assert.match(readme, /Godot 4\.6[^\n]*workspace\/symbol[^\n]*feature_disabled/i);
   assert.match(readme, /readOnlyHint[^\n]*true/);
   assert.match(readme, /shutdown[^\n]*owned-child-only/i);
   assert.match(readme, /not_connected/);
   assert.match(readme, /diagnostics[^\n]*timeout/i);
+  assert.match(tools, /Math\.min\(LSP_LIMITS\.maxRequestMs, firstRemaining\)/);
 });
 
 test("Phase 4 dependency is resolved without deciding Phase 6", async () => {

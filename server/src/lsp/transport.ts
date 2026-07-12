@@ -64,7 +64,10 @@ export class LspTransport {
       }, this.clampDeadline(timeoutMs));
       this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject, timer, generation: this.currentGeneration });
       try { this.socket!.write(frame); }
-      catch (error) { clearTimeout(timer); this.pending.delete(id); reject(notConnected(error instanceof Error ? error.message : undefined)); }
+      catch (error) {
+        const failure = notConnected(error instanceof Error ? error.message : undefined);
+        this.fail(failure);
+      }
     });
   }
 
@@ -78,12 +81,19 @@ export class LspTransport {
       let settled = false;
       let timer: NodeJS.Timeout | undefined;
       const finish = (error?: Error) => { if (settled) return; settled = true; if (timer) clearTimeout(timer); error ? reject(error) : resolve(); };
+      const failCurrent = (error: Error) => { if (this.socket === socket) this.fail(error); };
       timer = setTimeout(() => {
         const error = new GodotMcpError("timeout", `LSP notification ${method} write timed out.`, "Retry after confirming the Godot language server is responsive.");
-        this.fail(error); finish(error);
+        failCurrent(error); finish(error);
       }, this.options.writeCompletionMs);
-      try { socket.write(frame, (error) => finish(error ? notConnected(error.message) : undefined)); }
-      catch { finish(notConnected()); }
+      try {
+        socket.write(frame, (error) => {
+          if (!error) { finish(); return; }
+          const failure = notConnected(error.message); failCurrent(failure); finish(failure);
+        });
+      } catch (error) {
+        const failure = notConnected(error instanceof Error ? error.message : undefined); failCurrent(failure); finish(failure);
+      }
     });
   }
   onNotification(listener: (event: LspNotification) => void): () => void { this.notificationListeners.add(listener); return () => this.notificationListeners.delete(listener); }
