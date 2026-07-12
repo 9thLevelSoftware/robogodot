@@ -68,6 +68,7 @@ export class LspDiagnostics {
   }
 
   waitFor(uri: string, generation: number, afterSequence: number, waitMs: number): Promise<DiagnosticSnapshot> {
+    if (typeof uri !== "string" || uri.length === 0 || Buffer.byteLength(uri, "utf8") > DIAGNOSTIC_LIMITS.maxUriBytes) return Promise.reject(new GodotMcpError("invalid_args", "Invalid diagnostics URI.", `Use a nonempty URI of at most ${DIAGNOSTIC_LIMITS.maxUriBytes} UTF-8 bytes.`));
     if (this.closed) return Promise.reject(new GodotMcpError("not_connected", "Diagnostics store is closed.", "Create a new LSP client before waiting for diagnostics."));
     if (!Number.isInteger(generation) || generation < 1 || !Number.isInteger(afterSequence) || afterSequence < 0 || !Number.isInteger(waitMs) || waitMs < DIAGNOSTIC_LIMITS.minWaitMs || waitMs > DIAGNOSTIC_LIMITS.maxWaitMs) return Promise.reject(new GodotMcpError("invalid_args", "Invalid diagnostics wait parameters.", `Use a wait from ${DIAGNOSTIC_LIMITS.minWaitMs} to ${DIAGNOSTIC_LIMITS.maxWaitMs} milliseconds.`));
     const current = this.publications.get(uri);

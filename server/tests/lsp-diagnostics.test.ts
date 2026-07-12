@@ -41,6 +41,19 @@ describe("LspDiagnostics", () => {
     await expect(store.waitFor(uri, 3, 0, DIAGNOSTIC_LIMITS.maxWaitMs + 1)).rejects.toMatchObject({ code: "invalid_args" });
   });
 
+  it("accepts a caller URI at the exact UTF-8 byte boundary", async () => {
+    const store = new LspDiagnostics(); const boundary = "é".repeat(DIAGNOSTIC_LIMITS.maxUriBytes / 2);
+    const waiting = expect(store.waitFor(boundary, 3, 0, DIAGNOSTIC_LIMITS.maxWaitMs)).rejects.toMatchObject({ code: "not_connected" });
+    store.close(); await waiting;
+  });
+
+  it("rejects a caller URI above the UTF-8 byte boundary without retaining a waiter", async () => {
+    const store = new LspDiagnostics(); const oversized = `${"é".repeat(DIAGNOSTIC_LIMITS.maxUriBytes / 2)}x`;
+    const rejected = store.waitFor(oversized, 3, 0, DIAGNOSTIC_LIMITS.maxWaitMs).then(() => "resolved", (error: { code?: string }) => error.code);
+    const waits = Array.from({ length: DIAGNOSTIC_LIMITS.maxWaiters }, (_, i) => store.waitFor(`res://bounded-${i}.gd`, 3, 0, DIAGNOSTIC_LIMITS.maxWaitMs).then(() => "resolved", (error: { code?: string }) => error.code));
+    store.close(); expect(await rejected).toBe("invalid_args"); expect(await Promise.all(waits)).toEqual(Array(DIAGNOSTIC_LIMITS.maxWaiters).fill("not_connected"));
+  });
+
   it("fails closed at the concurrent waiter cap and close rejects all waiters idempotently", async () => {
     const store = new LspDiagnostics(() => uri);
     store.accept(notification(3, "file:///project/phase4/broken.gd", []));

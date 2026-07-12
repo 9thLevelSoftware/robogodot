@@ -99,3 +99,23 @@ Final review verification:
 ### Remaining filesystem limitation
 
 Portable Node APIs cannot make mutable pathname authorization and `open()` fully atomic across platforms. The post-open canonical revalidation and same-handle read narrow the race but do not claim to eliminate every hostile-filesystem substitution. Broader hostile-filesystem hardening remains explicitly deferred to Phase 6/7.
+
+## Final review fix: caller diagnostic URI bound
+
+### RED
+
+Added tests using multibyte UTF-8 caller URIs: exactly 1,024 bytes must enter the waiter lifecycle, while 1,025 bytes must return structured `invalid_args` without consuming one of 128 waiter slots.
+
+Command: `cd server && npm test -- --run tests/lsp-diagnostics.test.ts`
+
+Result: exit 1; 1 failed, 10 passed. The oversized URI was retained and returned `not_connected` only when the store closed instead of immediate `invalid_args`, demonstrating the missing pre-insertion validation.
+
+### GREEN and final verification
+
+`waitFor` now validates a nonempty string and the 1,024 UTF-8-byte limit before closed-state, cache lookup, or waiter insertion.
+
+- Diagnostics GREEN: 1 file passed, 11 tests passed.
+- Focused diagnostics/documents: 2 files passed, 17 tests passed.
+- `npm run typecheck`: exit 0.
+- `npm run build`: exit 0.
+- Full suite (single final-fix run): 26 files passed, 2 skipped; 235 tests passed, 2 skipped.
