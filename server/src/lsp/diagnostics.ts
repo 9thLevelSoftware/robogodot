@@ -6,13 +6,18 @@ export interface LspPosition { line: number; character: number }
 export interface LspRange { start: LspPosition; end: LspPosition }
 export interface LspRelatedInformation { location: { uri: string; range: LspRange }; message: string }
 export interface LspDiagnostic { message: string; range?: LspRange; severity?: number; code?: string | number; source?: string; tags?: number[]; relatedInformation?: LspRelatedInformation[] }
-export interface DiagnosticSnapshot { uri: string; generation: number; sequence: number; diagnostics: LspDiagnostic[]; fresh: boolean }
+export interface DiagnosticTruncation { diagnostics: boolean; tags: boolean; relatedInformation: boolean; strings: boolean; positions: boolean; malformed: boolean }
+export interface DiagnosticSnapshot { uri: string; generation: number; sequence: number; diagnostics: LspDiagnostic[]; fresh: boolean; truncated: boolean; truncation: DiagnosticTruncation }
 type Publication = Omit<DiagnosticSnapshot, "fresh">;
 type Waiter = { uri: string; generation: number; afterSequence: number; timer: NodeJS.Timeout; resolve(value: DiagnosticSnapshot): void; reject(reason: Error): void };
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+const own = (value: Record<string, unknown>, key: string): unknown => { try { const descriptor = Object.getOwnPropertyDescriptor(value, key); return descriptor && "value" in descriptor ? descriptor.value : undefined; } catch { return undefined; } };
+const arrayValues = (value: unknown[], limit: number): { values: unknown[]; omitted: boolean } => { const values: unknown[] = []; let omitted = value.length > limit; for (let index = 0; index < Math.min(value.length, limit); index++) { try { const descriptor = Object.getOwnPropertyDescriptor(value, String(index)); if (descriptor && "value" in descriptor) values.push(descriptor.value); else omitted = true; } catch { omitted = true; } } return { values, omitted }; };
+const emptyTruncation = (): DiagnosticTruncation => ({ diagnostics: false, tags: false, relatedInformation: false, strings: false, positions: false, malformed: false });
 
-function truncateUtf8(value: string, limit: number): string {
+function truncateUtf8(value: string, limit: number, truncation: DiagnosticTruncation): string {
   const bytes = Buffer.from(value, "utf8"); if (bytes.length <= limit) return value;
+  truncation.strings = true;
   const decoder = new TextDecoder("utf-8", { fatal: true });
   for (let end = limit; end > 0; end--) {
     try { return decoder.decode(bytes.subarray(0, end)); } catch { /* remove an incomplete trailing code point */ }
@@ -20,28 +25,31 @@ function truncateUtf8(value: string, limit: number): string {
   return "";
 }
 
-function position(value: unknown): LspPosition | undefined {
-  if (!isRecord(value) || !Number.isInteger(value.line) || !Number.isInteger(value.character) || (value.line as number) < 0 || (value.character as number) < 0) return undefined;
-  return { line: value.line as number, character: value.character as number };
+function position(value: unknown, truncation: DiagnosticTruncation): LspPosition | undefined {
+  if (!isRecord(value)) { truncation.positions = true; return undefined; } const line = own(value, "line"); const character = own(value, "character");
+  if (!Number.isInteger(line) || !Number.isInteger(character) || (line as number) < 0 || (character as number) < 0 || (line as number) > 1_000_000 || (character as number) > 1_000_000) { truncation.positions = true; return undefined; }
+  return { line: line as number, character: character as number };
 }
-function range(value: unknown): LspRange | undefined {
-  if (!isRecord(value)) return undefined; const start = position(value.start); const end = position(value.end);
+function range(value: unknown, truncation: DiagnosticTruncation): LspRange | undefined {
+  if (!isRecord(value)) return undefined; const start = position(own(value, "start"), truncation); const end = position(own(value, "end"), truncation);
   return start && end ? { start, end } : undefined;
 }
-function normalize(item: unknown): LspDiagnostic | undefined {
-  if (!isRecord(item) || typeof item.message !== "string") return undefined;
-  const result: LspDiagnostic = { message: truncateUtf8(item.message, DIAGNOSTIC_LIMITS.maxMessageBytes) };
-  const boundedRange = range(item.range); if (boundedRange) result.range = boundedRange;
-  if (Number.isInteger(item.severity) && (item.severity as number) >= 1 && (item.severity as number) <= 4) result.severity = item.severity as number;
-  if (typeof item.code === "number" && Number.isFinite(item.code)) result.code = item.code;
-  else if (typeof item.code === "string") result.code = truncateUtf8(item.code, DIAGNOSTIC_LIMITS.maxAuxiliaryStringBytes);
-  if (typeof item.source === "string") result.source = truncateUtf8(item.source, DIAGNOSTIC_LIMITS.maxAuxiliaryStringBytes);
-  if (Array.isArray(item.tags)) result.tags = item.tags.filter((tag): tag is number => tag === 1 || tag === 2).slice(0, 16);
-  if (Array.isArray(item.relatedInformation)) {
-    result.relatedInformation = item.relatedInformation.slice(0, DIAGNOSTIC_LIMITS.maxRelatedInformation).flatMap((related): LspRelatedInformation[] => {
-      if (!isRecord(related) || typeof related.message !== "string" || !isRecord(related.location) || typeof related.location.uri !== "string") return [];
-      const relatedRange = range(related.location.range); if (!relatedRange) return [];
-      return [{ location: { uri: truncateUtf8(related.location.uri, DIAGNOSTIC_LIMITS.maxUriBytes), range: relatedRange }, message: truncateUtf8(related.message, DIAGNOSTIC_LIMITS.maxMessageBytes) }];
+function normalize(item: unknown, truncation: DiagnosticTruncation): LspDiagnostic | undefined {
+  if (!isRecord(item) || typeof own(item, "message") !== "string") { truncation.malformed = true; return undefined; }
+  const result: LspDiagnostic = { message: truncateUtf8(own(item, "message") as string, DIAGNOSTIC_LIMITS.maxMessageBytes, truncation) };
+  const rawRange = own(item, "range"); const boundedRange = rawRange === undefined ? undefined : range(rawRange, truncation); if (boundedRange) result.range = boundedRange;
+  const severity = own(item, "severity"); if (Number.isInteger(severity) && (severity as number) >= 1 && (severity as number) <= 4) result.severity = severity as number;
+  const code = own(item, "code"); if (typeof code === "number" && Number.isFinite(code)) result.code = code;
+  else if (typeof code === "string") result.code = truncateUtf8(code, DIAGNOSTIC_LIMITS.maxAuxiliaryStringBytes, truncation);
+  const source = own(item, "source"); if (typeof source === "string") result.source = truncateUtf8(source, DIAGNOSTIC_LIMITS.maxAuxiliaryStringBytes, truncation);
+  const tags = own(item, "tags"); if (Array.isArray(tags)) { const safeTags = arrayValues(tags, 16); const valid = safeTags.values.filter((tag): tag is number => tag === 1 || tag === 2); if (safeTags.omitted || valid.length !== safeTags.values.length) truncation.tags = true; result.tags = valid; }
+  const relatedInformation = own(item, "relatedInformation"); if (Array.isArray(relatedInformation)) {
+    const safeRelated = arrayValues(relatedInformation, DIAGNOSTIC_LIMITS.maxRelatedInformation); if (safeRelated.omitted) truncation.relatedInformation = true;
+    result.relatedInformation = safeRelated.values.flatMap((related): LspRelatedInformation[] => {
+      if (!isRecord(related) || typeof own(related, "message") !== "string" || !isRecord(own(related, "location"))) { truncation.malformed = true; return []; }
+      const location = own(related, "location") as Record<string, unknown>; const relatedUri = own(location, "uri");
+      if (typeof relatedUri !== "string") { truncation.malformed = true; return []; } const relatedRange = range(own(location, "range"), truncation); if (!relatedRange) { truncation.malformed = true; return []; }
+      return [{ location: { uri: truncateUtf8(relatedUri, DIAGNOSTIC_LIMITS.maxUriBytes, truncation), range: relatedRange }, message: truncateUtf8(own(related, "message") as string, DIAGNOSTIC_LIMITS.maxMessageBytes, truncation) }];
     });
   }
   return result;
@@ -55,11 +63,12 @@ export class LspDiagnostics {
   constructor(private readonly publicUri: (fileUri: string) => string | undefined = (uri) => uri) {}
 
   accept(event: LspNotification): void {
-    if (event.method !== "textDocument/publishDiagnostics" || !isRecord(event.params) || typeof event.params.uri !== "string" || !Array.isArray(event.params.diagnostics)) return;
-    const uri = this.publicUri(event.params.uri); if (!uri || Buffer.byteLength(uri, "utf8") > DIAGNOSTIC_LIMITS.maxUriBytes) return;
+    if (event.method !== "textDocument/publishDiagnostics" || !isRecord(event.params)) return; const fileUri = own(event.params, "uri"); const source = own(event.params, "diagnostics"); if (typeof fileUri !== "string" || !Array.isArray(source)) return;
+    const uri = this.publicUri(fileUri); if (!uri || Buffer.byteLength(uri, "utf8") > DIAGNOSTIC_LIMITS.maxUriBytes) return;
     if (this.closed) return;
-    const diagnostics = event.params.diagnostics.slice(0, DIAGNOSTIC_LIMITS.maxPerUri).flatMap((item): LspDiagnostic[] => { const value = normalize(item); return value ? [value] : []; });
-    const publication: Publication = { uri, generation: event.generation, sequence: ++this.sequence, diagnostics };
+    const truncation = emptyTruncation(); const safeDiagnostics = arrayValues(source, DIAGNOSTIC_LIMITS.maxPerUri); if (safeDiagnostics.omitted) truncation.diagnostics = true;
+    const diagnostics = safeDiagnostics.values.flatMap((item): LspDiagnostic[] => { const value = normalize(item, truncation); return value ? [value] : []; });
+    const publication: Publication = { uri, generation: event.generation, sequence: ++this.sequence, diagnostics, truncated: Object.values(truncation).some(Boolean), truncation };
     if (!this.publications.has(uri) && this.publications.size >= DIAGNOSTIC_LIMITS.maxUris) this.publications.delete(this.publications.keys().next().value as string);
     this.publications.delete(uri); this.publications.set(uri, publication);
     for (const waiter of [...this.waiters]) if (waiter.uri === uri && waiter.generation === event.generation && publication.sequence > waiter.afterSequence) {

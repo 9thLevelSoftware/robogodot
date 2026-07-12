@@ -33,6 +33,18 @@ describe("LspDiagnostics", () => {
     expect(snapshot.diagnostics).toHaveLength(500);
     expect(Buffer.byteLength(snapshot.diagnostics[0]!.message)).toBeLessThanOrEqual(8_192);
     expect(snapshot.diagnostics[0]!.relatedInformation).toHaveLength(32);
+    expect(snapshot).toMatchObject({ truncated: true, truncation: { diagnostics: true, relatedInformation: true, strings: true } });
+  });
+
+  it("declares tag, malformed, and out-of-public-range position omissions", async () => {
+    const store = new LspDiagnostics(() => uri);
+    store.accept(notification(4, "file:///project/phase4/broken.gd", [
+      { message: "problem", tags: [1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1], range: { start: { line: 1_000_001, character: 0 }, end: { line: 0, character: 1 } } },
+      { severity: 1 },
+    ]));
+    const snapshot = await store.waitFor(uri, 4, 0, DIAGNOSTIC_LIMITS.minWaitMs);
+    expect(snapshot.diagnostics[0]).not.toHaveProperty("range");
+    expect(snapshot).toMatchObject({ truncated: true, truncation: { tags: true, positions: true, malformed: true } });
   });
 
   it("rejects waits outside the named finite deadline bounds", async () => {

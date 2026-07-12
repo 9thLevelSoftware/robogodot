@@ -51,3 +51,31 @@ The first full-suite run exposed one pre-existing Phase 3 inventory assertion th
 ## Concerns
 
 None. The two skipped tests are the repository's existing opt-in live tests.
+
+## Review-fix TDD evidence
+
+### RED 3 — strict normalization and honest truncation
+
+Added focused regressions for signature parameter-label unions and truncation flags, malformed completion entries and invalid text edits, getter/inherited-property rejection across completion/symbol/hover/native paths, and diagnostic omission metadata with the public position ceiling.
+
+Command: `cd server && npm test -- --run tests/lsp-tools.test.ts tests/lsp-diagnostics.test.ts`
+
+Observed: exit 1; 5 failures. Signature output retained arbitrary parameter labels without truncation metadata; completion silently omitted malformed entries and emitted an invalid edit; accessor-backed data executed a throwing getter; diagnostics lacked omission metadata and retained an out-of-public-range position.
+
+### GREEN 3 — descriptor-safe bounded results
+
+Implemented own-data-descriptor reads throughout arbitrary LSP result normalization. Inherited properties and accessors are rejected without executing getters. Completion now declares malformed/accessor/limit omissions and emits text edits only with both a valid range and bounded new text. Native malformed non-null payloads now return `godot_error`.
+
+Signature help now accepts parameter labels only as bounded strings or exact bounded integer pairs, caps signatures and parameters at 64, bounds documentation, and reports signature/parameter/malformed/string truncation separately. A subsequent RED test proved oversized parameter documentation was not setting the string flag; the focused test failed with `strings: false`, then passed after descriptor-safe source-byte accounting was added. A final RED test used a hostile property-descriptor proxy and failed with `godot_error`; guarded descriptor inspection now fails closed as a declared omission without propagating the trap.
+
+Diagnostics snapshots now carry aggregate `truncated` plus category flags for diagnostic count, tags, related information, strings, positions, and malformed entries. The public tool propagates those flags, positions are capped at 1,000,000, and diagnostic arrays/properties use descriptor-safe reads.
+
+### Review-fix verification
+
+- Focused public and diagnostics: `npm test -- --run tests/lsp-tools.test.ts tests/server.test.ts tests/mcp-stdio.test.ts tests/lsp-diagnostics.test.ts` — 4 files passed, 31 tests passed.
+- Typecheck: `npm run typecheck` — passed.
+- Build: `npm run build` — passed.
+- Full server suite: `npm test -- --run` — 27 files passed, 2 skipped; 246 tests passed, 2 skipped.
+- Patch hygiene: `git diff --check` — passed.
+
+Review-fix concerns: none. The two skipped tests remain the repository's opt-in live tests.

@@ -67,4 +67,59 @@ describe("public LSP tools", () => {
       expect(value.structuredContent).toEqual({ found: true, contents: "ok" });
     } finally { await h.close(); }
   });
+
+  it("strictly normalizes signature parameter labels and declares every omission", async () => {
+    const signatures = Array.from({ length: 65 }, (_, index) => index === 0 ? {
+      label: "f(value)", parameters: [
+        { label: [0, 1], documentation: "x".repeat(9_000) }, { label: [0, "bad"] }, { label: { arbitrary: "payload" } },
+        ...Array.from({ length: 63 }, () => ({ label: "value" })),
+      ],
+    } : { label: `f${index}()` });
+    const h = await harness(fake({ signatures })); try {
+      const value = await h.client.callTool({ name: "godot_lsp_signature_help", arguments: { uri: document.uri, position: { line: 0, character: 1 } } });
+      expect(value.structuredContent).toMatchObject({ truncated: true, truncation: { signatures: true, parameters: true, malformed: true, strings: true } });
+      const first = (value.structuredContent as any).signatures[0];
+      expect(first.parameters[0].label).toEqual([0, 1]);
+      expect(first.parameters).not.toContainEqual(expect.objectContaining({ label: { arbitrary: "payload" } }));
+    } finally { await h.close(); }
+  });
+
+  it("declares malformed completion omissions and omits invalid text edits", async () => {
+    const h = await harness(fake([{ label: "ok", textEdit: { newText: "insert", range: { start: { line: -1, character: 0 }, end: { line: 0, character: 1 } } } }, { kind: 2 }])); try {
+      const value = await h.client.callTool({ name: "godot_lsp_completion", arguments: { uri: document.uri, position: { line: 0, character: 1 } } });
+      expect(value.structuredContent).toEqual({ items: [{ label: "ok" }], truncated: true });
+      expect(value.content[0]).toEqual({ type: "text", text: JSON.stringify(value.structuredContent) });
+    } finally { await h.close(); }
+  });
+
+  it("never executes inherited properties or accessors in arbitrary LSP results", async () => {
+    let getterCalls = 0;
+    const accessor = Object.defineProperty({}, "label", { enumerable: true, get: () => { getterCalls++; throw new Error("getter ran"); } });
+    const inherited = Object.create({ name: "Inherited" });
+    for (const [name, result, args] of [
+      ["godot_lsp_completion", [accessor], { uri: document.uri, position: { line: 0, character: 1 } }],
+      ["godot_lsp_document_symbols", [inherited], { uri: document.uri }],
+      ["godot_lsp_hover", Object.create({ contents: "inherited" }), { uri: document.uri, position: { line: 0, character: 1 } }],
+    ] as const) {
+      const h = await harness(fake(result)); try { expect((await h.client.callTool({ name, arguments: args })).isError).not.toBe(true); } finally { await h.close(); }
+    }
+    const native = await harness(fake(accessor)); try {
+      expect(await native.client.callTool({ name: "godot_lsp_native_symbol", arguments: { nativeClass: "Node" } })).toMatchObject({ isError: true, structuredContent: { code: "godot_error" } });
+    } finally { await native.close(); }
+    expect(getterCalls).toBe(0);
+  });
+
+  it("fails closed when property descriptors cannot be inspected", async () => {
+    const hostile = new Proxy({}, { getOwnPropertyDescriptor: () => { throw new Error("descriptor trap"); } });
+    const h = await harness(fake([hostile])); try {
+      expect(await h.client.callTool({ name: "godot_lsp_completion", arguments: { uri: document.uri, position: { line: 0, character: 1 } } })).toMatchObject({ structuredContent: { items: [], truncated: true } });
+    } finally { await h.close(); }
+  });
+
+  it("propagates diagnostic truncation metadata through the public tool", async () => {
+    const lsp = fake(null); lsp.diagnostics.waitFor = vi.fn().mockResolvedValue({ uri: document.uri, generation: 2, sequence: 1, diagnostics: [], fresh: true, truncated: true, truncation: { diagnostics: true, tags: false, relatedInformation: false, strings: false, positions: false, malformed: false } });
+    const h = await harness(lsp); try {
+      expect(await h.client.callTool({ name: "godot_lsp_diagnostics", arguments: { uri: document.uri } })).toMatchObject({ structuredContent: { truncated: true, truncation: { diagnostics: true } } });
+    } finally { await h.close(); }
+  });
 });
