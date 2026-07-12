@@ -35,3 +35,17 @@ All access is behind `godot_compat.gd`. Compat prefers `get_unsaved_scenes()` wh
 ## Concern
 
 Dirty-scene detection is strongest on builds exposing `get_unsaved_scenes()`. The supplied 4.6.2 fallback combines public edited-object state with MCP lifecycle state because the authoritative list method is unavailable. This is tested, but future compatibility testing should retain both API paths.
+
+## Comprehensive fix pass RED/GREEN evidence
+
+RED server run: `npm test -- --run tests/phase3-scene-tools.test.ts` produced 3 expected failures: the 1024-byte multibyte boundary/canonical cursor contract was absent, the old recursive tree schema rejected flat parent/depth records, and lifecycle responses lacked structured state/reason. After implementation the focused result is 6/6 passing.
+
+The first live fix run failed on conservative state expectations and save verification. The supplied 4.6.2 artifact does not expose `get_unsaved_scenes`; the implementation now treats absence of authoritative evidence as `unknown`, with a reason, and requires `discardUnsaved:true`. `is_object_edited` is traversed across the entire edited subtree and may establish dirty state but never cleanliness. Live coverage edits a child directly and confirms both unknown and dirty states reject unconfirmed replacement.
+
+The next live RED exposed that headless `save_scene_as` leaves the public edited-object flag set. Save-as now first verifies canonical `scene_file_path` and a fresh reload as `PackedScene`, then clears the public edited flag and rechecks it before clearing lifecycle bookkeeping or returning success. Invalid destinations, unconfirmed existing targets, confirmed pre-existing overwrite, and reload are exercised. Save uses the returned `Error` and requires `OK`. Target existence is rechecked immediately in the command before save; an unavoidable residual OS race remains between that check and Godot's write.
+
+Tree traversal is now streaming iterative preorder with a 100,000-record skip ceiling. Records are unique flat `{name,class,path,parent?,depth,children}` values where children are canonical paths. A canonical decimal cursor advances by records emitted. A 512-byte conservative JSON-RPC envelope reserve covers `{jsonrpc,id,result}` including the 128-byte maximum request id; result construction is capped at 261,632 UTF-8 bytes, and a single record that cannot fit fails rather than returning the same cursor. A live 500-node multibyte wide tree verifies the complete router response stays at most 262,144 bytes, every truncated page advances, and concatenated pages contain all 503 records without duplicates or skips.
+
+Lifecycle history validation uses per-result scene histories: open/new/reopen assert the resulting scene history has no undo action. Save, save-as, and confirmed overwrite compare the same live scene history version before/after and assert invariance. This avoids comparing histories belonging to freed/replaced roots.
+
+Direct Godot compatibility tests accept an exact 1024-byte multibyte canonical `res://` path and reject the over-boundary value. Server tests enforce the same byte boundary and reject noncanonical decimal cursors without bridge dispatch. Corrupt existing scenes are preflighted as `PackedScene` and rejected before editor switching.

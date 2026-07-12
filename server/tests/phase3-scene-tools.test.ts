@@ -29,7 +29,7 @@ describe("Phase 3 scene tools", () => {
   });
 
   it("dispatches canonical project paths, defaults, and explicit confirmations", async () => {
-    const call = vi.fn(async (method: string) => method === "edit.scene_tree" ? { nodes: [], truncated: false } : { path: "res://phase3/a.tscn", unsaved: false });
+    const call = vi.fn(async (method: string) => method === "edit.scene_tree" ? { nodes: [], truncated: false } : { path: "res://phase3/a.tscn", unsaved: false, state: "clean", reason: "saved" });
     const h = await harness(call);
     try {
       await h.client.callTool({ name: "godot_scene_open", arguments: { path: "res://phase3/a.tscn", discardUnsaved: true } });
@@ -54,8 +54,25 @@ describe("Phase 3 scene tools", () => {
     } finally { await h.close(); }
   });
 
+  it("enforces UTF-8 path bytes and canonical decimal cursors before dispatch", async () => {
+    const h = await harness();
+    try {
+      const valid = `res://${"é".repeat(506)}a.tscn`;
+      expect(Buffer.byteLength(valid, "utf8")).toBe(1024);
+      await h.client.callTool({ name: "godot_scene_open", arguments: { path: valid } });
+      expect(h.call).toHaveBeenCalledTimes(1);
+      for (const cursor of ["00", "+1", " 1", "1.0", "-1"]) {
+        const result = await h.client.callTool({ name: "godot_scene_tree", arguments: { cursor } });
+        expect(result.isError).toBe(true);
+      }
+      const tooLong = await h.client.callTool({ name: "godot_scene_open", arguments: { path: `res://${"é".repeat(507)}a.tscn` } });
+      expect(tooLong.isError).toBe(true);
+      expect(h.call).toHaveBeenCalledTimes(1);
+    } finally { await h.close(); }
+  });
+
   it("preserves stable ordered tree pages and cursor", async () => {
-    const page = { nodes: [{ name: "A", class: "Node", path: "/root/Main/A", children: [] }, { name: "B", class: "Node", path: "/root/Main/B", children: [] }], truncated: true, nextCursor: "2" };
+    const page = { nodes: [{ name: "A", class: "Node", path: "/root/Main/A", parent: "/root/Main", depth: 1, children: [] }, { name: "B", class: "Node", path: "/root/Main/B", parent: "/root/Main", depth: 1, children: [] }], truncated: true, nextCursor: "2" };
     const h = await harness(vi.fn().mockResolvedValue(page));
     try {
       const result = await h.client.callTool({ name: "godot_scene_tree", arguments: { root: "/root/Main", maxDepth: 2, cursor: "0", limit: 2 } });
@@ -65,10 +82,10 @@ describe("Phase 3 scene tools", () => {
   });
 
   it("represents a new unsaved scene with an empty persistence path", async () => {
-    const h = await harness(vi.fn().mockResolvedValue({ path: "", unsaved: true }));
+    const h = await harness(vi.fn().mockResolvedValue({ path: "", unsaved: true, state: "dirty", reason: "new_scene" }));
     try {
       const result = await h.client.callTool({ name: "godot_scene_new", arguments: {} });
-      expect(result).toMatchObject({ structuredContent: { path: "", unsaved: true } });
+      expect(result).toMatchObject({ structuredContent: { path: "", unsaved: true, state: "dirty" } });
     } finally { await h.close(); }
   });
 });

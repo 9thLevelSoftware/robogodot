@@ -54,21 +54,35 @@ static func current_scene_path() -> String:
 		if roots[index] == current: return String(paths[index])
 	return ""
 
-static func scene_is_unsaved() -> bool:
+static func scene_dirty_state() -> Dictionary:
 	var path := current_scene_path()
 	var unsaved_scenes: PackedStringArray = EditorInterface.call("get_unsaved_scenes") if EditorInterface.has_method("get_unsaved_scenes") else PackedStringArray()
 	for unsaved in unsaved_scenes:
-		if String(unsaved) == path: return true
+		if String(unsaved) == path: return {"state": "dirty", "reason": "editor_unsaved_scenes"}
 	var root := edited_scene_root()
-	return root != null and (_known_unsaved or path.is_empty() or (not EditorInterface.has_method("get_unsaved_scenes") and EditorInterface.is_object_edited(root)))
+	if root == null: return {"state": "clean", "reason": "no_open_scene"}
+	if _known_unsaved: return {"state": "dirty", "reason": "mcp_lifecycle_change"}
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var node := stack.pop_back()
+		if EditorInterface.is_object_edited(node): return {"state": "dirty", "reason": "edited_object"}
+		for child in node.get_children(): stack.append(child)
+	if EditorInterface.has_method("get_unsaved_scenes"): return {"state": "clean", "reason": "editor_unsaved_scenes"}
+	return {"state": "unknown", "reason": "authoritative_unsaved_api_unavailable"}
 
 static func mark_scene_unsaved() -> void:
 	_known_unsaved = true
 	EditorInterface.mark_scene_as_unsaved()
 
 static func scene_open(path: String) -> void:
-	_known_unsaved = false
 	EditorInterface.open_scene_from_path(path)
+
+static func scene_open_completed(path: String) -> bool:
+	var root := edited_scene_root()
+	if root != null and canonical_project_path(root.scene_file_path) == path:
+		_known_unsaved = false
+		return true
+	return false
 
 static func scene_new(root: Node) -> Error:
 	if not EditorInterface.has_method("close_scene") or not EditorInterface.has_method("add_root_node"): return ERR_UNAVAILABLE
@@ -82,14 +96,21 @@ static func scene_save(path: String = "") -> Error:
 	var error := OK
 	if path.is_empty(): error = EditorInterface.save_scene()
 	else:
-		EditorInterface.save_scene_as(path)
-		error = OK if FileAccess.file_exists(path) else ERR_CANT_CREATE
-	if error == OK: _known_unsaved = false
+		EditorInterface.save_scene_as(path, false)
+		var root := edited_scene_root()
+		error = OK if root != null and canonical_project_path(root.scene_file_path) == path and ResourceLoader.load(path, "PackedScene", ResourceLoader.CACHE_MODE_IGNORE) is PackedScene else ERR_CANT_CREATE
+	if error == OK:
+		var saved_root := edited_scene_root(); var saved_path := canonical_project_path(saved_root.scene_file_path) if saved_root != null else ""
+		if saved_root == null or saved_path.is_empty() or not ResourceLoader.load(saved_path, "PackedScene", ResourceLoader.CACHE_MODE_IGNORE) is PackedScene: return ERR_CANT_CREATE
+		EditorInterface.set_object_edited(saved_root, false)
+		if EditorInterface.is_object_edited(saved_root): return ERR_CANT_CREATE
+		_known_unsaved = false
 	return error
 
 static func canonical_project_path(path: Variant) -> String:
 	if not path is String: return ""
 	var value := String(path)
+	if value.to_utf8_buffer().size() > 1024: return ""
 	if not value.begins_with("res://") or "\\" in value: return ""
 	var parts := value.substr(6).split("/", false)
 	if parts.is_empty(): return ""
@@ -101,6 +122,10 @@ static func canonical_project_path(path: Variant) -> String:
 static func undo_history_version(undo: EditorUndoRedoManager, target: Object) -> int:
 	var history_id := undo.get_object_history_id(target)
 	return undo.get_history_undo_redo(history_id).get_version()
+
+static func undo_history_has_undo(undo: EditorUndoRedoManager, target: Object) -> bool:
+	var history_id := undo.get_object_history_id(target)
+	return undo.get_history_undo_redo(history_id).has_undo()
 
 static func undo_history_undo(undo: EditorUndoRedoManager, target: Object) -> void:
 	var history_id := undo.get_object_history_id(target)
