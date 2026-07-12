@@ -1,6 +1,6 @@
-# Godot Control MCP — Phase 3
+# Godot Control MCP — Phase 4
 
-Godot Control MCP connects an MCP host to one local Godot 4.6.x editor. Phase 3 exposes exactly 31 public tools: the existing eight probes, introspection, and guarded execution tools plus 23 curated editor tools. There are no aliases.
+Godot Control MCP connects an MCP host to one local Godot 4.6.x editor. Phase 4 exposes exactly 38 public tools: Phase 3's 31 public tools plus seven read-only Godot LSP tools. There are no aliases.
 
 ## Quickstart
 
@@ -35,7 +35,9 @@ Other environment variables:
 
 - `GODOT_PATH`: Godot executable; for example `C:\Users\you\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe`.
 - `GODOT_MCP_PORT`: localhost editor WebSocket port, default `9200`; set identically for plugin and server.
-- `GODOT_LSP_PORT` / `GODOT_DAP_PORT`: reserved ports, defaults `6005` / `6006`.
+- `GODOT_LSP_PORT`: Godot language-server TCP port, default `6005`.
+- `GODOT_MCP_LSP_AUTO_START`: `false` by default; only `true` or `1` lets the server start a headless editor when no visible editor LSP is listening.
+- `GODOT_DAP_PORT`: reserved debug-adapter port, default `6006`.
 - `GODOT_MCP_MODE`: `full` (default), `read_only`, or `confirm_destructive`.
 - `DEBUG`: `true` or `1` for stderr debug logs. MCP owns stdout exclusively.
 
@@ -58,6 +60,13 @@ Other environment variables:
 | `godot_signal_list`, `godot_signal_connect`, `godot_signal_disconnect` | Bounded signal inspection and undoable connections |
 | `godot_resource_load`, `godot_resource_create`, `godot_resource_save` | Session resource handles and explicit persistence |
 | `godot_project_setting_get`, `godot_project_setting_set`, `godot_project_setting_list` | Exact project-setting reads and undoable persisted mutation |
+| `godot_lsp_diagnostics` | Synchronize one script and return fresh pushed diagnostics |
+| `godot_lsp_completion` | Return bounded completion items at a script position |
+| `godot_lsp_hover` | Return bounded hover text at a script position |
+| `godot_lsp_signature_help` | Return bounded signature and parameter help |
+| `godot_lsp_document_symbols` | Return a bounded hierarchy for one script |
+| `godot_lsp_workspace_symbols` | Query advertised workspace symbols without inventing an index |
+| `godot_lsp_native_symbol` | Return bounded native Godot class or member documentation |
 
 All curated in-memory mutations enter a single FIFO mutation lane before reaching Godot, preventing concurrent requests from capturing stale inverse state. Each accepted node, signal, instance, or project-setting mutation creates one `EditorUndoRedoManager` action; users undo it with normal Godot Ctrl-Z. Scene open/new are lifecycle operations, while scene/resource save are explicit persistence operations: none claims UndoRedo semantics.
 
@@ -87,6 +96,32 @@ Introspection example:
 
 Live metadata comes from the connected editor. Documentation is generated from the exact official Godot 4.6.2 commit `001aa128b1cd80dc4e47e823c360bccf45ed6bad`, bundled locally, provenance/integrity checked, and gated to a live Godot 4.6.x editor. Runtime documentation lookup performs no network access. See [documentation provenance](docs/third-party/godot-class-reference-4.6.2.md).
 
+## Godot LSP runbook
+
+The seven `godot_lsp_*` tools all declare `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. They never write source files or apply edits. Their exact inputs and structured outputs are:
+
+| Tool | Inputs | Output |
+| --- | --- | --- |
+| `godot_lsp_diagnostics` | `uri`, optional `waitMs` (100–15000; default 5000) | `uri`, document `version`, `fresh`, bounded `diagnostics`, and truncation detail |
+| `godot_lsp_completion` | `uri`, zero-based UTF-16 `position`, optional `limit` (1–500; default 500), optional trigger context | bounded `items` and `truncated` |
+| `godot_lsp_hover` | `uri`, zero-based UTF-16 `position` | `found`, bounded `contents`, optional `range`, and `truncated` |
+| `godot_lsp_signature_help` | `uri`, zero-based UTF-16 `position` | bounded signatures, active signature/parameter, and truncation detail |
+| `godot_lsp_document_symbols` | `uri` | bounded hierarchical `symbols` and `truncated` |
+| `godot_lsp_workspace_symbols` | `query`, optional `limit` (1–500; default 500) | bounded `symbols` and `truncated`, when advertised |
+| `godot_lsp_native_symbol` | `nativeClass`, optional `member` | `found`, and when found a bounded `symbol` plus `truncated` |
+
+`uri` accepts a project-relative `res://` path or an absolute path to an existing `.gd` file inside the configured project. The server reads the exact disk bytes, rejects escapes after canonical realpath checks, and synchronizes that exact text with `didOpen`/`didChange`; unsaved editor-buffer text is not copied into MCP. Positions are zero-based UTF-16 code-unit offsets, not UTF-8 byte or Unicode-code-point offsets.
+
+Normally, open the project in the visible Godot editor; RoboGodot attaches to its LSP and never owns or shuts down that editor. For manual headless service, run exactly:
+
+```sh
+godot --editor --headless --lsp-port 6005 --path <project>
+```
+
+With `GODOT_MCP_LSP_AUTO_START=true`, RoboGodot first attaches if a compatible listener is already available. Otherwise it launches that same headless command using `GODOT_PATH`. Shutdown is owned-child-only: RoboGodot terminates only the child process it spawned, never an attached visible editor or independently launched headless editor.
+
+Godot 4.6 does not register `workspace/symbol`; `godot_lsp_workspace_symbols` therefore returns `feature_disabled`. Use `godot_lsp_document_symbols` with a specific `res://` script instead. A `not_connected` result means no compatible LSP is listening: open the project in Godot, verify `GODOT_PROJECT_PATH` and `GODOT_LSP_PORT`, or opt into auto-start. Other `feature_disabled` results mean the connected server did not advertise that method; use a supported tool rather than expecting a fabricated result. For a diagnostics timeout or `fresh: false`, confirm the script exists on disk, fix Godot parse/import errors, keep the editor responsive, and retry after disk synchronization; do not treat stale diagnostics as current.
+
 ## Verification
 
 ```sh
@@ -105,6 +140,7 @@ node tests/godot/run-smoke.mjs
 cd server
 npm run test:live
 npm run test:live:phase3
+npm run test:live:phase4
 ```
 
 If the bridge stays disconnected, verify the plugin is enabled and that `GODOT_MCP_TOKEN` and `GODOT_MCP_PORT` match in both processes. Errors are structured with an actionable hint.
