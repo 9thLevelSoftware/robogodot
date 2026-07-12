@@ -49,3 +49,11 @@ Implemented resource handles and exactly restorable project settings from approv
 - Added one recursive exact comparator, exact resource post-set checking, bounded 20,000-setting scan, injected collision/exhaustion and persistence-failure tests, three-attempt rollback recovery, blocked fail-safe with explicit recovery data/history, Tier B guidance, and `ConfigFile` disk readback after do/undo.
 - Scope decisions: symlink/junction containment remains deferred to Phase 6/7 `FsGuard`; atomic no-replace resource publication is unavailable through the current public Godot API and remains the accepted narrow external overwrite TOCTOU risk for Task 6 documentation.
 - Float definition: non-finite floats are unsupported; Godot normalizes negative-zero Variant values, so exact comparison follows that normalized equality.
+
+## Final lifecycle/lifetime test follow-up
+
+- Lifecycle RED: the first focused editor run attempted public `EditorInterface.set_plugin_enabled`, but the addon registry is not populated for this `--script` fixture, so Godot rejected the boundary and both invalidation assertions failed.
+- Lifecycle GREEN: the isolated focused fixture instantiates the actual `plugin.gd` `EditorPlugin`, adds/removes/re-adds it to the live tree (real `_enter_tree`/`_exit_tree` callbacks), and proves handles created before first entry, before exit, and before re-entry are invalidated. The final removal/free stops the listener and prevents port conflicts.
+- Controller lifetime GREEN: an accepted setting action is created by a helper-local temporary `EditController`; after the helper returns, undo/redo are invoked directly through ProjectSettings' compat history. Exact in-memory values and `ConfigFile` on-disk values are verified in both directions, proving the history retains the callback receiver.
+- Focused command: `$env:GODOT_MCP_TOKEN='0123456789abcdef0123456789abcdef'; Godot --headless --editor --path tests/fixtures/godot_project --script tests/godot/phase_3_resource_project_smoke.gd` — exit 0, `PASS phase 3 resource project`.
+- Full command: `$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; node tests/godot/run-smoke.mjs` — exit 0; the runner required and observed `PASS phase 3 resource project`.

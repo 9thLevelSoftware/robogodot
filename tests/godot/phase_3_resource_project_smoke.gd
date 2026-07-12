@@ -5,12 +5,20 @@ const Edit = preload("res://addons/godot_control_mcp/commands/edit.gd")
 const Controller = preload("res://addons/godot_control_mcp/edit_controller.gd")
 const Compat = preload("res://addons/godot_control_mcp/godot_compat.gd")
 const Exact = preload("res://addons/godot_control_mcp/exact_variant.gd")
+const Plugin = preload("res://addons/godot_control_mcp/plugin.gd")
 var failures: Array[String] = []
 
 func _check(condition: bool, message: String) -> void:
 	if not condition: failures.append(message)
 
+func _create_temporary_setting_action(undo: EditorUndoRedoManager, key: String, value: Variant) -> Dictionary:
+	var temporary_controller := Controller.new(undo)
+	return temporary_controller.set_project_setting(key, value, "Temporary controller lifetime")
+
 func _initialize() -> void:
+	call_deferred("_run")
+
+func _run() -> void:
 	var project_file_path := ProjectSettings.globalize_path("res://project.godot")
 	var original_project_file := FileAccess.get_file_as_string(project_file_path)
 	var resource := Resource.new()
@@ -21,6 +29,18 @@ func _initialize() -> void:
 	_check(handles.get("res_0123456789abcdefghijkl") == null, "forged handle is rejected")
 	Handles.clear()
 	_check(handles.get(handle) == null, "session reset clears handles")
+	var plugin := Plugin.new()
+	var lifecycle_first_enter_handle := Handles.create(Resource.new())
+	root.add_child(plugin)
+	_check(handles.get(lifecycle_first_enter_handle) == null, "actual plugin first entry invalidates prior session handles")
+	var lifecycle_exit_handle := Handles.create(Resource.new())
+	root.remove_child(plugin)
+	_check(handles.get(lifecycle_exit_handle) == null, "actual plugin exit invalidates session handles")
+	var lifecycle_reentry_handle := Handles.create(Resource.new())
+	root.add_child(plugin)
+	_check(handles.get(lifecycle_reentry_handle) == null, "actual plugin re-entry invalidates handles created while detached")
+	root.remove_child(plugin)
+	plugin.free()
 	var collision_bytes := PackedByteArray(); collision_bytes.resize(16); collision_bytes.fill(7)
 	var collision_state := {"calls": 0}
 	var collision_source := func(_size: int) -> PackedByteArray: collision_state.calls += 1; return collision_bytes
@@ -71,6 +91,17 @@ func _initialize() -> void:
 	controller.redo()
 	_check(ProjectSettings.has_setting(absent_key) and ProjectSettings.get_setting(absent_key) == 42, "redo recreates setting")
 
+	var lifetime_key := "phase3/controller_lifetime"
+	ProjectSettings.set_setting(lifetime_key, "before"); Compat.project_settings_save()
+	var lifetime_action := _create_temporary_setting_action(undo, lifetime_key, "after")
+	_check(lifetime_action.ok and ProjectSettings.get_setting(lifetime_key) == "after", "temporary controller action applies")
+	Compat.undo_history_undo(undo, ProjectSettings)
+	var lifetime_undo_disk := ConfigFile.new()
+	_check(ProjectSettings.get_setting(lifetime_key) == "before" and lifetime_undo_disk.load(project_file_path) == OK and lifetime_undo_disk.get_value("phase3", "controller_lifetime") == "before", "history retains temporary controller receiver through exact persisted undo")
+	Compat.undo_history_redo(undo, ProjectSettings)
+	var lifetime_redo_disk := ConfigFile.new()
+	_check(ProjectSettings.get_setting(lifetime_key) == "after" and lifetime_redo_disk.load(project_file_path) == OK and lifetime_redo_disk.get_value("phase3", "controller_lifetime") == "after", "history retains temporary controller receiver through exact persisted redo")
+
 	var unsupported_key := "phase3/unsupported_setting"
 	ProjectSettings.set_setting(unsupported_key, RefCounted.new())
 	var version_before := Compat.undo_history_version(undo, ProjectSettings)
@@ -99,7 +130,7 @@ func _initialize() -> void:
 	var capped := Edit.project_setting_list_from_descriptors(excessive_descriptors, {})
 	_check(not capped.ok and "20000" in capped.hint, "project setting descriptor scan fails at explicit ceiling")
 
-	for key in [existing_key, absent_key, unsupported_key, rollback_key, "phase3/null_setting", "phase3/blocked"]: ProjectSettings.set_setting(key, null)
+	for key in [existing_key, absent_key, lifetime_key, unsupported_key, rollback_key, "phase3/null_setting", "phase3/blocked"]: ProjectSettings.set_setting(key, null)
 	Compat.project_settings_save()
 	var project_file := FileAccess.open(project_file_path, FileAccess.WRITE)
 	if project_file != null: project_file.store_string(original_project_file)
