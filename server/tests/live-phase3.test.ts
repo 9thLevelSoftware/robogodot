@@ -60,7 +60,12 @@ liveDescribe("Phase 3 public MCP acceptance (set GODOT_PATH to enable)", () => {
       const first = await call<{ path: string }>("godot_node_add", { parent: rootPath, type: "Button", name: "Emitter", properties: { text: '"before"' } });
       const second = await call<{ path: string }>("godot_node_add", { parent: rootPath, type: "Node", name: "Receiver", properties: {} });
       await call("godot_node_set_property", { path: first.path, property: "text", value: '"configured"' });
-      await call("godot_scene_instance", { parent: rootPath, scenePath: "res://fixture.tscn", name: "FixtureInstance" });
+      const instance = await call<{ path: string }>("godot_scene_instance", { parent: rootPath, scenePath: "res://fixture.tscn", name: "FixtureInstance" });
+      const historyVersion = async () => (await call<{ ok: boolean; returnValue: number }>("godot_script_run", { allowDangerous: true, args: {}, source: "func __run(_args):\n\tvar root := EditorInterface.get_edited_scene_root()\n\tvar manager := EditorInterface.get_editor_undo_redo()\n\treturn manager.get_history_undo_redo(manager.get_object_history_id(root)).get_version()" })).returnValue;
+      const beforeRejectedFlags = await historyVersion();
+      await expect(bridge.call("edit.signal_connect", { source: first.path, signal: "pressed", callable: { target: second.path, method: "queue_free" }, flags: 1.000001 })).rejects.toMatchObject({ code: "godot_error" });
+      expect(await historyVersion()).toBe(beforeRejectedFlags);
+      expect((await call<{ signals: Array<{ name: string; connectionCount: number }> }>("godot_signal_list", { path: first.path })).signals.find(signal => signal.name === "pressed")?.connectionCount).toBe(0);
       await call("godot_signal_connect", { source: first.path, signal: "pressed", callable: { target: second.path, method: "queue_free" }, flags: 0 });
       const resource = await call<{ handle: string }>("godot_resource_create", { class: "Gradient", properties: {} });
       await call("godot_resource_save", { handle: resource.handle, path: "res://acceptance.tres" });
@@ -68,17 +73,21 @@ liveDescribe("Phase 3 public MCP acceptance (set GODOT_PATH to enable)", () => {
       const settingKey = "mcp_acceptance/exact_restore";
       expect(await call("godot_project_setting_get", { key: settingKey })).toMatchObject({ exists: false });
       await call("godot_project_setting_set", { key: settingKey, value: '"temporary"' });
-      const concurrent = await Promise.all([
-        call<{ path: string }>("godot_node_add", { parent: rootPath, type: "Node", name: "FifoA", properties: {} }),
-        call<{ path: string }>("godot_node_add", { parent: rootPath, type: "Node", name: "FifoB", properties: {} }),
-      ]);
-      expect(concurrent.map(x => x.path)).toEqual([`${rootPath}/FifoA`, `${rootPath}/FifoB`]);
+      const seed = await call<{ path: string }>("godot_node_add", { parent: rootPath, type: "Node", name: "FifoSeed", properties: {} });
+      const renamePromise = call<{ path: string }>("godot_node_rename", { path: seed.path, name: "FifoRenamed" });
+      const dependentPromise = call<{ path: string }>("godot_node_add", { parent: `${rootPath}/FifoRenamed`, type: "Node", name: "Dependent", properties: {} });
+      const [renamed, dependent] = await Promise.all([renamePromise, dependentPromise]);
+      expect(renamed.path).toBe(`${rootPath}/FifoRenamed`);
+      expect(dependent.path).toBe(`${rootPath}/FifoRenamed/Dependent`);
+      expect(await call("godot_node_get", { path: dependent.path })).toMatchObject({ path: dependent.path, name: "Dependent" });
       await call("godot_scene_save", { path: "res://acceptance.tscn" });
       await call("godot_scene_open", { path: "res://acceptance.tscn", discardUnsaved: true });
-      expect((await call<{ nodes: unknown[] }>("godot_scene_tree", { limit: 100, maxDepth: 8 })).nodes).toHaveLength(6);
+      expect(await call("godot_node_get", { path: first.path })).toMatchObject({ properties: { text: "configured" } });
+      expect(await call("godot_node_get", { path: instance.path })).toMatchObject({ path: instance.path, name: "FixtureInstance" });
+      expect((await call<{ signals: Array<{ name: string; connectionCount: number }> }>("godot_signal_list", { path: first.path })).signals.find(signal => signal.name === "pressed")?.connectionCount).toBe(1);
 
       // Headless stand-in for human Ctrl-Z. Authoring above and verification below use curated tools only.
-      for (let index = 0; index < 8; index++) await call("godot_script_run", { allowDangerous: true, args: { project: index === 0 }, source: "func __run(args):\n\tvar target: Object = ProjectSettings if args.project else EditorInterface.get_edited_scene_root()\n\tvar manager := EditorInterface.get_editor_undo_redo()\n\tvar history := manager.get_history_undo_redo(manager.get_object_history_id(target))\n\tif history.has_undo(): history.undo()\n\treturn history.has_undo()" });
+      for (let index = 0; index < 9; index++) await call("godot_script_run", { allowDangerous: true, args: { project: index === 0 }, source: "func __run(args):\n\tvar target: Object = ProjectSettings if args.project else EditorInterface.get_edited_scene_root()\n\tvar manager := EditorInterface.get_editor_undo_redo()\n\tvar history := manager.get_history_undo_redo(manager.get_object_history_id(target))\n\tif history.has_undo(): history.undo()\n\treturn history.has_undo()" });
       expect((await call<{ nodes: unknown[] }>("godot_scene_tree", { limit: 100, maxDepth: 8 })).nodes).toHaveLength(1);
       expect(await call("godot_project_setting_get", { key: settingKey })).toMatchObject({ exists: false });
 
