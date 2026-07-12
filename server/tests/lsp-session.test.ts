@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { connect } from "node:net";
+import { PassThrough, type Duplex } from "node:stream";
 import { LspSession } from "../src/lsp/session.js";
 import { MockLspServer } from "./mock-lsp.js";
 
@@ -25,6 +26,31 @@ afterEach(async () => {
 });
 
 describe("LspSession", () => {
+  it("does not start a scheduled reconnect over an explicit retry", async () => {
+    const mock = new MockLspServer(); mocks.push(mock); await mock.start(); initializeGodot(mock);
+    let scheduled!: () => void; let connects = 0; let release!: (socket: Duplex) => void;
+    const heldSocket = new Promise<Duplex>((resolve) => { release = resolve; });
+    const socketFactory = async () => { connects++; if (connects === 1) throw new Error("offline"); return heldSocket; };
+    const schedule = (_delay: number, work: () => void) => { scheduled = work; return () => undefined; };
+    const session = new LspSession({ host: "127.0.0.1", port: mock.port, projectRootUri: "file:///project", socketFactory, schedule }); sessions.push(session);
+    await expect(session.ensureReady()).rejects.toThrow("offline");
+    const retry = session.ensureReady();
+    scheduled(); expect(connects).toBe(2);
+    const socket = connect(mock.port, "127.0.0.1"); await new Promise<void>((resolve) => socket.once("connect", resolve)); release(socket);
+    await expect(retry).resolves.toMatchObject({ generation: 1 });
+    expect(connects).toBe(2); expect(session.state).toBe("ready");
+  });
+
+  it("destroys a socketFactory result that arrives after its deadline", async () => {
+    let release!: (socket: Duplex) => void; const late = new Promise<Duplex>((resolve) => { release = resolve; });
+    const scheduled: Array<() => void> = [];
+    const session = new LspSession({ host: "127.0.0.1", port: 1, projectRootUri: "file:///project", connectTimeoutMs: 10, socketFactory: () => late, schedule: (_delay, work) => { scheduled.push(work); return () => undefined; } }); sessions.push(session);
+    await expect(session.ensureReady()).rejects.toMatchObject({ code: "timeout" });
+    const socket = new PassThrough(); release(socket);
+    await expect.poll(() => socket.destroyed).toBe(true);
+    expect(scheduled).toHaveLength(1);
+  });
+
   it("does not publish a generation closed while replay is pending", async () => {
     let release!: () => void;
     const replay = new Promise<void>((resolve) => { release = resolve; });
@@ -156,7 +182,7 @@ describe("LspSession", () => {
     expect(delays).toEqual([1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 60_000, 60_000]);
   });
 
-  it("isolates stale-generation notifications", async () => {
+  it("routes notifications from the current generation", async () => {
     const { mock, session } = await setup(); initializeGodot(mock); await session.ensureReady();
     const listener = vi.fn(); session.onNotification(listener);
     mock.notify("fresh"); await expect.poll(() => listener).toHaveBeenCalledTimes(1);

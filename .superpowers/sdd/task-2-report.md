@@ -102,3 +102,39 @@ Required full server suite, run once after the final corrections: `npm test -- -
 ### Review-fix concerns
 
 None.
+
+## Final Fix Pass — 2026-07-12
+
+### RED evidence
+
+Added deterministic tests before production changes for the delayed-reconnect/explicit-retry collision and socket-factory late resolution cleanup.
+
+Command: `cd server && npm test -- --run tests/lsp-session.test.ts tests/lsp-transport.test.ts`
+
+Result: exit 1; 2 failed and 38 passed. Exact failures:
+
+- firing the already-scheduled reconnect callback after `ensureReady()` began an explicit retry produced 3 connection attempts instead of 2;
+- a `PassThrough` returned by `socketFactory` after its 10 ms deadline remained undestroyed.
+
+### GREEN evidence
+
+Focused command: `cd server && npm test -- --run tests/lsp-session.test.ts tests/lsp-transport.test.ts`
+
+Result: 2 files passed; 40 tests passed.
+
+`npm run typecheck` passed. `npm run build` passed.
+
+Required full server suite, run once after the final implementation: `npm test -- --run` passed with 24 files passed, 2 skipped; 218 tests passed, 2 skipped.
+
+`git diff --check` passed with only Git LF-to-CRLF advisories.
+
+### Final implementation notes
+
+- `ensureReady()` cancels pending scheduled recovery before claiming an explicit attempt.
+- Each reconnect callback has an active token and the readiness promise it was scheduled for; cancelled/stale callbacks no-op when a newer attempt owns readiness.
+- Socket creation now has socket-specific late-result cleanup: if the bounded phase rejects, any subsequently resolved `Duplex` is destroyed.
+- The prior notification test was renamed to accurately state that it verifies current-generation routing.
+
+### Final concerns
+
+None.

@@ -44,7 +44,10 @@ export class LspSession {
   ensureReady(): Promise<LspReadyState> {
     if (this.state === "ready" && this.ready) return Promise.resolve(this.ready);
     if (this.state === "shutting_down" || this.state === "exited") return Promise.reject(unavailable());
-    if (!this.readiness) this.readiness = this.runAttempt(false);
+    if (!this.readiness) {
+      this.cancelReconnect?.(); this.cancelReconnect = undefined;
+      this.readiness = this.runAttempt(false);
+    }
     return this.readiness;
   }
 
@@ -78,7 +81,7 @@ export class LspSession {
       this.state = reconnecting ? "reconnecting" : "connecting";
       if (this.options.beforeConnect) await this.withExternalDeadline("beforeConnect", this.options.beforeConnect());
       this.assertPreAttachActive();
-      const socket = await this.withExternalDeadline("socket connection", this.createSocket());
+      const socket = await this.createSocketBounded();
       if (this.isClosing()) { socket.destroy(); throw unavailable(); }
       generation = ++this.generation;
       this.transport.attach(socket, generation); this.state = "initializing";
@@ -142,6 +145,15 @@ export class LspSession {
     });
   }
 
+  private async createSocketBounded(): Promise<Duplex> {
+    const work = this.createSocket();
+    try { return await this.withExternalDeadline("socket connection", work); }
+    catch (error) {
+      void work.then((socket) => socket.destroy(), () => undefined);
+      throw error;
+    }
+  }
+
   private handleUnexpectedClose(): void {
     if (this.state === "shutting_down" || this.state === "exited") return;
     this.ready = undefined; this.readiness = undefined; this.state = "reconnecting"; this.scheduleReconnect();
@@ -149,13 +161,19 @@ export class LspSession {
 
   private scheduleReconnect(): void {
     const delay = reconnectDelays[Math.min(this.reconnectAttempt, reconnectDelays.length - 1)]!; this.reconnectAttempt++;
+    const scheduledFor = this.readiness;
+    let active = true;
     const work = () => {
-      this.cancelReconnect = undefined;
+      if (!active) return; active = false;
+      if (this.cancelReconnect === cancel) this.cancelReconnect = undefined;
       if (this.state === "shutting_down" || this.state === "exited") return;
+      if (this.readiness && this.readiness !== scheduledFor) return;
       const attempt = this.runAttempt(true); this.readiness = attempt;
       void attempt.catch(() => { if (this.readiness === attempt) this.readiness = undefined; });
     };
-    this.cancelReconnect = this.options.schedule ? this.options.schedule(delay, work) : (() => { const timer = setTimeout(work, delay); return () => clearTimeout(timer); })();
+    const cancelScheduled = this.options.schedule ? this.options.schedule(delay, work) : (() => { const timer = setTimeout(work, delay); return () => clearTimeout(timer); })();
+    const cancel = () => { if (!active) return; active = false; cancelScheduled(); };
+    this.cancelReconnect = cancel;
   }
 
   private isPinnedGodot46(): boolean { const info = this.ready?.serverInfo; return info?.name.toLowerCase().includes("godot") === true && info.version?.startsWith("4.6.") === true; }
