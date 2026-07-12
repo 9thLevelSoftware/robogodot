@@ -32,6 +32,7 @@ export class LspSession {
   private replayHook: ((generation: number) => Promise<void>) | undefined;
   private cancelReconnect: (() => void) | undefined;
   private closing: Promise<void> | undefined;
+  private nativeSymbolAffirmed = false;
 
   constructor(private readonly options: LspSessionOptions) {
     this.transport.onClosed(() => this.handleUnexpectedClose());
@@ -71,7 +72,7 @@ export class LspSession {
     if (capability === "signatureHelp") return Boolean(caps.signatureHelpProvider);
     if (capability === "documentSymbols") return Boolean(caps.documentSymbolProvider);
     if (capability === "workspaceSymbols") return Boolean(caps.workspaceSymbolProvider);
-    return this.isPinnedGodot46() || this.hasGodot46CapabilityShape() || this.hasGodotNativeExtension();
+    return this.nativeSymbolAffirmed || this.hasGodotNativeExtension();
   }
 
   close(): Promise<void> {
@@ -93,6 +94,8 @@ export class LspSession {
       this.assertGenerationActive(generation);
       const initialized = this.validateInitialize(raw);
       await this.transport.notify("initialized", {});
+      this.assertGenerationActive(generation);
+      this.nativeSymbolAffirmed = this.isGodot46Info(initialized.serverInfo) || await this.probeNativeSymbol();
       this.assertGenerationActive(generation);
       if (reconnecting && this.replayHook) {
         await this.withExternalDeadline("replay", this.replayHook(generation));
@@ -180,11 +183,13 @@ export class LspSession {
     this.cancelReconnect = cancel;
   }
 
-  private isPinnedGodot46(): boolean { const info = this.ready?.serverInfo; return info?.name.toLowerCase().includes("godot") === true && info.version?.startsWith("4.6.") === true; }
-  private hasGodot46CapabilityShape(): boolean {
-    const caps = this.ready?.capabilities; if (!caps || caps.documentSymbolProvider !== true || caps.workspaceSymbolProvider !== false || !isRecord(caps.completionProvider)) return false;
-    const triggers = caps.completionProvider.triggerCharacters;
-    return Array.isArray(triggers) && triggers.includes("$") && triggers.includes(".");
+  private isGodot46Info(info: InitializeResult["serverInfo"]): boolean { return info?.name.toLowerCase().includes("godot") === true && info.version?.startsWith("4.6.") === true; }
+  private async probeNativeSymbol(): Promise<boolean> {
+    try {
+      const raw = await this.transport.request<unknown>("textDocument/nativeSymbol", { native_class: "Node", symbol_name: "" }, this.options.connectTimeoutMs);
+      if (raw === null || (!isRecord(raw) && !Array.isArray(raw))) return false;
+      return Buffer.byteLength(JSON.stringify(raw), "utf8") <= LSP_LIMITS.maxFrameBytes;
+    } catch { return false; }
   }
   private isClosing(): boolean { return this.state === "shutting_down" || this.state === "exited"; }
   private assertPreAttachActive(): void { if (this.isClosing()) throw unavailable(); }
@@ -212,6 +217,6 @@ export class LspSession {
       try { await this.transport.request("shutdown", null, LSP_LIMITS.minRequestMs); } catch { /* exit is mandatory */ }
       try { await this.transport.notify("exit", null); } catch { /* transport may already be gone */ }
     }
-    await this.transport.close(); this.ready = undefined; this.readiness = undefined; this.state = "exited";
+    await this.transport.close(); this.ready = undefined; this.nativeSymbolAffirmed = false; this.readiness = undefined; this.state = "exited";
   }
 }

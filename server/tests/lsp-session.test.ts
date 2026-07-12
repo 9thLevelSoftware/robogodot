@@ -142,11 +142,20 @@ describe("LspSession", () => {
     expect(session.supports("nativeSymbol")).toBe(true);
   });
 
-  it("recognizes Godot 4.6 capability shape when serverInfo is omitted", async () => {
+  it("affirms native symbols from the Godot-only request when serverInfo is omitted", async () => {
     const { mock, session } = await setup();
     mock.onRequest("initialize", ({ id }) => mock.result(id, { capabilities: { completionProvider: { triggerCharacters: [".", "$", "'", "\""] }, documentSymbolProvider: true, workspaceSymbolProvider: false } }));
+    mock.onRequest("textDocument/nativeSymbol", ({ id }) => mock.result(id, { name: "Node", kind: "class" }));
     await session.ensureReady();
     expect(session.supports("nativeSymbol")).toBe(true);
+  });
+
+  it("does not infer native symbols from matching generic capabilities", async () => {
+    const { mock, session } = await setup();
+    mock.onRequest("initialize", ({ id }) => mock.result(id, { capabilities: { completionProvider: { triggerCharacters: [".", "$", "'", "\""] }, documentSymbolProvider: true, workspaceSymbolProvider: false } }));
+    mock.onRequest("textDocument/nativeSymbol", ({ id }) => mock.error(id, -32601, "Method not found"));
+    await session.ensureReady();
+    expect(session.supports("nativeSymbol")).toBe(false);
   });
 
   it("prevents application requests before initialization completes", async () => {

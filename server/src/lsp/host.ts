@@ -20,6 +20,24 @@ const OUTPUT_LIMIT = 16_384;
 const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 const append = (current: Buffer, chunk: unknown): Buffer => Buffer.concat([current, Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))]).subarray(-OUTPUT_LIMIT);
 
+type TaskkillChild = Pick<ChildProcess, "once" | "off" | "kill">;
+export function terminateWindowsProcessTree(pid: number, timeoutMs = 2_000, spawnTaskkill: (command: string, args: string[], options: { windowsHide: true }) => TaskkillChild = (command, args, options) => nodeSpawn(command, args, options)): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let child: TaskkillChild;
+    try { child = spawnTaskkill("taskkill", ["/pid", String(pid), "/t", "/f"], { windowsHide: true }); }
+    catch (error) { reject(error); return; }
+    let settled = false; let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (error?: Error) => {
+      if (settled) return; settled = true; if (timer) clearTimeout(timer); child.off("error", onError); child.off("exit", onExit);
+      error ? reject(error) : resolve();
+    };
+    const onError = (error: Error) => finish(error);
+    const onExit = (code: number | null) => finish(code === 0 ? undefined : new Error(`taskkill exited with code ${code ?? "unknown"} for PID ${pid}.`));
+    child.once("error", onError); child.once("exit", onExit);
+    if (!settled) timer = setTimeout(() => { try { child.kill(); } catch { /* cleanup best effort */ } finish(new Error(`taskkill timed out after ${timeoutMs} ms for PID ${pid}.`)); }, timeoutMs);
+  });
+}
+
 async function probe(host: "127.0.0.1", port: number, deadlineMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = connect(port, host);
@@ -48,7 +66,7 @@ async function terminate(child: HostChild): Promise<void> {
     child.kill("SIGTERM");
     if (await Promise.race([exited.then(() => true), delay(5_000).then(() => false)])) return;
     if (process.platform === "win32" && child.pid !== undefined) {
-      await new Promise<void>((resolve) => nodeSpawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true }).once("exit", () => resolve()));
+      await terminateWindowsProcessTree(child.pid);
     } else child.kill("SIGKILL");
     await Promise.race([exited, delay(2_000)]);
   } finally { child.off("exit", onExit); }

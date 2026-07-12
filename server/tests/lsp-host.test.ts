@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { LspHost } from "../src/lsp/host.js";
+import { LspHost, terminateWindowsProcessTree } from "../src/lsp/host.js";
 
 function child() {
   const value = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter };
@@ -28,6 +28,30 @@ function fixture(overrides: { autoStart?: boolean; probe?: ReturnType<typeof vi.
 }
 
 describe("LspHost", () => {
+  it("rejects a taskkill spawn error and cleans listeners", async () => {
+    const taskkill = new EventEmitter() as EventEmitter & { kill: ReturnType<typeof vi.fn> }; taskkill.kill = vi.fn();
+    const pending = terminateWindowsProcessTree(4321, 1_000, (() => taskkill) as any);
+    taskkill.emit("error", new Error("spawn taskkill ENOENT"));
+    await expect(pending).rejects.toThrow("spawn taskkill ENOENT");
+    expect(taskkill.listenerCount("error")).toBe(0); expect(taskkill.listenerCount("exit")).toBe(0);
+  });
+
+  it("bounds a stalled taskkill child and cleans listeners", async () => {
+    const taskkill = new EventEmitter() as EventEmitter & { kill: ReturnType<typeof vi.fn> }; taskkill.kill = vi.fn();
+    await expect(terminateWindowsProcessTree(8765, 5, (() => taskkill) as any)).rejects.toThrow("timed out");
+    expect(taskkill.kill).toHaveBeenCalledOnce();
+    expect(taskkill.listenerCount("error")).toBe(0); expect(taskkill.listenerCount("exit")).toBe(0);
+  });
+
+  it("does not leave a timer when taskkill exits during listener registration", async () => {
+    vi.useFakeTimers();
+    const taskkill = new EventEmitter() as EventEmitter & { kill: ReturnType<typeof vi.fn> }; taskkill.kill = vi.fn();
+    const originalOnce = taskkill.once.bind(taskkill); taskkill.once = ((event: string, listener: (...args: any[]) => void) => {
+      const result = originalOnce(event, listener); if (event === "exit") taskkill.emit("exit", 0); return result;
+    }) as any;
+    await expect(terminateWindowsProcessTree(1111, 1_000, (() => taskkill) as any)).resolves.toBeUndefined();
+    expect(vi.getTimerCount()).toBe(0); vi.useRealTimers();
+  });
   it("attaches without spawning when the port already answers", async () => {
     const { host, spawn, terminate } = fixture();
     await expect(host.ensureAvailable()).resolves.toBe("attached");

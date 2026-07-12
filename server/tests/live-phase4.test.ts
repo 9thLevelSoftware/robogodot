@@ -6,7 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, test } from "vitest";
 import { LspClient } from "../src/lsp/client.js";
-import { LspHost } from "../src/lsp/host.js";
+import { LspHost, terminateWindowsProcessTree } from "../src/lsp/host.js";
 import { LspSession } from "../src/lsp/session.js";
 import { createServer } from "../src/server.js";
 import { allocateLoopbackPort, captureBoundedOutput, launchWithPortRetry, waitForPidExit, waitForProcessConnection, waitForProcessExit } from "./live-support.js";
@@ -28,7 +28,12 @@ function launchEditor(port: number): Launched {
 async function terminateEditor(process: Launched): Promise<void> {
   try {
     if (process.child.exitCode === null) process.child.kill("SIGTERM");
-    await waitForProcessExit(process.child, 7_000);
+    try { await waitForProcessExit(process.child, process.platform === "win32" ? 2_000 : 7_000); }
+    catch (signalError) {
+      if (process.platform !== "win32" || process.child.pid === undefined) throw signalError;
+      await terminateWindowsProcessTree(process.child.pid);
+      await waitForPidExit(process.child.pid, 5_000);
+    }
   } finally { process.capture.dispose(); }
 }
 
@@ -125,13 +130,19 @@ liveDescribe("Phase 4 live Godot 4.6 LSP acceptance (set GODOT_PATH to enable)",
       expect(JSON.stringify(result.structuredContent)).toContain("--path");
     } finally { await unavailable.close(); }
 
-    const ownedPort = await allocateLoopbackPort(); let ownedChild: ChildProcess | undefined;
+    const ownedPort = await allocateLoopbackPort(); let ownedChild: ChildProcess | undefined; let primaryFailure: unknown;
     const owned = await mcpHarness(ownedPort, true, (child) => { ownedChild = child; });
-    await call(owned.client, "godot_lsp_native_symbol", { nativeClass: "Sprite2D" });
-    expect(owned.host.ownership).toBe("owned");
-    expect(ownedChild?.pid).toBeTypeOf("number");
-    const exactChild = ownedChild!;
-    await owned.close();
-    await waitForPidExit(exactChild.pid!, 7_000);
+    try {
+      await call(owned.client, "godot_lsp_native_symbol", { nativeClass: "Sprite2D" });
+      expect(owned.host.ownership).toBe("owned");
+      expect(ownedChild?.pid).toBeTypeOf("number");
+    } catch (error) { primaryFailure = error; throw error; }
+    finally {
+      try { await owned.close(); if (ownedChild?.pid !== undefined) await waitForPidExit(ownedChild.pid, 7_000); }
+      catch (cleanupError) {
+        if (primaryFailure instanceof Error) primaryFailure.message += `\nCleanup failure: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`;
+        else throw cleanupError;
+      }
+    }
   }, 45_000);
 });

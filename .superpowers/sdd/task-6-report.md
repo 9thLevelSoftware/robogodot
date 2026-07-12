@@ -83,3 +83,54 @@ The skips are the existing environment-gated live/archive suites. The explicitly
 - Unavailable hints include exact allocated `--lsp-port` and `--path` arguments.
 - Owned teardown observes the exact child PID captured from the production host spawn.
 - `git diff --check` passed (only Git's local LF-to-CRLF warnings were printed).
+
+## Follow-up hardening
+
+After review, native-symbol capability detection was tightened and teardown paths were hardened further.
+
+- Captured the exact serverInfo-omitted Godot initialize result. It contains only generic LSP capabilities and no affirmative Godot-specific extension field.
+- Removed the generic capability-shape heuristic. When explicit `serverInfo` does not identify Godot 4.6, initialization now makes a bounded request to Godot's proprietary `textDocument/nativeSymbol` method and enables the capability only after a valid bounded object/array response.
+- Added an impostor test with the identical generic capability shape whose proprietary request returns method-not-found; native symbols remain disabled.
+- Wrapped owned-host calls/assertions in `try/finally`, always closes the owned harness, condition-checks its exact PID, and retains the primary failure while appending a cleanup failure.
+- Visible editor cleanup now escalates on Windows from bounded signal waiting to exact-PID `taskkill /pid <pid> /t /f`, followed by exact-PID liveness polling.
+- Production taskkill now has finite timeout handling, synchronous/spawn-error handling, nonzero-exit handling, listener/timer cleanup, and no process-name lookup. Tests cover spawn error, stalled child, and synchronous exit during listener registration.
+
+Focused command:
+
+`cd server; npm test -- --run tests/live-support.test.ts tests/lsp-session.test.ts tests/lsp-host.test.ts`
+
+```
+Test Files  3 passed (3)
+Tests       50 passed (50)
+Exit code   0
+```
+
+Real live command (same exact `GODOT_PATH` and fixture `GODOT_PROJECT_PATH` shown above):
+
+```
+Test Files  1 passed (1)
+Tests       2 passed (2)
+Duration    12.29s
+Exit code   0
+```
+
+Full verification before the final timer-race test:
+
+```
+Test Files  28 passed | 3 skipped (31)
+Tests       293 passed | 4 skipped (297)
+typecheck   exit 0
+build       exit 0
+```
+
+Fresh final combined verification after all changes:
+
+`$env:GODOT_PATH='<exact supplied executable>'; $env:GODOT_PROJECT_PATH=(Resolve-Path '..\tests\fixtures\godot_project'); npm run test:live:phase4; npm test -- --run; npm run typecheck; npm run build`
+
+```
+Phase 4 live: 1 file passed, 2 tests passed, duration 8.73s
+Full suite:   31 files passed, 298 tests passed (live environment enabled, so no skips)
+typecheck:    exit 0
+build:        exit 0
+overall:      exit 0
+```
