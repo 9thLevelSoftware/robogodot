@@ -1,145 +1,61 @@
-# Phase 3 Task 2 report
+# Phase 4 Task 2 Report
 
-## RED
+## Status
+
+Implemented the initialized LSP session lifecycle, capability reporting, reconnect/replay behavior, generation isolation, and graceful shutdown. No later-phase work was performed.
+
+## Changes
+
+- Added `LspSession`, its exact lifecycle states/options, coalesced readiness, request/notification readiness gates, reconnect backoff, replay hook, and graceful close.
+- Added generation-scoped `LspReadyState` and the six-value `LspCapability` union.
+- Validated initialize results before `initialized`, retained raw server capabilities, and implemented strict standard capability mapping plus pinned Godot 4.6/native-extension compatibility.
+- Added focused lifecycle tests for initialization ordering/coalescing, honest capabilities, request ordering, disconnect rejection, reconnect/replay ordering, capped backoff, generation-tagged notifications, and shutdown/exit.
+- Minimal Task 1 integration correction: `LspTransport.notify()` now resolves after the socket write callback. The shutdown test proved that resolving immediately allowed `close()` to destroy the socket before the required `exit` notification reached the peer. No Task 1 public contract changed.
+
+## TDD Evidence
+
+### RED
 
 Command:
 
-`cd server && npm test -- --run tests/phase3-node-tools.test.ts`
+`cd server && npm test -- --run tests/lsp-session.test.ts`
 
-Observed: exit 1; 1 failed file, 4 failed tests. Tool listing returned no node tools, bridge dispatch count was zero, and unknown tools had no normalized structured error. This was the expected missing-feature failure.
+Result: exit 1. Vitest failed to import `../src/lsp/session.js`; 1 failed suite, 0 tests collected. This was the expected missing-feature failure before production implementation.
 
-Real Godot integration RED:
+First post-implementation lifecycle run also exposed two integration failures: `initialized` and `exit` had not reached the mock before readiness/close completed. Result: 4 passed, 2 failed. This led to the minimal write-completion correction in `LspTransport.notify()` and polling at the mock boundary.
 
-`$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; node tests/godot/run-smoke.mjs`
+Typecheck then provided a RED integration signal (`TS2367` twice) for async state narrowing in `connectAndInitialize`; the state check was moved behind `isClosing()`.
 
-Observed: exit 1 after prior smokes passed. `commands/edit.gd` failed compilation on inferred return types, so the eight edit commands could not register and the Task 2 smoke timed out. This was corrected with explicit `Dictionary`/`Variant` types before the GREEN run.
+### GREEN
 
-## GREEN and implementation
+Lifecycle-only command:
 
-- `server/src/tools/node.ts`: registers exactly eight public node tools, strict inputs, UTF-8 byte bounds, annotations, curated response validation, mutation-lane invalidations, and the exact three-method/zero-argument read-only allowlist.
-- `server/src/server.ts`: installs the node slice with a shared `MutationLane`.
-- `addons/godot_control_mcp/commands/edit.gd`: canonical edited-scene path resolution, live property descriptors, Variant parsing/serialization, compact stale-tree hints, ownership, and eight RPC handlers.
-- `addons/godot_control_mcp/edit_controller.gd`: inverse operations for delete, reparent, and duplicate in addition to the approved add/rename/property foundation.
-- `addons/godot_control_mcp/plugin.gd`: registers the eight `edit.node_*` methods.
-- `server/tests/phase3-node-tools.test.ts`: public MCP names, strict schemas, annotations, mapping, UTF-8 rejection, unsafe method rejection, and malformed response normalization.
-- `tests/godot/phase_3_node_smoke.gd` and `tests/fixtures/godot_project/phase3/node_fixture.tscn`: real editor add/undo/redo, initial property, rename, Variant property set, duplicate, reparent, delete, stale path, and prototype-like property coverage.
-- `tests/godot/run-smoke.mjs`: includes the Task 2 editor smoke.
-- Updated earlier exact tool-list assertions to account for the new public slice.
+`cd server && npm test -- --run tests/lsp-session.test.ts`
 
-## Verification
+Result after implementation correction: 1 file passed, 6 tests passed.
 
-Focused command:
+Final focused command:
 
-`cd server && npm test -- --run tests/phase3-node-tools.test.ts tests/type-parser.test.ts && npm run typecheck && npm run build`
+`cd server && npm test -- --run tests/lsp-transport.test.ts tests/lsp-session.test.ts && npm run typecheck`
 
-Observed: 2 files passed, 42 tests passed; typecheck and build exited 0.
+Result: 2 files passed, 29 tests passed; TypeScript typecheck passed.
 
-Full server suite:
+Required full server suite (run once):
 
 `cd server && npm test -- --run`
 
-Observed: 19 files passed, 1 skipped; 156 tests passed, 1 skipped; exit 0.
+Result: 24 files passed, 2 skipped; 206 tests passed, 2 skipped.
 
-Real Godot:
-
-`$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; node tests/godot/run-smoke.mjs`
-
-Observed: exit 0, including `PASS phase 3 edit controller foundation`, `PASS phase 3 undoable node tools`, and all prior/lifecycle smoke pass markers.
+`git diff --check` also passed (only Git's existing LF-to-CRLF advisory was printed).
 
 ## Self-review
 
-- Scope is limited to the eight Task 2 tools; scene instancing and later-phase APIs were not added.
-- Read-only methods are exactly `get_path`, `get_child_count`, and `is_inside_tree`, and the public schema requires an empty argument tuple.
-- Mutation calls are serialized and invalidate scene plus affected-node tags; reads bypass the lane.
-- Live property lookup uses own Godot metadata iteration, so prototype-like JavaScript keys are not privileged.
-- Removed/duplicated subtrees are retained through UndoRedo references; reparent snapshots original parent/index/owner/global transform.
+- Reconnect cancellation and explicit shutdown states prevent close-triggered reconnects.
+- Reconnect delay sequence is exactly `1000, 2000, 4000, 8000, 16000, 32000, 60000`, then remains capped at `60000`.
+- Replay is awaited while state remains `initializing`; only then is generation-ready state published.
+- Session notification listeners receive only events for the currently ready generation and subscriber exceptions remain isolated.
+- Shutdown uses the transport's bounded minimum request deadline; `exit` remains mandatory after shutdown errors.
 
 ## Concerns
 
-- The Mono editor reports a missing .NET 8.0.28 SDK and renderer/object leak warnings on shutdown; these are environment noise already present in the suite and do not affect exit status.
-- Later lifecycle scans can report a pre-existing global script-class cache collision (`GodotMCPTypeParse hides a global script class`) after repeatedly copying the addon in one runner invocation. The isolated Task 2 editor smoke compiles and passes, and the runner exits 0.
-
-## Review remediation RED/GREEN
-
-RED command:
-
-`cd server && npm test -- --run tests/phase3-node-tools.test.ts`
-
-Observed: exit 1; 2 failed, 4 passed. A 256-byte property name was rejected before dispatch (expected one call, received zero), and `NaN` was dispatched (expected two calls, received three). These failures directly demonstrated the incorrect 255-byte property bound and permissive `z.unknown()` Variant input.
-
-Godot integration RED:
-
-`$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; node tests/godot/run-smoke.mjs`
-
-Observed: exit 1 in the expanded node smoke. Canonical comparison initially used the editor-internal scene-tree path rather than the external `/root/<edited-scene>` namespace, causing valid add/rename operations to fail. `_path` was corrected to canonicalize relative to the edited scene root.
-
-GREEN focused server command:
-
-`cd server && npm test -- --run tests/phase3-node-tools.test.ts tests/type-parser.test.ts && npm run typecheck && npm run build`
-
-Observed: exit 0; 2 files passed, 46 tests passed; typecheck and build passed.
-
-GREEN full server command:
-
-`cd server && npm test -- --run`
-
-Observed: exit 0; 19 files passed, 1 skipped; 160 tests passed, 1 skipped.
-
-GREEN focused Godot command used a clean fixture addon copy and fresh port with `phase_3_node_smoke.gd`.
-
-Observed: exit 0 with `PASS phase 3 undoable node tools`. The smoke asserts exact forward/history/undo/redo behavior for add, rename, property, duplicate, reparent, and delete; subtree/owner/index/global-transform restoration; invalid primitive and object property types; invalid initial properties; traversal rejection; and bounded hierarchical stale hints.
-
-GREEN full Godot command:
-
-`$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; $env:GODOT_MCP_SMOKE_PORT='19223'; node tests/godot/run-smoke.mjs`
-
-Observed: exit 0 in 29.4 seconds, including all prior pass markers and `PASS phase 3 undoable node tools`.
-
-Review implementation notes:
-
-- Shared `variantLiteralSchema = z.json()` now rejects non-JSON/cyclic/non-finite inputs before bridge dispatch while accepting Phase 2 typed JSON representations and literal strings.
-- Property and method names have independent 256-byte schemas; node names remain 255 bytes.
-- Each RPC has an exact strict response schema and plugin results no longer contain redundant inner `ok` fields.
-- All parsed properties are checked against the live descriptor type and object class before any undo action is created.
-- External paths require exact canonical resolution; stale hints contain a bounded hierarchy (64 nodes, 2048 characters).
-- New EditorInterface version-sensitive access is isolated in `godot_compat.gd`.
-
-## Final focused test hardening
-
-Server command:
-
-`cd server && npm test -- --run tests/phase3-node-tools.test.ts`
-
-Observed: exit 0; 1 file passed, 8 tests passed. The registration test now compares all four annotation fields for every mutation and read node tool.
-
-Expanded focused Godot RED used a clean fixture copy, fresh port 19224, and `phase_3_node_smoke.gd`.
-
-Observed: exit 1. The new assertions reported `redo add restores initial property and owner` and `undo delete restores explicit recursive owners`, proving the undo actions did not preserve recursive ownership. The controller was corrected to register recursive do-owner properties for add/duplicate and snapshot/register recursive undo-owner properties for delete before committing the action.
-
-Focused Godot GREEN repeated the clean-fixture command with port 19225.
-
-Observed: exit 0 in 7.7 seconds with `PASS phase 3 undoable node tools`. Delete undo restored the target at its original sibling index with child/grandchild hierarchy, distinct stored positions, and explicit owners; redo removed the retained whole subtree. Add redo restored `Vector2(10, 20)` and the edited-scene owner.
-
-Full bounded Godot command:
-
-`$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; $env:GODOT_MCP_SMOKE_PORT='19226'; node tests/godot/run-smoke.mjs`
-
-Observed: exit 0 in 27.9 seconds, including `PASS phase 3 edit controller foundation`, `PASS phase 3 undoable node tools`, and all bounded runner pass markers.
-
-## Ownerless duplicate persistence follow-up
-
-Focused RED used a clean fixture copy, fresh port 19227, and `phase_3_node_smoke.gd`.
-
-Observed: exit 1. The ownerless source subtree duplicated with correct isolated values, but failed both `duplicate assigns edited root recursively for ownerless source` and `redo duplicate restores recursive persistence owner`.
-
-The duplicate controller interface now requires an explicit `persistent_owner`; `commands/edit.gd` passes the edited scene root and never derives persistence from `source.owner`. The obsolete `_set_owner_recursive` command helper was removed.
-
-Focused GREEN repeated the node smoke with port 19228.
-
-Observed: exit 0 in 5.3 seconds with `PASS phase 3 undoable node tools`; copied root and descendant owners equal the edited root initially and after redo, and copied nodes remain isolated from their ownerless source counterparts.
-
-Full bounded command:
-
-`$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; $env:GODOT_MCP_SMOKE_PORT='19229'; node tests/godot/run-smoke.mjs`
-
-Observed: exit 0 in 27.5 seconds, including `PASS phase 3 undoable node tools` and all bounded pass markers.
+None. The only scope expansion is the minimal transport write-completion integration fix described above.

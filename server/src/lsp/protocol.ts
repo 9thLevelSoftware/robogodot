@@ -9,6 +9,12 @@ export const LSP_LIMITS = {
 
 export interface LspNotification { generation: number; method: string; params?: unknown }
 export interface LspResponseError { code: number; message: string; data?: unknown }
+export type LspCapability = "completion" | "hover" | "signatureHelp" | "documentSymbols" | "workspaceSymbols" | "nativeSymbol";
+export interface LspReadyState {
+  generation: number;
+  serverInfo?: { name: string; version?: string };
+  capabilities: Record<string, unknown>;
+}
 export type JsonRpcEnvelope =
   | { jsonrpc: "2.0"; id: number; method: string; params?: unknown }
   | { jsonrpc: "2.0"; method: string; params?: unknown }

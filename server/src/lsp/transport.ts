@@ -70,7 +70,11 @@ export class LspTransport {
     let frame: Buffer;
     try { frame = this.prepareFrame({ jsonrpc: "2.0", method, params }); }
     catch (error) { throw error instanceof GodotMcpError ? error : protocolError("LSP notification is not JSON-serializable."); }
-    try { this.socket.write(frame); } catch { throw notConnected(); }
+    const socket = this.socket;
+    await new Promise<void>((resolve, reject) => {
+      try { socket.write(frame, (error) => error ? reject(notConnected(error.message)) : resolve()); }
+      catch { reject(notConnected()); }
+    });
   }
   onNotification(listener: (event: LspNotification) => void): () => void { this.notificationListeners.add(listener); return () => this.notificationListeners.delete(listener); }
   onClosed(listener: (error: Error) => void): () => void { this.closedListeners.add(listener); return () => this.closedListeners.delete(listener); }
