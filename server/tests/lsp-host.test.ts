@@ -176,6 +176,19 @@ describe("LspHost", () => {
     expect(ownedChild.stdout.listenerCount("data")).toBe(1); expect(ownedChild.stderr.listenerCount("data")).toBe(1);
   });
 
+  it("does not return owned when the child exits during lifetime-listener handoff", async () => {
+    const ownedChild = child(); const originalOn = ownedChild.on.bind(ownedChild); let exitRegistrations = 0;
+    ownedChild.on = ((event: string, listener: (...args: any[]) => void) => {
+      const result = originalOn(event, listener); if (event === "error" && ++exitRegistrations === 2) ownedChild.emit("exit", 1, null); return result;
+    }) as any;
+    const probe = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true).mockResolvedValue(true);
+    const host = new LspHost({ lspPort: 6005, lspAutoStart: true, godotPath: "godot", projectPath: "game" }, {
+      probe, spawn: vi.fn().mockReturnValue(ownedChild), terminate: vi.fn().mockResolvedValue(undefined), delay: vi.fn().mockResolvedValue(undefined), validatePaths: vi.fn().mockResolvedValue(undefined),
+    });
+    await expect(host.ensureAvailable()).resolves.toBe("attached");
+    expect(host.ownership).toBe("attached"); await host.close();
+  });
+
   it("clears an exited owned child before attaching an external replacement", async () => {
     const probe = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true).mockResolvedValue(true);
     const { host, ownedChild, terminate } = fixture({ probe });

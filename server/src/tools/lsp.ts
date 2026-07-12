@@ -135,7 +135,7 @@ export function registerLspTools(server: McpServer, client: LspToolClient): void
     while (snapshot.diagnostics.length === 0) {
       const remaining = input.waitMs - (Date.now() - started); if (remaining < 100) break;
       const next = await client.diagnostics.waitFor(doc.uri, doc.generation, snapshot.sequence, remaining);
-      if (next.sequence <= snapshot.sequence) { snapshot = next; break; } snapshot = next;
+      if (next.sequence <= snapshot.sequence) break; snapshot = next;
     }
     return { uri: snapshot.uri, version: doc.version, fresh: snapshot.fresh, diagnostics: snapshot.diagnostics, truncated: snapshot.truncated ?? false, truncation: snapshot.truncation ?? { diagnostics: false, tags: false, relatedInformation: false, strings: false, positions: false, malformed: false } };
   } });

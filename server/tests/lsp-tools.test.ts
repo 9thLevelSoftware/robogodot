@@ -159,6 +159,16 @@ describe("public LSP tools", () => {
     } finally { await h.close(); }
   });
 
+  it("returns the causally post-sync empty publication as fresh when no later parse result arrives", async () => {
+    const empty = { uri: document.uri, generation: 2, sequence: 1, diagnostics: [], fresh: true, truncated: false, truncation: {} };
+    const lsp = fake(null); lsp.diagnostics.waitFor = vi.fn()
+      .mockResolvedValueOnce(empty)
+      .mockResolvedValueOnce({ ...empty, fresh: false });
+    const h = await harness(lsp); try {
+      expect(await h.client.callTool({ name: "godot_lsp_diagnostics", arguments: { uri: document.uri, waitMs: 100 } })).toMatchObject({ structuredContent: { diagnostics: [], fresh: true } });
+    } finally { await h.close(); }
+  });
+
   it("never reads proxied array length through a get trap", async () => {
     let lengthGets = 0; const proxied = new Proxy([{ label: "safe" }], { get: (target, key, receiver) => { if (key === "length") { lengthGets++; throw new Error("length get"); } return Reflect.get(target, key, receiver); } });
     const h = await harness(fake(proxied)); try {

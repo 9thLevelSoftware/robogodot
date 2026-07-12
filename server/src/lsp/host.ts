@@ -163,8 +163,14 @@ export class LspHost {
           throw failure;
         }
         if (reachable) {
-          detach();
           this.installOwnedListeners(child, onStdout, onStderr);
+          detach();
+          if (failure || this.ownedChild !== child || this.ownedListeners?.child !== child) {
+            const external = await this.deps.probe("127.0.0.1", this.config.lspPort, 500);
+            this.assertOpen();
+            if (external) { this.ownedChild = undefined; return this.ownership = "attached"; }
+            throw failure ?? new Error("Godot LSP host exited during startup handoff.");
+          }
           return this.ownership = "owned";
         }
         await this.deps.delay(500);

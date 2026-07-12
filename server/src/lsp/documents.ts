@@ -31,19 +31,29 @@ export class LspDocuments {
     const bytes = await this.readAuthorizedTarget(root, target);
     let text: string;
     try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { throw invalid("Document is not valid UTF-8."); }
-    const ready = await this.session.ensureReady();
     const existing = this.documents.get(uri); const contentHash = hash(bytes); const fileUri = pathToFileURL(target).href;
-    if (existing?.hash === contentHash) return this.publicDocument({ ...existing, generation: ready.generation });
+    const initialReady = await this.session.ensureReady();
+    if (existing?.hash === contentHash) return this.publicDocument({ ...existing, generation: initialReady.generation });
     if (!existing && this.documents.size >= DOCUMENT_LIMITS.maxDocuments) throw invalid("Synchronized document limit reached.");
-    const version = (existing?.version ?? 0) + 1;
-    if (existing) await this.session.notify("textDocument/didChange", { textDocument: { uri: fileUri, version }, contentChanges: [{ text }] });
-    else {
-      await this.session.notify("textDocument/didOpen", { textDocument: { uri: fileUri, languageId: "gdscript", version, text } });
-      // Godot can parse workspace scripts before initialize and then omit diagnostics on didOpen.
-      // A versioned didChange makes the synchronized contents authoritative and republishes diagnostics.
-      await this.session.notify("textDocument/didChange", { textDocument: { uri: fileUri, version: version + 1 }, contentChanges: [{ text }] });
+    const version = (existing?.version ?? 0) + 1; let ready = initialReady;
+    for (;;) {
+      const notify = (method: string, params: unknown) => this.session.notifyForGeneration
+        ? this.session.notifyForGeneration(ready.generation, method, params)
+        : this.session.notify(method, params);
+      try {
+        if (existing) await notify("textDocument/didChange", { textDocument: { uri: fileUri, version }, contentChanges: [{ text }] });
+        else {
+          await notify("textDocument/didOpen", { textDocument: { uri: fileUri, languageId: "gdscript", version, text } });
+          await notify("textDocument/didChange", { textDocument: { uri: fileUri, version: version + 1 }, contentChanges: [{ text }] });
+        }
+        await notify("textDocument/didSave", { textDocument: { uri: fileUri }, text });
+        break;
+      } catch (error) {
+        const next = await this.session.ensureReady();
+        if (next.generation === ready.generation) throw error;
+        ready = next;
+      }
     }
-    await this.session.notify("textDocument/didSave", { textDocument: { uri: fileUri }, text });
     const stored: StoredDocument = { uri, fileUri, path: target, text, version: existing ? version : version + 1, generation: ready.generation, hash: contentHash };
     this.documents.set(uri, stored); return this.publicDocument(stored);
   }

@@ -21,6 +21,28 @@ async function setup() {
 }
 
 describe("LspDocuments", () => {
+  it.each(["textDocument/didOpen", "textDocument/didChange", "textDocument/didSave"])("retries a first sync when generation drops at %s", async (dropMethod) => {
+    const { root } = await setup();
+    const file = join(root, "phase4", "generation.gd"); await writeFile(file, "extends Node\n", "utf8");
+    let generation = 1; let dropped = false;
+    const notifications: Array<{ generation: number; method: string }> = [];
+    const session = {
+      ensureReady: async () => ({ generation }),
+      notify: async () => { throw new Error("unbound notification used"); },
+      notifyForGeneration: async (expected: number, method: string) => {
+        if (!dropped && method === dropMethod) { dropped = true; generation = 2; throw new Error("generation dropped"); }
+        if (expected !== generation) throw new Error("stale generation");
+        notifications.push({ generation: expected, method });
+      },
+    };
+    const synced = await new LspDocuments(root, session).sync("res://phase4/generation.gd");
+    expect(synced).toMatchObject({ version: 2, generation: 2 });
+    expect(notifications.slice(-3)).toEqual([
+      { generation: 2, method: "textDocument/didOpen" },
+      { generation: 2, method: "textDocument/didChange" },
+      { generation: 2, method: "textDocument/didSave" },
+    ]);
+  });
   it("synchronizes exact bytes and only changes when disk bytes change", async () => {
     const { root, session, notifications } = await setup();
     const file = join(root, "phase4", "player.gd"); await writeFile(file, "extends Node\r\n", "utf8");
