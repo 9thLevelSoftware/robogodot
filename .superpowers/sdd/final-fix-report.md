@@ -54,3 +54,33 @@ Result: exit 0; 5 files passed; 87 tests passed.
 
 - No functional concerns remain within the requested scope.
 - The exact Godot smoke continues to print environment-specific Mono `.NET SDK 8.0.28` and shutdown leak warnings, but it exits 0 and all fail-closed PASS-marker checks succeed.
+
+## Second final-fix pass (2026-07-12)
+
+### Changes
+
+- Added the named `MAX_SYNC_GENERATION_ATTEMPTS = 4` boundary. A generation that drops on every attempt now terminates as structured `not_connected`; successful one-generation retry behavior is unchanged.
+- Diagnostics now creates one monotonic `performance.now()` deadline before document synchronization. Synchronization, the first publication wait, and all later empty-publication waits consume the same budget. The first wait receives only the remaining supported duration; less than the 100 ms store minimum returns structured `timeout` without starting an oversized wait.
+
+### RED evidence
+
+- `npm test -- --run tests/lsp-documents.test.ts tests/lsp-tools.test.ts`
+  - The perpetual-flap regression entered the pre-fix unbounded retry loop and the run was terminated, directly reproducing the finding.
+  - The delayed-sync regressions demonstrated that the pre-fix handler reset the full `waitMs` after synchronization and could pass an oversized first wait.
+
+### GREEN evidence
+
+- `npm test -- --run tests/lsp-documents.test.ts tests/lsp-tools.test.ts tests/lsp-diagnostics.test.ts tests/lsp-session.test.ts`
+  - Exit 0: 4 files, 69 tests passed.
+  - Includes all three successful one-retry notification-boundary cases, perpetual-flap bounded failure, delayed-sync timeout, and exact post-sync first-wait remainder.
+
+### Second-pass full verification
+
+- Typecheck and build: exit 0.
+- Full server suite: exit 0; 28 files passed, 3 skipped; 309 tests passed, 4 skipped.
+- Architecture render check: `Atlas validation passed`.
+- Architecture tests: exit 0; 90 passed, 1 skipped, 0 failed.
+- Exact configured Godot 4.6.2 smoke runner: exit 0 with all required PASS markers. The previously noted Mono SDK and teardown warning noise remains environmental and non-gating.
+- Live Phase 1: exit 0; 1/1 passed.
+- Live Phase 3: exit 0; 1/1 passed.
+- Live Phase 4: exit 0; 2/2 passed.

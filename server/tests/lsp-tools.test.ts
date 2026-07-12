@@ -169,6 +169,24 @@ describe("public LSP tools", () => {
     } finally { await h.close(); }
   });
 
+  it("charges synchronization against the diagnostics wait budget", async () => {
+    const now = vi.spyOn(performance, "now").mockReturnValueOnce(1_000).mockReturnValueOnce(1_090);
+    const lsp = fake(null); const h = await harness(lsp); try {
+      expect(await h.client.callTool({ name: "godot_lsp_diagnostics", arguments: { uri: document.uri, waitMs: 100 } })).toMatchObject({ isError: true, structuredContent: { code: "timeout" } });
+      expect(lsp.diagnostics.waitFor).not.toHaveBeenCalled();
+    } finally { now.mockRestore(); await h.close(); }
+  });
+
+  it("passes only the post-sync remainder to the first diagnostics wait", async () => {
+    const now = vi.spyOn(performance, "now").mockReturnValueOnce(2_000).mockReturnValueOnce(2_200).mockReturnValue(2_200);
+    const lsp = fake([{ message: "parse" }]);
+    lsp.diagnostics.waitFor = vi.fn().mockResolvedValue({ uri: document.uri, generation: 2, sequence: 1, diagnostics: [{ message: "parse" }], fresh: true, truncated: false, truncation: {} });
+    const h = await harness(lsp); try {
+      await h.client.callTool({ name: "godot_lsp_diagnostics", arguments: { uri: document.uri, waitMs: 1_000 } });
+      expect(lsp.diagnostics.waitFor).toHaveBeenCalledWith(document.uri, 2, 0, 800);
+    } finally { now.mockRestore(); await h.close(); }
+  });
+
   it("never reads proxied array length through a get trap", async () => {
     let lengthGets = 0; const proxied = new Proxy([{ label: "safe" }], { get: (target, key, receiver) => { if (key === "length") { lengthGets++; throw new Error("length get"); } return Reflect.get(target, key, receiver); } });
     const h = await harness(fake(proxied)); try {

@@ -130,10 +130,12 @@ function boundedTree(value: unknown, state = { nodes: 0, truncated: false }, dep
 
 export function registerLspTools(server: McpServer, client: LspToolClient): void {
   registerTool(server, { name: "godot_lsp_diagnostics", description: "Synchronize a script and return bounded pushed diagnostics." + EXCLUSION, inputSchema: z.object({ uri, waitMs: z.number().int().min(100).max(15_000).default(5_000) }).strict(), outputSchema: anyOutput, annotations: LSP_ANNOTATIONS, handler: async (input: any) => {
-    const started = Date.now(); const after = client.diagnostics.sequence; const doc = await client.sync(input.uri);
-    let snapshot = await client.diagnostics.waitFor(doc.uri, doc.generation, after, input.waitMs);
+    const deadline = performance.now() + input.waitMs; const after = client.diagnostics.sequence; const doc = await client.sync(input.uri);
+    const firstRemaining = Math.ceil(deadline - performance.now());
+    if (firstRemaining < 100) throw new GodotMcpError("timeout", "Timed out while synchronizing the document for diagnostics.", "Retry with a larger waitMs value or after the language server connection stabilizes.");
+    let snapshot = await client.diagnostics.waitFor(doc.uri, doc.generation, after, Math.min(15_000, firstRemaining));
     while (snapshot.diagnostics.length === 0) {
-      const remaining = input.waitMs - (Date.now() - started); if (remaining < 100) break;
+      const remaining = Math.ceil(deadline - performance.now()); if (remaining < 100) break;
       const next = await client.diagnostics.waitFor(doc.uri, doc.generation, snapshot.sequence, remaining);
       if (next.sequence <= snapshot.sequence) break; snapshot = next;
     }

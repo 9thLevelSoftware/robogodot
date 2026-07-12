@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { GodotMcpError } from "../errors.js";
 
 export const DOCUMENT_LIMITS = { maxUriBytes: 1_024, maxSegments: 128, maxBytes: 2 * 1_024 * 1_024, maxDocuments: 128 } as const;
+const MAX_SYNC_GENERATION_ATTEMPTS = 4;
 export interface SyncedDocument { uri: string; fileUri: string; path: string; text: string; version: number; generation: number }
 export interface LspPosition { line: number; character: number }
 interface DocumentSession {
@@ -36,7 +37,7 @@ export class LspDocuments {
     if (existing?.hash === contentHash) return this.publicDocument({ ...existing, generation: initialReady.generation });
     if (!existing && this.documents.size >= DOCUMENT_LIMITS.maxDocuments) throw invalid("Synchronized document limit reached.");
     const version = (existing?.version ?? 0) + 1; let ready = initialReady;
-    for (;;) {
+    for (let attempt = 1; ; attempt++) {
       const notify = (method: string, params: unknown) => this.session.notifyForGeneration
         ? this.session.notifyForGeneration(ready.generation, method, params)
         : this.session.notify(method, params);
@@ -51,6 +52,7 @@ export class LspDocuments {
       } catch (error) {
         const next = await this.session.ensureReady();
         if (next.generation === ready.generation) throw error;
+        if (attempt >= MAX_SYNC_GENERATION_ATTEMPTS) throw new GodotMcpError("not_connected", "Language server generation changed repeatedly during document synchronization.", "Wait for the Godot language server connection to stabilize and retry.");
         ready = next;
       }
     }

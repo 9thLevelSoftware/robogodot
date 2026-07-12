@@ -43,6 +43,19 @@ describe("LspDocuments", () => {
       { generation: 2, method: "textDocument/didSave" },
     ]);
   });
+
+  it("bounds perpetual generation flapping with a structured failure", async () => {
+    const { root } = await setup();
+    await writeFile(join(root, "phase4", "flapping.gd"), "extends Node\n", "utf8");
+    let generation = 0; let attempts = 0;
+    const session = {
+      ensureReady: async () => ({ generation: ++generation }),
+      notify: async () => { throw new Error("unbound notification used"); },
+      notifyForGeneration: async () => { attempts++; throw new Error("generation dropped"); },
+    };
+    await expect(new LspDocuments(root, session).sync("res://phase4/flapping.gd")).rejects.toMatchObject({ code: "not_connected" });
+    expect(attempts).toBe(4);
+  });
   it("synchronizes exact bytes and only changes when disk bytes change", async () => {
     const { root, session, notifications } = await setup();
     const file = join(root, "phase4", "player.gd"); await writeFile(file, "extends Node\r\n", "utf8");
