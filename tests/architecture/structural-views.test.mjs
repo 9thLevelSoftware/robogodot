@@ -89,7 +89,7 @@ const phaseEdges = new Map([
   ["FLOW-PH-004", 'PHASE_01 -->|"transport · registerTool · errors"| PHASE_03'],
   ["FLOW-PH-005", 'PHASE_02 -->|"TypeParser · IntrospectionService"| PHASE_03'],
   ["FLOW-PH-006", 'PHASE_01 -->|"config · logger · errors"| PHASE_04'],
-  ["FLOW-PH-007", 'PHASE_02 -.->|"? unresolved · Q-002"| PHASE_04'],
+  ["FLOW-PH-007", 'PHASE_02 -.->|"completed coordination · Q-002 resolved for Phase 4"| PHASE_04'],
   ["FLOW-PH-008", 'PHASE_01 -->|"transport · config · log · errors"| PHASE_05'],
   ["FLOW-PH-009", 'PHASE_02 -->|"execution contract"| PHASE_05'],
   ["FLOW-PH-010", 'PHASE_01 -->|"config · logger · errors"| PHASE_06'],

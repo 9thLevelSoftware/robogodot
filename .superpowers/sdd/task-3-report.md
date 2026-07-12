@@ -1,63 +1,121 @@
-# Phase 3 Task 3 report
+# Phase 4 Task 3 Report
 
-## Outcome
+## Status
 
-Implemented five curated scene tools and RPC commands for lifecycle, persistence, current-scene inspection, and deterministic bounded tree traversal. Lifecycle and persistence bypass `EditorUndoRedoManager`; live tests verify save does not add a history entry.
+Complete. Implemented secure document synchronization, bounded pushed diagnostics, and the reusable `LspClient` facade. No later-task work was performed.
 
-## RED evidence
+## Implementation
 
-- `cd server && npm test -- --run tests/phase3-scene-tools.test.ts`
-- Result: 3 expected failures, 1 pass. Registrations were absent, dispatch never occurred, and tree structured content was missing. The path safety case passed only because an unknown tool could not dispatch.
-- Added `tests/godot/phase_3_scene_smoke.gd`, then ran the real smoke runner.
-- Result: expected parse failures for missing `scene_open`, `scene_new`, `scene_save`, `scene_tree`, `scene_current`, and compat wrappers.
+- Added `LspDocuments` with bounded `res://` parsing, decoded traversal rejection, fatal UTF-8 decoding, 2 MiB/document and 128-document caps, realpath containment, exact CRLF/text preservation, content-hash suppression, full-text versioned changes, sorted generation replay, canonical file URIs, and UTF-16 position validation.
+- Added `LspDiagnostics` with generation/sequence-aware freshness, bounded stale fallback, timeout errors, 128-URI/500-diagnostic retention, 8,192-byte UTF-8 message truncation, and 32-entry related-information caps.
+- Added `LspClient` composition and a generation-bound session notification method so reconnect replay can send while the session is initializing without deadlocking on `ensureReady()`.
+- Added document and diagnostics tests plus requested LSP fixtures.
 
-## GREEN evidence
+## Exact TDD evidence
 
-- Focused server: 5/5 tests passed (including a separate RED/GREEN cycle for the empty path of a new unsaved scene).
-- TypeScript typecheck and build passed.
-- Full server suite: 20 files passed, 1 skipped; 165 tests passed, 1 skipped.
-- Full real Godot 4.6.2 smoke runner exited 0 and printed `PASS phase 3 scene lifecycle` (along with all prior smoke passes).
+### Initial RED
 
-## API resolution
+Command:
 
-The current official EditorInterface documentation identifies `get_unsaved_scenes()`, `close_scene()`, `add_root_node()`, `open_scene_from_path()`, `save_scene()`, and `save_scene_as()`. The supplied 4.6.2 binary does not expose `get_unsaved_scenes` or `get_open_scene_roots` at runtime and does not statically bind `close_scene`/`add_root_node`; the latter two are nevertheless present through the public dynamic method surface and the live new-scene test passes.
+`cd server && npm test -- --run tests/lsp-documents.test.ts tests/lsp-diagnostics.test.ts`
 
-All access is behind `godot_compat.gd`. Compat prefers `get_unsaved_scenes()` when available. On the supplied binary it uses public `is_object_edited(root)` for non-MCP edits and explicit lifecycle dirty state for MCP-created new scenes. The smoke test marks the root through `EditorInterface.set_object_edited(root, true)` and verifies unconfirmed discard is rejected. Missing public close/add methods return `ERR_UNAVAILABLE`, producing an actionable command failure rather than pretending success. No private editor API is used.
+Result: exit 1. Both suites failed during import with `Cannot find module '../src/lsp/documents.js'` and `Cannot find module '../src/lsp/diagnostics.js'`, confirming the new behavior was absent.
 
-## Safety and bounds
+### Initial GREEN
 
-- Server and Godot both reject noncanonical, absolute, backslash, empty-component, and traversal project paths before persistence/lifecycle work.
-- Existing different save targets require `overwrite: true`; saving the current path remains allowed.
-- Unsaved open/new requires `discardUnsaved: true`.
-- Tree traversal is iterative deterministic preorder, respects depth 1..32, page limit 1..500, numeric cursor offset, and checks the serialized response against 262,144 UTF-8 bytes before adding each node.
-- Open/new annotations are lifecycle/non-idempotent and non-destructive; save is destructive/idempotent and explicitly described as non-undoable; current/tree are read-only.
+Command:
 
-## Concern
+`cd server && npm test -- --run tests/lsp-documents.test.ts tests/lsp-diagnostics.test.ts tests/lsp-session.test.ts`
 
-Dirty-scene detection is strongest on builds exposing `get_unsaved_scenes()`. The supplied 4.6.2 fallback combines public edited-object state with MCP lifecycle state because the authoritative list method is unavailable. This is tested, but future compatibility testing should retain both API paths.
+Result: exit 0; 3 files passed, 25 tests passed.
 
-## Comprehensive fix pass RED/GREEN evidence
+### Boundary regression RED
 
-RED server run: `npm test -- --run tests/phase3-scene-tools.test.ts` produced 3 expected failures: the 1024-byte multibyte boundary/canonical cursor contract was absent, the old recursive tree schema rejected flat parent/depth records, and lifecycle responses lacked structured state/reason. After implementation the focused result is 6/6 passing.
+During self-review, changed the bounded-message test to a three-byte UTF-8 code point (`€`) so truncation ended inside a code point.
 
-The first live fix run failed on conservative state expectations and save verification. The supplied 4.6.2 artifact does not expose `get_unsaved_scenes`; the implementation now treats absence of authoritative evidence as `unknown`, with a reason, and requires `discardUnsaved:true`. `is_object_edited` is traversed across the entire edited subtree and may establish dirty state but never cleanliness. Live coverage edits a child directly and confirms both unknown and dirty states reject unconfirmed replacement.
+Command:
 
-The next live RED exposed that headless `save_scene_as` leaves the public edited-object flag set. Save-as now first verifies canonical `scene_file_path` and a fresh reload as `PackedScene`, then clears the public edited flag and rechecks it before clearing lifecycle bookkeeping or returning success. Invalid destinations, unconfirmed existing targets, confirmed pre-existing overwrite, and reload are exercised. Save uses the returned `Error` and requires `OK`. Target existence is rechecked immediately in the command before save; an unavoidable residual OS race remains between that check and Godot's write.
+`cd server && npm test -- --run tests/lsp-diagnostics.test.ts`
 
-Tree traversal is now streaming iterative preorder with a 100,000-record skip ceiling. Records are unique flat `{name,class,path,parent?,depth,children}` values where children are canonical paths. A canonical decimal cursor advances by records emitted. A 512-byte conservative JSON-RPC envelope reserve covers `{jsonrpc,id,result}` including the 128-byte maximum request id; result construction is capped at 261,632 UTF-8 bytes, and a single record that cannot fit fails rather than returning the same cursor. A live 500-node multibyte wide tree verifies the complete router response stays at most 262,144 bytes, every truncated page advances, and concatenated pages contain all 503 records without duplicates or skips.
+Result: exit 1; 1 failed, 3 passed. Expected at most 8,192 bytes but received 8,193, proving replacement-character decoding violated the byte cap.
 
-Lifecycle history validation uses per-result scene histories: open/new/reopen assert the resulting scene history has no undo action. Save, save-as, and confirmed overwrite compare the same live scene history version before/after and assert invariance. This avoids comparing histories belonging to freed/replaced roots.
+### Boundary regression GREEN
 
-Direct Godot compatibility tests accept an exact 1024-byte multibyte canonical `res://` path and reject the over-boundary value. Server tests enforce the same byte boundary and reject noncanonical decimal cursors without bridge dispatch. Corrupt existing scenes are preflighted as `PackedScene` and rejected before editor switching.
+Changed truncation to use fatal decoding and retreat to the last complete UTF-8 code point.
 
-## Router-envelope and traversal follow-up
+Command:
 
-RED added to `phase_1_smoke.gd`: a successful command returned 140,000 multibyte characters under a valid 128-byte maximally JSON-escaped control-character ID. Before the central router guard, the complete serialized JSON-RPC response exceeded 262,144 bytes. GREEN: `command_router.gd` now serializes the exact complete response with the actual ID and replaces an oversized success with a bounded structured error carrying the same ID. Error construction is also measured and reduced to a bounded fallback; the accepted 128-byte ID ceiling makes the same-ID fallback safely fit. The smoke test asserts same ID and complete response size.
+`cd server && npm test -- --run tests/lsp-diagnostics.test.ts`
 
-Tree preorder now uses only depth-proportional frames `{node,next_child_index,depth}`. It advances via `get_child_count()` and one `get_child(index)` at a time, never `get_children()` and never a pushed sibling set. A live wide-tree invariant requests cursor 1/limit 1 and asserts the internal visit count is exactly two (the skipped root and requested first child), demonstrating traversal does not visit/store the remaining 499 wide siblings. Stable order, cursor progress, and concatenated-page coverage remain green.
+Result: exit 0; 1 file passed, 4 tests passed.
 
-The overwrite TOCTOU limitation is narrowed to the unavoidable interval after the immediate target-existence revalidation and before Godot performs its write. Atomic filesystem replacement is intentionally outside Task 3 scope.
+### Final focused verification
 
-## Capped child-path record follow-up
+Command:
 
-The tree record contract now includes `childCount` and `childrenTruncated`, and `children` is explicitly capped at 64 canonical child paths. Record construction calls `get_child(index)` at most `min(childCount, 64)` times; traversal still uses its separate depth-proportional frame state to cover every node. The live wide-root cursor 0/limit 1 test has 502 children and asserts exactly 64 paths, `childCount == 502`, `childrenTruncated == true`, and an internal child-reference materialization count of 64. Existing concatenated-page checks still prove all 503 nodes appear once without gaps, so the preview cap does not alter traversal completeness or cursor semantics. The exact TypeScript response schema enforces the metadata and 64-entry maximum.
+`cd server && npm test -- --run tests/lsp-documents.test.ts tests/lsp-diagnostics.test.ts tests/lsp-session.test.ts`
+
+Result: exit 0; 3 files passed, 25 tests passed.
+
+## Final verification
+
+- `npm run typecheck`: exit 0.
+- `npm run build`: exit 0.
+- Final `npm test -- --run`: exit 0; 26 files passed, 2 skipped; 226 tests passed, 2 skipped.
+- An earlier full-suite run before the UTF-8 boundary regression also passed with the same totals; the final full run above verifies the corrected implementation.
+
+## Self-review
+
+- Verified realpath comparison uses the canonical root and target and rejects empty, absolute, or `..` relative results, covering Windows junction and symlink escapes.
+- Verified versions and stored content update only after successful notifications.
+- Verified reconnect replay uses the supplied generation and preserves sorted URI order and current versions/text.
+- Verified cached diagnostics from a different generation cannot satisfy a fresh or stale wait.
+- No unresolved correctness concerns found. Live Godot integration was not required or run; behavior is covered with filesystem and session/mock tests.
+
+## Review fixes: extension, bounded waits, normalization, and path-race narrowing
+
+### Review RED evidence
+
+1. `npm test -- --run tests/lsp-documents.test.ts tests/lsp-diagnostics.test.ts` exited 1 with six intended failures: existing `.txt` synchronized, named waiter limits/close were absent, and retained related diagnostics were not normalized.
+2. After adding the client shutdown test while temporarily retaining the old client close behavior, `npm test -- --run tests/lsp-diagnostics.test.ts` exited 1 by timing out: the pending diagnostics wait remained live after `LspClient.close()`.
+3. `npm test -- --run tests/lsp-documents.test.ts` exited 1 because the injected canonical-target change after handle open was not observed and synchronization incorrectly resolved.
+4. The final normalization boundary RED, `npm test -- --run tests/lsp-diagnostics.test.ts`, exited 1 with two intended failures: tag `999` was retained and an oversized publication URI incremented the retained publication sequence.
+5. The close-state RED, `npm test -- --run tests/lsp-diagnostics.test.ts`, exited 1 because close left publication sequence state populated. Rejection expectations were then attached before invoking close so cleanup rejection testing produces no unhandled promises.
+
+### Review GREEN evidence
+
+- Added exact lowercase `.gd` extension enforcement after canonical target validation.
+- Added named 100..15,000 ms wait bounds, a 128-waiter cap, fail-closed excess handling, and idempotent `LspDiagnostics.close(reason?)` cleanup. `LspClient.close()` now unsubscribes, closes diagnostics, then closes the session.
+- Replaced diagnostic object spreading with narrow normalization. Every retained string is capped: primary and related messages at 8,192 UTF-8 bytes; code/source/publication URI/related location URI at 1,024 bytes. Ranges, severity, tags, and numeric/string code are validated and copied; unknown/nested fields are dropped. Diagnostic and related-entry count caps remain 500 and 32.
+- Reads now open the authorized canonical path, fstat the same handle as a regular file, immediately revalidate canonical path identity and root containment, and read bounded bytes from that same handle with guaranteed handle close.
+
+Final review verification:
+
+- Focused `documents + diagnostics + session`: 3 files passed, 32 tests passed.
+- `npm run typecheck`: exit 0.
+- `npm run build`: exit 0.
+- Final review-cycle full suite run after all changes: 26 files passed, 2 skipped; 233 tests passed, 2 skipped.
+
+### Remaining filesystem limitation
+
+Portable Node APIs cannot make mutable pathname authorization and `open()` fully atomic across platforms. The post-open canonical revalidation and same-handle read narrow the race but do not claim to eliminate every hostile-filesystem substitution. Broader hostile-filesystem hardening remains explicitly deferred to Phase 6/7.
+
+## Final review fix: caller diagnostic URI bound
+
+### RED
+
+Added tests using multibyte UTF-8 caller URIs: exactly 1,024 bytes must enter the waiter lifecycle, while 1,025 bytes must return structured `invalid_args` without consuming one of 128 waiter slots.
+
+Command: `cd server && npm test -- --run tests/lsp-diagnostics.test.ts`
+
+Result: exit 1; 1 failed, 10 passed. The oversized URI was retained and returned `not_connected` only when the store closed instead of immediate `invalid_args`, demonstrating the missing pre-insertion validation.
+
+### GREEN and final verification
+
+`waitFor` now validates a nonempty string and the 1,024 UTF-8-byte limit before closed-state, cache lookup, or waiter insertion.
+
+- Diagnostics GREEN: 1 file passed, 11 tests passed.
+- Focused diagnostics/documents: 2 files passed, 17 tests passed.
+- `npm run typecheck`: exit 0.
+- `npm run build`: exit 0.
+- Full suite (single final-fix run): 26 files passed, 2 skipped; 235 tests passed, 2 skipped.

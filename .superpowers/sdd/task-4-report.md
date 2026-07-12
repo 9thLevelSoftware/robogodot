@@ -1,35 +1,117 @@
-# Phase 3 Task 4 report
+# Phase 4 Task 4 Report
 
-## Result
+## Status
 
-Implemented undoable canonical PackedScene instancing and exactly three signal tools: bounded deterministic listing, connect, and disconnect. Mutations share the server FIFO `MutationLane`; Godot validates live sources/signals/targets/methods before creating history actions. Disconnect snapshots and restores the exact `Callable` flags.
+Implemented the seven bounded public MCP LSP tools and registered them unconditionally, bringing the exact public inventory to 38. The tools use a structural `LspToolClient`, remain independent of editor WebSocket status, strictly gate negotiated capabilities, issue only the specified LSP requests, and return `not_connected` through the standalone fallback.
 
 ## TDD evidence
 
-- Server RED: `npm test -- --run tests/phase3-signal-instance-tools.test.ts` failed 3/4 because all four registrations and RPC mappings were absent.
-- Server GREEN: focused suite passes 4/4.
-- Godot RED: real Godot 4.6.2 smoke failed on nonexistent `EditController.instance_scene` before production implementation.
-- Godot GREEN: real smoke prints `PASS phase 3 signal instance`; assertions cover owner/scene identity, one-action instance undo/redo, exact callable and flags, and unchanged history for duplicate/missing operations.
+### RED 1 — public inventory and tool contracts
+
+Command:
+
+`cd server && npm test -- --run tests/lsp-tools.test.ts tests/server.test.ts tests/mcp-stdio.test.ts`
+
+Observed: exit 1; 6 failures. The new inventory tests reported 31 instead of 38, the LSP inventory was empty, and calls reported each `godot_lsp_*` tool as absent. This was the expected failure caused by the missing production registration and implementation.
+
+### GREEN 1 — seven public tools
+
+After the minimal implementation and disconnected fallback, the focused suite passed except for the fallback returning `feature_disabled`. Changing the disconnected client's capability check to raise its dedicated `not_connected` error produced a clean focused pass and a clean typecheck.
+
+### RED 2 — nested range bounds
+
+Command:
+
+`cd server && npm test -- --run tests/lsp-tools.test.ts`
+
+Observed: exit 1; 1 failure. A hover response containing line `1_000_001` and a nonnumeric line was returned instead of omitted. This proved the nested remote-range bound was not enforced.
+
+### GREEN 2 — nested range bounds
+
+Added strict remote-position normalization (integer, zero through 1,000,000) and omitted invalid ranges. The focused public verification then passed: 3 files, 14 tests.
 
 ## Verification
 
-- Full server: 21 files passed, 1 skipped; 170 tests passed, 1 skipped.
-- TypeScript typecheck: passed.
-- TypeScript build: passed.
-- Full `tests/godot/run-smoke.mjs`: exit 0, including the new signal/instance smoke. The existing Godot editor run remains noisy with expected .NET SDK/editor cache/leak diagnostics.
-- GDScript `--check-only` for modified command/controller scripts: passed.
+- Focused/public: `npm test -- --run tests/lsp-tools.test.ts tests/server.test.ts tests/mcp-stdio.test.ts` — 3 files passed, 14 tests passed.
+- Full server suite: `npm test -- --run` — 27 files passed, 2 skipped; 240 tests passed, 2 skipped.
+- Typecheck: `npm run typecheck` — passed.
+- Build: `npm run build` — passed.
+- Patch hygiene: `git diff --check` — passed.
 
-## Design notes
+The first full-suite run exposed one pre-existing Phase 3 inventory assertion that selected the last six tools. It was updated to select the six resource/project tools by their stable prefixes; the subsequent full suite passed.
 
-- PackedScene loading accepts only canonical `res://` paths and rejects non-scenes.
-- Instancing retains `scene_file_path`, assigns the instanced root to the edited-scene owner, and preserves nested scene ownership.
-- Signal list sorts signal descriptors and connection records, caps args/connections/page size, limits cursor skip, and enforces the response envelope.
-- Connect/disconnect validate the exact live signal and callable before `create_action`; invalid, duplicate, and missing operations cannot alter history.
+## Self-review
 
-## Review-fix RED/GREEN evidence
+- Confirmed all seven descriptions explicitly exclude rename, formatting, and code actions.
+- Confirmed exact annotations are read-only, non-destructive, idempotent, and closed-world.
+- Confirmed workspace symbols are never synthesized and `workspace/symbol` is not called when capability-gated.
+- Confirmed native lookup sends exactly `{ native_class, symbol_name }` and maps `null` to `found: false`.
+- Confirmed inputs, nested collections, recursion depth/node counts, positions, and normalized strings are bounded.
 
-- RED: focused server suite failed three assertions: disconnect injected `flags: 0`, connect accepted mask bit 16, and the exact list response rejected missing `connectionCount`/`connectionsTruncated` support.
-- GREEN: focused server suite passes 6/6. Connect accepts only safe integer flags 0..15; disconnect has no flags field/default and rejects extras before dispatch.
-- Real Godot GREEN: the focused smoke covers inherited and script-declared signals, typed argument metadata, page-by-page cursor progression, invalid/end cursors, multibyte names, and 260 deliberately unordered eligible connections plus an out-of-scene connection. It verifies filter → stable sort → first-256 cap, `connectionCount: 260`, and truncation metadata.
-- A real regression exposed that Godot can emit compile diagnostics yet exit 0. `run-smoke.mjs` now requires the named `PASS phase 3 signal instance` output marker; a process-runner test proves a misleading successful exit without the marker is rejected.
-- Review-fix verification: focused server 6/6; full server 172 passed and 1 skipped; typecheck/build passed; focused Godot printed the named PASS marker; full Godot runner passed with the marker enforced.
+## Concerns
+
+None. The two skipped tests are the repository's existing opt-in live tests.
+
+## Review-fix TDD evidence
+
+### RED 3 — strict normalization and honest truncation
+
+Added focused regressions for signature parameter-label unions and truncation flags, malformed completion entries and invalid text edits, getter/inherited-property rejection across completion/symbol/hover/native paths, and diagnostic omission metadata with the public position ceiling.
+
+Command: `cd server && npm test -- --run tests/lsp-tools.test.ts tests/lsp-diagnostics.test.ts`
+
+Observed: exit 1; 5 failures. Signature output retained arbitrary parameter labels without truncation metadata; completion silently omitted malformed entries and emitted an invalid edit; accessor-backed data executed a throwing getter; diagnostics lacked omission metadata and retained an out-of-public-range position.
+
+### GREEN 3 — descriptor-safe bounded results
+
+Implemented own-data-descriptor reads throughout arbitrary LSP result normalization. Inherited properties and accessors are rejected without executing getters. Completion now declares malformed/accessor/limit omissions and emits text edits only with both a valid range and bounded new text. Native malformed non-null payloads now return `godot_error`.
+
+Signature help now accepts parameter labels only as bounded strings or exact bounded integer pairs, caps signatures and parameters at 64, bounds documentation, and reports signature/parameter/malformed/string truncation separately. A subsequent RED test proved oversized parameter documentation was not setting the string flag; the focused test failed with `strings: false`, then passed after descriptor-safe source-byte accounting was added. A final RED test used a hostile property-descriptor proxy and failed with `godot_error`; guarded descriptor inspection now fails closed as a declared omission without propagating the trap.
+
+Diagnostics snapshots now carry aggregate `truncated` plus category flags for diagnostic count, tags, related information, strings, positions, and malformed entries. The public tool propagates those flags, positions are capped at 1,000,000, and diagnostic arrays/properties use descriptor-safe reads.
+
+### Review-fix verification
+
+- Focused public and diagnostics: `npm test -- --run tests/lsp-tools.test.ts tests/server.test.ts tests/mcp-stdio.test.ts tests/lsp-diagnostics.test.ts` — 4 files passed, 31 tests passed.
+- Typecheck: `npm run typecheck` — passed.
+- Build: `npm run build` — passed.
+- Full server suite: `npm test -- --run` — 27 files passed, 2 skipped; 246 tests passed, 2 skipped.
+- Patch hygiene: `git diff --check` — passed.
+
+Review-fix concerns: none. The two skipped tests remain the repository's opt-in live tests.
+
+## Second hardening pass
+
+### RED 4 — bounded array work and complete omission reporting
+
+Added regressions covering guarded array length descriptors, throwing `get`/descriptor proxies, billion-slot sparse documentation, 10,000-item dense/proxied documentation, per-tool oversized strings and malformed ranges, incomplete symbol locations, oversized tree keys, and `NaN`/infinite native values.
+
+The initial focused run hung on the billion-slot sparse documentation array because `arrayValues` directly read and iterated `value.length`; it was terminated as the expected RED evidence. After the first implementation, focused tests still failed because hover did not declare its omitted range and the proxy observed direct length reads. A diagnostics-specific RED test also threw `Error: length getter`, proving its separate array helper had the same defect.
+
+### GREEN 4 — guarded lengths and scoped normalization state
+
+Both array helpers now obtain length only through guarded own data descriptors, validate a safe nonnegative integer, cap iteration before inspecting elements, and treat descriptor/proxy failures as omissions. Signature pair labels no longer read `.length` directly. Documentation arrays have a fixed 256-item work budget independent of their final 8,192-byte text bound.
+
+Shared string, documentation, position, range, completion, symbol, and tree normalizers now mutate scoped truncation state. Completion, hover, document symbols, workspace symbols, and native output declare all tested string/range/field/key/value omissions. Symbol locations emit only when both a bounded URI and valid range exist. Native trees omit nonfinite numbers and declare truncation; MCP text and structured output remain identical.
+
+### Second-pass verification
+
+- Focused public and diagnostics: `npm test -- --run tests/lsp-tools.test.ts tests/server.test.ts tests/mcp-stdio.test.ts tests/lsp-diagnostics.test.ts` — 4 files passed, 36 tests passed.
+- Typecheck: `npm run typecheck` — passed.
+- Build: `npm run build` — passed.
+- Full server suite: `npm test -- --run` — 27 files passed, 2 skipped; 251 tests passed, 2 skipped.
+- Patch hygiene: `git diff --check` — passed.
+
+Second-pass concerns: none. The two skipped tests remain the repository's opt-in live tests.
+
+## Final narrow completion fix
+
+### RED 5
+
+Added object-form completion regressions for an accessor-backed `items` property and a proxy whose `getOwnPropertyDescriptor` trap throws for `items`. The focused test failed because both safely returned empty items but incorrectly reported `truncated: false`; the accessor getter was not executed.
+
+### GREEN 5
+
+The completion handler now creates its scoped normalization state before inspecting the root result and obtains object-form `items` through the state-aware `field` helper. A genuinely absent property remains a normal empty result, while accessors and descriptor failures return empty items with `truncated: true` and no exception.
+
+Final verification: `tests/lsp-tools.test.ts` passed 15/15; typecheck and build passed; the full server suite passed 252 tests with the 2 existing opt-in live tests skipped; `git diff --check` passed.

@@ -1,9 +1,72 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, test, vi } from "vitest";
-import { captureBoundedOutput, launchWithPortRetry, liveTimeoutBudget, waitForProcessConnection } from "./live-support.js";
+import { allocateLoopbackPort, captureBoundedOutput, closeAllInOrder, createIsolatedGodotProject, launchWithPortRetry, liveTimeoutBudget, runCleanupSteps, waitForPidExit, waitForProcessConnection, waitForProcessExit } from "./live-support.js";
 
 describe("live Godot process support", () => {
+  test("attempts every MCP close in order and preserves the first error", async () => {
+    const calls: string[] = [];
+    await expect(closeAllInOrder([
+      async () => { calls.push("client"); throw new Error("client close failed"); },
+      async () => { calls.push("server"); throw new Error("server close failed"); },
+      async () => { calls.push("lsp"); }, async () => { calls.push("host"); },
+    ])).rejects.toThrow("client close failed");
+    expect(calls).toEqual(["client", "server", "lsp", "host"]);
+  });
+
+  test("copies an isolated Godot project without volatile .godot state", async () => {
+    const source = await mkdtemp(join(tmpdir(), "phase4-source-")); let isolated: string | undefined;
+    try {
+      await mkdir(join(source, ".godot")); await mkdir(join(source, "phase4"));
+      await writeFile(join(source, "project.godot"), "[application]\n");
+      await writeFile(join(source, ".godot", "volatile"), "no"); await writeFile(join(source, "phase4", "fixture.gd"), "extends Node\n");
+      isolated = await createIsolatedGodotProject(source);
+      await expect(readFile(join(isolated, "project.godot"), "utf8")).resolves.toContain("application");
+      await expect(readFile(join(isolated, "phase4", "fixture.gd"), "utf8")).resolves.toContain("extends Node");
+      await expect(readFile(join(isolated, ".godot", "volatile"), "utf8")).rejects.toThrow();
+    } finally { if (isolated) await rm(isolated, { recursive: true, force: true }); await rm(source, { recursive: true, force: true }); }
+  });
+  test("attempts every cleanup step and preserves the primary failure", async () => {
+    const primary = new Error("assertion failed"); const calls: number[] = [];
+    await runCleanupSteps(primary, [async () => { calls.push(1); throw new Error("restore failed"); }, async () => { calls.push(2); throw new Error("close failed"); }, async () => { calls.push(3); }]);
+    expect(calls).toEqual([1, 2, 3]); expect(primary.message).toContain("restore failed"); expect(primary.message).not.toContain("close failed");
+  });
+
+  test("attempts every cleanup step and throws the first cleanup failure without a primary", async () => {
+    const calls: number[] = [];
+    await expect(runCleanupSteps(undefined, [async () => { calls.push(1); throw new Error("first"); }, async () => { calls.push(2); throw new Error("second"); }])).rejects.toThrow("first");
+    expect(calls).toEqual([1, 2]);
+  });
+  test("allocates a currently unused loopback port", async () => {
+    const port = await allocateLoopbackPort();
+    expect(port).toBeGreaterThan(0);
+    expect(port).toBeLessThanOrEqual(65_535);
+  });
+
+  test("waits for the exact child process exit without polling process names", async () => {
+    const child = new EventEmitter() as EventEmitter & { exitCode: number | null; pid?: number };
+    child.exitCode = null; child.pid = 1234;
+    const pending = waitForProcessExit(child, 1_000);
+    child.exitCode = 0; child.emit("exit", 0);
+    await expect(pending).resolves.toBeUndefined();
+    expect(child.listenerCount("exit")).toBe(0);
+  });
+
+  test("reports the exact PID when teardown misses its deadline", async () => {
+    const child = new EventEmitter() as EventEmitter & { exitCode: number | null; pid?: number };
+    child.exitCode = null; child.pid = 5678;
+    await expect(waitForProcessExit(child, 5)).rejects.toThrow("PID 5678 did not exit");
+    expect(child.listenerCount("exit")).toBe(0);
+  });
+
+  test("condition-polls exact PID liveness without process-name searches", async () => {
+    let probes = 0;
+    await waitForPidExit(2468, 1_000, () => ++probes < 3);
+    expect(probes).toBe(3);
+  });
   test("continuously drains output while retaining only the bounded diagnostic tail", () => {
     const stdout = new PassThrough();
     const stderr = new PassThrough();

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-These four state views isolate the independently recoverable lifecycles behind editor transport, Godot LSP document synchronization, the managed game process, and Godot DAP. The WebSocket state machine is source-defined. The LSP, process, and DAP state partitions are explicitly marked as inferred projections of source-defined operations; they do not claim that the source declares equivalent state machines.
+These four state views isolate the independently recoverable lifecycles behind editor transport, Godot LSP document synchronization, the managed game process, and Godot DAP. The WebSocket state machine is source-defined. The Phase 4 LSP view now maps implemented operations and generation boundaries; its named diagram states remain a documentary projection rather than an exported runtime enum. The unimplemented Phase 5 process and DAP partitions remain inferred projections.
 
 ## Source baseline
 
@@ -73,7 +73,7 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
   accTitle: Godot LSP connection and document lifecycle
-  accDescr: An inferred lifecycle projects the explicit TCP connect, initialize and initialized handshake, didOpen and didChange synchronization, connection-drop recovery, reconnect, shutdown, and exit operations. Every inferred transition uses a normal arrow and carries its evidence status in the label.
+  accDescr: This documentary state projection maps implemented Phase 4 TCP connect, initialize and initialized handshake, exact-disk didOpen and didChange synchronization, generation-isolated reconnect, and owned-child-only shutdown. State names remain inferred and every transition uses a normal arrow with its evidence status in the label.
   direction TB
 
   %% atlas-node: STATE-LSP-DISCONNECTED
@@ -117,7 +117,7 @@ stateDiagram-v2
   LSP_SHUTTING_DOWN --> LSP_EXITED : [INFERRED] exit
 ```
 
-**Source status.** Phase 4 explicitly specifies TCP connection, LSP initialization, document notifications, reconnect behavior, shutdown, and exit operations. It does not declare these eight states or this state machine, so every state and transition is an **[INFERRED]** projection of those operations.
+**Source status.** Phase 4 is implemented for TCP connection, initialization, exact-disk document synchronization, generation-scoped reconnect isolation, and graceful protocol shutdown. `LspHost` attaches to an existing visible editor when available and has owned-child-only shutdown: it terminates only the opt-in headless child it spawned. The eight labels below remain **[INFERRED]** documentary projections and are not a public runtime enum.
 
 **Operational invariant.** `didOpen` follows a completed initialize/initialized handshake, and `didChange` preserves a synchronized open document. A dropped ready or synchronized connection enters recovery; graceful termination follows `shutdown` then `exit` without inventing additional transitions.
 
@@ -125,14 +125,14 @@ stateDiagram-v2
 
 | State | Meaning | Evidence | Phase owner | Protocol / boundary | Source / trace / open questions |
 |---|---|---|---|---|---|
-| `STATE-LSP-DISCONNECTED` | No active Godot LSP TCP session is available. | Inferred | Phase 4 | `lsp/client.ts` connection boundary to TCP 6005. | Phase 4 §§2, 4, 6–9 · [trace](traceability.md#architecture-atlas-traceability) |
-| `STATE-LSP-TCP-CONNECTED` | TCP is open but the LSP initialize handshake has not completed. | Inferred | Phase 4 | LSP JSON-RPC framing over TCP 6005. | Phase 4 §§4, 6–8 · [trace](traceability.md#architecture-atlas-traceability) |
-| `STATE-LSP-INITIALIZING` | The client has issued `initialize` and awaits the handshake completion. | Inferred | Phase 4 | LSP initialize request and initialized notification boundary. | Phase 4 §§4, 6–8 · [trace](traceability.md#architecture-atlas-traceability) |
-| `STATE-LSP-READY` | Initialization is complete and the client may open a document or shut down. | Inferred | Phase 4 | Initialized LSP session before document synchronization. | Phase 4 §§2, 4, 6–8 · [trace](traceability.md#architecture-atlas-traceability) |
-| `STATE-LSP-DOCUMENT-SYNCED` | A document is open and subsequent changes remain synchronized. | Inferred | Phase 4 | `textDocument/didOpen` and `textDocument/didChange` notifications. | Phase 4 §§2, 4, 6–8 · [trace](traceability.md#architecture-atlas-traceability) |
-| `STATE-LSP-RECONNECTING` | The client is recovering an interrupted ready or document-synced session. | Inferred | Phase 4 | LSP TCP reconnect boundary. | Phase 4 §§6–9 · [trace](traceability.md#architecture-atlas-traceability) |
-| `STATE-LSP-SHUTTING-DOWN` | A graceful `shutdown` request is in progress before `exit`. | Inferred | Phase 4 | LSP shutdown request boundary. | Phase 4 §§6–9 · [trace](traceability.md#architecture-atlas-traceability) |
-| `STATE-LSP-EXITED` | The graceful LSP exit operation has completed the modeled lifecycle. | Inferred | Phase 4 | LSP exit notification and client teardown boundary. | Phase 4 §§6–9 · [trace](traceability.md#architecture-atlas-traceability) |
+| `STATE-LSP-DISCONNECTED` | No active Godot LSP TCP session is available. | Inferred | Phase 4 | `lsp/client.ts` connection boundary to TCP 6005. | Phase 4 implementation + tests · [trace](traceability.md#architecture-atlas-traceability) |
+| `STATE-LSP-TCP-CONNECTED` | TCP is open but the LSP initialize handshake has not completed. | Inferred | Phase 4 | LSP JSON-RPC framing over TCP 6005. | Phase 4 implementation + tests · [trace](traceability.md#architecture-atlas-traceability) |
+| `STATE-LSP-INITIALIZING` | The client has issued `initialize` and awaits the handshake completion. | Inferred | Phase 4 | LSP initialize request and initialized notification boundary. | Phase 4 implementation + tests · [trace](traceability.md#architecture-atlas-traceability) |
+| `STATE-LSP-READY` | Initialization is complete and the client may open a document or shut down. | Inferred | Phase 4 | Initialized LSP session before document synchronization. | Phase 4 implementation + tests · [trace](traceability.md#architecture-atlas-traceability) |
+| `STATE-LSP-DOCUMENT-SYNCED` | A document is open and subsequent changes remain synchronized. | Inferred | Phase 4 | `textDocument/didOpen` and `textDocument/didChange` notifications. | Phase 4 implementation + tests · [trace](traceability.md#architecture-atlas-traceability) |
+| `STATE-LSP-RECONNECTING` | The client is recovering an interrupted ready or document-synced session with stale generations isolated. | Inferred | Phase 4 | LSP TCP reconnect boundary. | Phase 4 implementation + tests · [trace](traceability.md#architecture-atlas-traceability) |
+| `STATE-LSP-SHUTTING-DOWN` | A graceful `shutdown` request is in progress before `exit`; host teardown affects only an owned child. | Inferred | Phase 4 | LSP shutdown request boundary. | Phase 4 implementation + tests · [trace](traceability.md#architecture-atlas-traceability) |
+| `STATE-LSP-EXITED` | The graceful LSP exit operation has completed the modeled lifecycle. | Inferred | Phase 4 | LSP exit notification and client teardown boundary. | Phase 4 implementation + tests · [trace](traceability.md#architecture-atlas-traceability) |
 
 ### Transition outline
 

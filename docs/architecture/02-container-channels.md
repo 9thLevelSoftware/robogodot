@@ -35,7 +35,7 @@ flowchart LR
       %% atlas-node: CH-INTROSPECTION
       CH_INTROSPECTION["CH-INTROSPECTION<br/>Introspection / API knowledge"]
       %% atlas-node: CH-CODE-INTELLIGENCE
-      CH_CODE_INTELLIGENCE["CH-CODE-INTELLIGENCE<br/>Code intelligence"]
+      CH_CODE_INTELLIGENCE["CH-CODE-INTELLIGENCE<br/>implemented · seven read-only LSP tools"]
       %% atlas-node: CH-RUNTIME-DEBUG
       CH_RUNTIME_DEBUG["CH-RUNTIME-DEBUG<br/>Runtime / debug"]
       %% atlas-node: CH-HEADLESS-BATCH-FS
@@ -50,7 +50,7 @@ flowchart LR
     %% atlas-node: SYS-CLASSDB-DOCS
     SYS_CLASSDB_DOCS["SYS-CLASSDB-DOCS<br/>live ClassDB metadata + pinned<br/>server-side 4.6.2 docs artifact"]
     %% atlas-node: CNT-GODOT-LSP
-    CNT_GODOT_LSP["CNT-GODOT-LSP<br/>Godot language server"]
+    CNT_GODOT_LSP["CNT-GODOT-LSP<br/>implemented · TCP 6005<br/>attach or owned headless child"]
     %% atlas-node: CNT-GODOT-DAP
     CNT_GODOT_DAP["CNT-GODOT-DAP<br/>Godot debug adapter"]
   end
@@ -115,12 +115,12 @@ flowchart LR
 | `CNT-TYPESCRIPT-SERVER` | Owns the MCP surface, routing, policy, safety, adapter lifecycle, and structured results. | Local control-plane process | Phases 1–8 |
 | `CH-EDITOR-MUTATION` | Carries universal and curated editor-state mutation. | Server-owned channel | Phases 2–3 |
 | `CH-INTROSPECTION` | Carries live scene, project, API, and documentation queries. | Server-owned channel | Phase 2 |
-| `CH-CODE-INTELLIGENCE` | Carries script diagnostics, symbols, completion, navigation, and edits. | Server-owned channel | Phase 4 |
+| `CH-CODE-INTELLIGENCE` | **Implemented:** carries read-only script diagnostics, document/workspace symbols, completion, hover, signature help, and native documentation; it does not apply edits. | Server-owned channel | Phase 4 |
 | `CH-RUNTIME-DEBUG` | Carries process control, output, DAP, and runtime-bridge operations. | Server-owned channel | Phase 5 |
 | `CH-HEADLESS-BATCH-FS` | Carries headless execution, batch, filesystem, UID, export, and asset work. | Server-owned channel | Phase 6 |
 | `CNT-EDITOR-PLUGIN` | Exposes the shared local editor mutation/introspection endpoint. | Godot editor process | Phase 1 |
 | `SYS-CLASSDB-DOCS` | Supplies live ClassDB metadata plus official class-reference text from the server's immutable Godot 4.6.2 offline artifact, gated to a connected 4.6.x editor. | Split editor/server knowledge surface | Phase 2 |
-| `CNT-GODOT-LSP` | Implements Godot language-server protocol behavior. | Godot editor service | Phase 4 |
+| `CNT-GODOT-LSP` | **Implemented:** supplies Godot language-server protocol behavior over TCP 6005. | Godot editor service | Phase 4 |
 | `CNT-GODOT-DAP` | Implements Godot debug-adapter protocol behavior. | Godot editor service | Phase 5 |
 | `CNT-RUNNING-GAME` | Executes the launched project and emits process output. | Child process | Phase 5 |
 | `CNT-RUNTIME-AUTOLOADS` | Performs constrained runtime inspection, input, and capture requests. | Running-game process | Phase 5 |

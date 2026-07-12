@@ -11,12 +11,21 @@ import { registerSceneTools } from "./tools/scene.js";
 import { registerSignalTools } from "./tools/signal.js";
 import { registerResourceTools } from "./tools/resource.js";
 import { registerProjectTools } from "./tools/project.js";
+import { registerLspTools, type LspToolClient } from "./tools/lsp.js";
+import { GodotMcpError } from "./errors.js";
 
-export interface ServerDependencies { bridge?: CoreBridge; mode?: SafetyMode; docsLoader?: () => Promise<DocsIndex> }
+export interface ServerDependencies { bridge?: CoreBridge; mode?: SafetyMode; docsLoader?: () => Promise<DocsIndex>; lsp?: LspToolClient }
 
 const disconnectedBridge: CoreBridge = {
   getStatus: (): ClientStatus => ({ state: "disconnected", url: "ws://127.0.0.1:9200", connectedSince: undefined, reconnectAttempt: 0, lastError: undefined }),
   call: () => Promise.reject(new Error("Bridge is not configured.")),
+};
+const lspUnavailable = () => Promise.reject(new GodotMcpError("not_connected", "The Godot language server is not configured.", "Start Godot with --editor --headless --lsp-port 6005 --path <project>, or configure the RoboGodot LSP client."));
+const disconnectedLsp: LspToolClient = {
+  diagnostics: { sequence: 0, waitFor: lspUnavailable }, sync: lspUnavailable,
+  assertPosition: () => { throw new GodotMcpError("not_connected", "The Godot language server is not configured.", "Start Godot with --editor --headless --lsp-port 6005 --path <project>, or configure the RoboGodot LSP client."); },
+  supports: () => { throw new GodotMcpError("not_connected", "The Godot language server is not configured.", "Start Godot with --editor --headless --lsp-port 6005 --path <project>, or configure the RoboGodot LSP client."); }, request: lspUnavailable,
+  ensureReady: lspUnavailable,
 };
 
 export function createServer(dependencies: ServerDependencies): McpServer {
@@ -31,5 +40,6 @@ export function createServer(dependencies: ServerDependencies): McpServer {
   registerSignalTools(server, bridge, mutationLane);
   registerResourceTools(server, bridge);
   registerProjectTools(server, bridge, mutationLane);
+  registerLspTools(server, dependencies.lsp ?? disconnectedLsp);
   return server;
 }

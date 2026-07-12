@@ -13,7 +13,7 @@ describe("resolveConfig", () => {
   it("uses the exact foundation defaults", () => {
     expect(resolveConfig({ GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" }, "C:\\repo", "win32", probes())).toEqual({
       editorHost: "127.0.0.1", editorPort: 9200, lspPort: 6005, dapPort: 6006,
-      mode: "full", debug: false, token: "0123456789abcdef0123456789abcdef",
+      mode: "full", debug: false, lspAutoStart: false, token: "0123456789abcdef0123456789abcdef",
     });
   });
 
@@ -74,5 +74,16 @@ describe("resolveConfig", () => {
 
   it("rejects an invalid mode", () => {
     expect(() => resolveConfig({ ...TOKEN_ENV, GODOT_MCP_MODE: "unsafe" }, "C:\\repo", "win32", probes())).toThrow(/GODOT_MCP_MODE/);
+  });
+
+  it.each([[undefined, false], ["false", false], ["0", false], ["true", true], ["1", true]] as const)(
+    "resolves LSP auto-start %s as %s", (raw, expected) => {
+      expect(resolveConfig({ ...TOKEN_ENV, GODOT_MCP_LSP_AUTO_START: raw }, "C:\\repo", "win32", probes()).lspAutoStart).toBe(expected);
+    },
+  );
+
+  it.each(["TRUE", "yes", "", "2"])("rejects invalid LSP auto-start %s", (raw) => {
+    expect(() => resolveConfig({ ...TOKEN_ENV, GODOT_MCP_LSP_AUTO_START: raw }, "C:\\repo", "win32", probes()))
+      .toThrow("GODOT_MCP_LSP_AUTO_START must be true, false, 1, or 0");
   });
 });

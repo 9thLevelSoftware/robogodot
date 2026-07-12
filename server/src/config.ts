@@ -13,6 +13,7 @@ export interface ResolvedConfig {
   dapPort: number;
   mode: SafetyMode;
   debug: boolean;
+  lspAutoStart: boolean;
 }
 
 export interface ResolveConfigProbes {
@@ -44,6 +45,12 @@ function readMode(raw: string | undefined): SafetyMode {
   if (raw === undefined) return "full";
   if (raw === "full" || raw === "read_only" || raw === "confirm_destructive") return raw;
   throw new Error("GODOT_MCP_MODE must be full, read_only, or confirm_destructive");
+}
+
+function readLspAutoStart(raw: string | undefined): boolean {
+  if (raw === undefined || raw === "false" || raw === "0") return false;
+  if (raw === "true" || raw === "1") return true;
+  throw new Error("GODOT_MCP_LSP_AUTO_START must be true, false, 1, or 0");
 }
 
 function findProject(cwd: string, isFile: (candidate: string) => boolean, pathApi: typeof path.win32): string | undefined {
@@ -95,6 +102,7 @@ export function resolveConfig(
     dapPort: readPort(env, "GODOT_DAP_PORT", 6006),
     mode: readMode(env.GODOT_MCP_MODE),
     debug: env.DEBUG === "true" || env.DEBUG === "1",
+    lspAutoStart: readLspAutoStart(env.GODOT_MCP_LSP_AUTO_START),
   };
   const godotPath = env.GODOT_PATH ?? discoveredGodot;
   const projectPath = env.GODOT_PROJECT_PATH ?? discoveredProject;

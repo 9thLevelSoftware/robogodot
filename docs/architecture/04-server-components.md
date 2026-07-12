@@ -28,7 +28,7 @@ flowchart TB
     %% atlas-node: CMP-SCHEMA-CONTRACTS
     CMP_SCHEMA_CONTRACTS["CMP-SCHEMA-CONTRACTS<br/>Zod input + structured output"]
     %% atlas-node: CMP-TOOL-FAMILIES
-    CMP_TOOL_FAMILIES["CMP-TOOL-FAMILIES<br/>grouped Tier A · Tier B<br/>code · runtime · batch tools"]
+    CMP_TOOL_FAMILIES["CMP-TOOL-FAMILIES<br/>Tier A · Tier B · implemented LSP<br/>runtime · batch tools"]
     %% atlas-node: CMP-RESOURCE-PROMPT-SURFACES
     CMP_RESOURCE_PROMPT_SURFACES["CMP-RESOURCE-PROMPT-SURFACES<br/>read-only resources<br/>workflow prompts"]
   end
@@ -51,7 +51,7 @@ flowchart TB
     %% atlas-node: CMP-SEMANTIC-SERVICES
     CMP_SEMANTIC_SERVICES["CMP-SEMANTIC-SERVICES<br/>TypeParser + introspection support"]
     %% atlas-node: CMP-TRANSPORT-ADAPTERS
-    CMP_TRANSPORT_ADAPTERS["CMP-TRANSPORT-ADAPTERS<br/>grouped execution-channel adapters"]
+    CMP_TRANSPORT_ADAPTERS["CMP-TRANSPORT-ADAPTERS<br/>implemented WebSocket + LSP<br/>later runtime · batch adapters"]
   end
 
   subgraph GDSCRIPT_PLUGIN["GDScript editor plugin"]
@@ -136,20 +136,20 @@ flowchart TB
 
 ## Grouped tool-family outline
 
-| Family | Responsibility | Planned server boundary |
+| Family | Responsibility | Boundary and implementation status |
 |---|---|---|
 | Tier A curated editing | Validated scene, node, signal, resource, and project mutations. | `tools/scene.ts`, `tools/node.ts`, `tools/signal.ts`, `tools/resource.ts`, and `tools/project.ts` |
 | Tier B universal primitive | Guarded editor-script execution plus live API and project introspection. | `tools/script.ts`, `tools/introspection.ts`, `util/type-parser.ts`, and `exec/guard.ts` |
-| Code intelligence | LSP diagnostics, completion, symbols, navigation, documentation, and document synchronization. | `tools/lsp.ts` backed by `lsp/client.ts` and optional `lsp/host.ts` |
+| Code intelligence | LSP diagnostics, completion, hover, signature help, symbols, native documentation, and exact-disk document synchronization. | **Implemented:** `tools/lsp.ts`, `lsp/client.ts`, `lsp/transport.ts`, `lsp/documents.ts`, and `lsp/diagnostics.ts` |
 | Runtime and debug | Child-process lifecycle, output, DAP sessions, and running-game bridge operations. | `runtime/process.ts`, `runtime/dap-client.ts`, and the sequenced runtime IPC driver |
 | Batch, filesystem, UID/export, and assets | Headless scripts, import/export, guarded project files, UID work, and optional generation. | `batch/headless.ts`, `batch/export.ts`, `fs/guard.ts`, `fs/tools.ts`, `uid/tools.ts`, and optional `assets/provider.ts` |
 
 ## Grouped adapter outline
 
-| Adapter | Mechanism | Planned boundary and ownership |
+| Adapter | Mechanism | Boundary and implementation status |
 |---|---|---|
 | WebSocket bridge | Local WebSocket plus JSON-RPC 2.0, default port 9200. | `bridge/ws-client.ts` talks to plugin `ws_server.gd`; the plugin remains the editor executor. |
-| LSP | Godot LSP JSON-RPC over TCP 6005 with document lifecycle. | `lsp/client.ts`; optional `lsp/host.ts` launches or attaches the editor language server. |
+| LSP | Godot LSP JSON-RPC over TCP 6005 with generation-scoped document lifecycle. | **Implemented:** `lsp/client.ts` attaches to an existing visible-editor listener; optional `lsp/host.ts` launches a headless owned child only when enabled. Close terminates the owned child and never an attached editor. |
 | ProcessRunner | Controlled Godot child process with bounded output and teardown. | `runtime/process.ts` owns launch, capture, stop, and cleanup. |
 | DAP | Godot Debug Adapter Protocol over TCP 6006. | `runtime/dap-client.ts` owns request correlation and debug-session state. |
 | runtime IPC | Sequenced `user://` request and response files with IDs, timeouts, bounds, and cleanup. | The TypeScript driver addresses `MCPRuntimeBridge`, `MCPInputBridge`, and `MCPScreenshotBridge` autoloads. |

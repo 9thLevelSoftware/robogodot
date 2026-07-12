@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This work-order view shows the implementation prerequisites and the contract each phase makes available to later work. Solid arrows are source-explicit handoffs. The two dotted Phase 2 arrows preserve the unresolved [Q-002](open-questions.md#architecture-open-questions) disagreement: the master plan calls Phase 2 the spine for Phases 3–6, while the Phase 4 and Phase 6 dependency headers consume only Phase 1. Phase 5 remains a solid Phase 2 dependency because its own plan explicitly consumes Phase 2 execution.
+This work-order view shows the implementation prerequisites and the contract each phase makes available to later work. Phase 4 resolves its part of [Q-002](open-questions.md#architecture-open-questions): Phase 1 is its solid API prerequisite, while completed Phase 2 is a coordination milestone and regression baseline, not an LSP API dependency. The dotted Phase 6 question remains open. Phase 5 remains a solid Phase 2 dependency because its own plan explicitly consumes Phase 2 execution.
 
 ## Source baseline
 
@@ -16,7 +16,7 @@ This work-order view shows the implementation prerequisites and the contract eac
 ```mermaid
 flowchart TB
   accTitle: Godot Control MCP phase dependencies and interface handoffs
-  accDescr: Competitive research and the master architecture feed Phase 1. Phase 1 feeds the Phase 2 spine and Phases 3 through 7. Phases 3 through 6 form a parallel work row, with unresolved dotted Phase 2 prerequisites for Phases 4 and 6. Phases 1 through 6 converge on Phase 7, which feeds Phase 8.
+  accDescr: Competitive research and the master architecture feed Phase 1. Phase 1 feeds the Phase 2 spine and Phases 3 through 7. Phases 3 through 6 form a parallel work row. Phase 2 is a completed coordination milestone for Phase 4, while its possible Phase 6 prerequisite remains unresolved. Phases 1 through 6 converge on Phase 7, which feeds Phase 8.
 
   subgraph DOCUMENTARY_INPUTS["Documentary inputs"]
     direction LR
@@ -61,7 +61,7 @@ flowchart TB
   %% atlas-flow: FLOW-PH-006
   PHASE_01 -->|"config · logger · errors"| PHASE_04
   %% atlas-flow: FLOW-PH-007
-  PHASE_02 -.->|"? unresolved · Q-002"| PHASE_04
+  PHASE_02 -.->|"completed coordination · Q-002 resolved for Phase 4"| PHASE_04
   %% atlas-flow: FLOW-PH-008
   PHASE_01 -->|"transport · config · log · errors"| PHASE_05
   %% atlas-flow: FLOW-PH-009
@@ -95,7 +95,7 @@ flowchart TB
 | `PHASE-01` | Establish MCP/stdio, the Godot WebSocket + JSON-RPC 2.0 bridge, and shared config/log/error foundations. | Nothing; greenfield root. | `JsonRpcClient.call`, `registerTool`, `command_router.gd`, `godot_compat.gd`, config, logger, and errors. | None; this is the root. | JSON-RPC unit tests, headless plugin smoke, live reconnect/version integration, and MCP Inspector probes. |
 | `PHASE-02` | Deliver the universal editor-script primitive, live ClassDB/docs introspection, and typed Variant parsing. | Phase 1 `JsonRpcClient`, `registerTool`, errors, config, and log. | Execution contract and guard, shared `TypeParser`, and plugin `IntrospectionService`. | Stub plugin echoes scripts and returns canned ClassDB fixtures. | Parser parity vectors, execution timeout/output/policy cases, live Node introspection/docs, and Tier B authoring regressions. |
 | `PHASE-03` | Deliver validated, undoable Tier A editor mutation tools. | Phase 1 transport/registry/errors and queue hook; Phase 2 `TypeParser` and `IntrospectionService`. | Tier A tool suite and plugin `EditController` wrapping mutations in UndoRedo. | Headless scratch project with one fixture scene per tool. | Happy/error paths, exact undo restoration, Tier A scene-build/full-undo flow, and concurrent-mutation serialization. |
-| `PHASE-04` | Expose Godot's LSP as project-grounded diagnostics and code-intelligence tools. | Phase 1 LSP-port config, logger, and errors; Phase 2 prerequisite strength is unresolved in `Q-002`. | Reusable `LspClient` and LSP tool set. | Mock LSP server replaying recorded TCP 6005 traffic. | Mock framing/handshake/correlation, live diagnostics/completion/native docs, and graceful unavailable behavior. |
+| `PHASE-04` | Expose Godot's LSP as project-grounded diagnostics and code-intelligence tools. | Phase 1 LSP-port config, logger, and errors. Phase 2 is a completed coordination/regression milestone, not an API prerequisite. | Implemented reusable `LspClient`, seven LSP tools, and optional owned host. | Mock LSP server replaying recorded TCP 6005 traffic. | Mock framing/handshake/correlation plus live Godot 4.6 diagnostics, completion, native docs, capability honesty, and owned-host teardown. |
 | `PHASE-05` | Run, observe, debug, and interact with a controlled game process. | Phase 1 transport/config/log/errors and explicit Phase 2 execution for runtime-bridge injection/evaluation. | `ProcessRunner`, `DapClient`, and sequenced runtime-bridge protocol/autoloads. | Tiny sample game plus recorded DAP and runtime-bridge fixtures. | Process output/stop, live bridge state/input/screenshot, breakpoint/inspect/step flow, and teardown cleanup. |
 | `PHASE-06` | Provide headless batch, guarded project-file, UID/export, and optional asset operations. | Phase 1 Godot-path/project config, logger, and errors; Phase 2 prerequisite strength is unresolved in `Q-002`. | `HeadlessRunner`, basic `FsGuard`, batch/fs/uid tools, and optional `AssetProvider`. | Godot binary plus scratch project; provider remains behind an interface. | Headless/import/export/test fixtures, FsGuard escape denial, UID repair, and feature-gated asset generation. |
 | `PHASE-07` | Apply safety, concurrency, caching, health, logging, errors, and audit behavior uniformly. | Every phase's tools plus `JsonRpcClient`, `FsGuard`, and the execution guard. | `SafetyPolicy`, `RequestQueue`, `Cache`, `Health`, and `AuditLog` registry middleware. | Test middleware against the existing tool set without changing individual tools. | Mode/confirmation tests, exec limits, serialized mutations, cache invalidation, and no-bypass conformance. |
@@ -104,6 +104,6 @@ flowchart TB
 ## Dependency interpretation
 
 - Phases 3–6 are presented as one parallel work rank. Their isolation stubs allow implementation work to begin without every live dependency, but acceptance still requires the named integration evidence.
-- `FLOW-PH-007` and `FLOW-PH-011` are dotted and textually marked `? unresolved · Q-002`. They are not silently promoted to hard prerequisites or discarded.
+- `FLOW-PH-007` records the accepted Phase 4 resolution: completed Phase 2 coordinated integration and regression coverage but is not an LSP API prerequisite. `FLOW-PH-011` remains dotted and textually marked `? unresolved · Q-002` for Phase 6.
 - `FLOW-PH-009` is solid: unlike the Phase 4 and Phase 6 headers, the Phase 5 plan explicitly consumes Phase 2 execution for runtime-bridge injection and expression evaluation.
 - Phase 7 is the convergence gate for all implemented channels; Phase 8 productionizes the hardened system.
