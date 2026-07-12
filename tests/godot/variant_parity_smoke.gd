@@ -88,4 +88,5 @@ func _run() -> void:
 		quit(1)
 		return
 	print("variant parity smoke: %d valid, %d invalid" % [fixture.valid.size(), fixture.invalid.size()])
+	print("PASS variant parity")
 	quit(0)

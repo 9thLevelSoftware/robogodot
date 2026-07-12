@@ -37,7 +37,7 @@ const mutationMessages = new Map([
   ["FLOW-MUT-015", "QUEUE->>CACHE: invalidate affected cache tags"],
   ["FLOW-MUT-016", "REGISTRY->>AUDIT: append redacted audit outcome"],
   ["FLOW-MUT-017", "REGISTRY-->>MCP_CLIENT: return structuredContent"],
-  ["FLOW-MUT-018", "EDIT->>EDIT: [UNRESOLVED] destructive project-setting exception (Q-005)"],
+  ["FLOW-MUT-018", "EDIT->>EDIT: [ACCEPTED] reject unless prior setting presence/value restores exactly (Q-005)"],
 ]);
 
 const mutationIds = [...mutationParticipants, ...mutationMessages.keys()];
@@ -251,7 +251,7 @@ test("curated editor mutation sequence preserves the normative order and failure
       "structuredContent",
       "[INFERRED]",
       "Q-007",
-      "[UNRESOLVED]",
+      "[ACCEPTED]",
       "Q-005",
     ],
   });
@@ -317,7 +317,7 @@ test("curated mutation view has exhaustive adjacent participant and relationship
     const flowId = `FLOW-MUT-${String(index + 1).padStart(3, "0")}`;
     const expectedEvidence = flowId === "FLOW-MUT-007"
       ? "Inferred"
-      : flowId === "FLOW-MUT-018" ? "Unresolved" : "Explicit";
+      : flowId === "FLOW-MUT-018" ? "Accepted" : "Explicit";
     assert.equal(row.split("|").length, 8, `relationship outline column count: ${flowId}`);
     assert.equal(row.split("|")[4].trim(), expectedEvidence, `${flowId} evidence`);
     assert.match(row.split("|")[5], /Phases? .+\/.+/, `${flowId} phase and protocol detail`);

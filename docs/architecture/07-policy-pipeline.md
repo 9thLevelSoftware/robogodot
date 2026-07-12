@@ -42,7 +42,7 @@ flowchart TD
     %% atlas-node: CMP-READ-CACHE
     READ_CACHE[("CMP-READ-CACHE<br/>concurrent reads<br/>TTL · tags")]
     %% atlas-node: CMP-REQUEST-QUEUE
-    REQUEST_QUEUE[["CMP-REQUEST-QUEUE<br/>single mutation lane<br/>FIFO · timeout · fairness<br/>backpressure · watchdog"]]
+    REQUEST_QUEUE[["CMP-REQUEST-QUEUE<br/>one shared MutationLane<br/>FIFO Phase 3 dispatch<br/>Phase 7 liveness controls deferred"]]
     %% atlas-node: CMP-HANDLER
     HANDLER["CMP-HANDLER<br/>tool handler<br/>channel adapter / local service"]
     %% atlas-node: CMP-CACHE-INVALIDATOR

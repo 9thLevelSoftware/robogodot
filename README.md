@@ -1,6 +1,6 @@
-# Godot Control MCP — Phase 2
+# Godot Control MCP — Phase 3
 
-Godot Control MCP connects an MCP host to one local Godot 4.6.x editor. Phase 2 exposes three read-only connection probes, four API-introspection tools, and one guarded universal editor-script primitive.
+Godot Control MCP connects an MCP host to one local Godot 4.6.x editor. Phase 3 exposes exactly 31 public tools: the existing eight probes, introspection, and guarded execution tools plus 23 curated editor tools. There are no aliases.
 
 ## Quickstart
 
@@ -51,6 +51,21 @@ Other environment variables:
 | `godot_api_describe_class` | Paginated members declared on a live class |
 | `godot_api_search` | Search live ClassDB class names |
 | `godot_api_class_doc` | Official offline class/member documentation |
+| `godot_node_add`, `godot_node_delete`, `godot_node_reparent`, `godot_node_rename`, `godot_node_duplicate` | Undoable scene-tree mutation |
+| `godot_node_get`, `godot_node_set_property`, `godot_node_call_method` | Typed node inspection/property mutation and allowlisted read call |
+| `godot_scene_instance` | Undoably instance a project scene |
+| `godot_scene_open`, `godot_scene_new`, `godot_scene_save`, `godot_scene_tree`, `godot_scene_current` | Scene lifecycle, explicit persistence, and bounded reads |
+| `godot_signal_list`, `godot_signal_connect`, `godot_signal_disconnect` | Bounded signal inspection and undoable connections |
+| `godot_resource_load`, `godot_resource_create`, `godot_resource_save` | Session resource handles and explicit persistence |
+| `godot_project_setting_get`, `godot_project_setting_set`, `godot_project_setting_list` | Exact project-setting reads and undoable persisted mutation |
+
+All curated in-memory mutations enter a single FIFO mutation lane before reaching Godot, preventing concurrent requests from capturing stale inverse state. Each accepted node, signal, instance, or project-setting mutation creates one `EditorUndoRedoManager` action; users undo it with normal Godot Ctrl-Z. Scene open/new are lifecycle operations, while scene/resource save are explicit persistence operations: none claims UndoRedo semantics.
+
+Curated paths must be canonical `res://` paths without backslashes, empty segments, `.` or `..`, and are bounded to 1024 UTF-8 bytes. Node paths are bounded to 1024 UTF-8 bytes; names and types to 255, and properties/methods to 256. Tree, signal, and setting reads have explicit pagination, depth/count, scan, and response-envelope bounds. `godot_node_call_method` supports only the zero-argument read-only allowlist `get_path`, `get_child_count`, and `is_inside_tree`.
+
+Resource handles are opaque, resource-only, authenticated-session-scoped values. Disconnecting the authenticated client, restarting the plugin, or restarting the editor invalidates every old handle. The Phase 3 live acceptance covers same-editor disconnect and re-authentication; the general live transport test separately covers editor-process restart. Save refuses an existing target unless overwrite is explicitly confirmed. That check intentionally has a narrow overwrite TOCTOU window; Phase 6/7 realpath containment and atomic no-replace hardening are deferred and are not claimed here.
+
+Project-setting mutation snapshots both the prior value and prior absence, preflights exact restoration, then persists do and undo. If persistence or recovery cannot be proven, it fails closed; after an unproven recovery, further setting mutations stay blocked until plugin restart and inspection. The scene dirty-state fallback is also fail-closed: when Godot cannot authoritatively prove cleanliness, lifecycle replacement requires explicit `discardUnsaved`.
 
 `godot_script_run` is the sole public execution name; there is no alias. Execution is blocked in `read_only` and `confirm_destructive`. In `full`, every call must include `allowDangerous: true`, independent of script text. Review source before allowing it: scripts run inside the editor and can mutate the project or access the host with the editor's permissions.
 
@@ -89,6 +104,7 @@ With `GODOT_PATH` set, run the real plugin/parser/execution/introspection smokes
 node tests/godot/run-smoke.mjs
 cd server
 npm run test:live
+npm run test:live:phase3
 ```
 
 If the bridge stays disconnected, verify the plugin is enabled and that `GODOT_MCP_TOKEN` and `GODOT_MCP_PORT` match in both processes. Errors are structured with an actionable hint.

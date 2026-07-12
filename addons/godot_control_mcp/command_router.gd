@@ -3,6 +3,7 @@ extends RefCounted
 
 var _commands: Dictionary = {}
 const MAX_REQUEST_ID_BYTES := 128
+const MAX_RESPONSE_BYTES := 262144
 
 func register_command(command_name: String, command: Callable) -> bool:
 	if command_name.is_empty() or not command.is_valid() or _commands.has(command_name):
@@ -45,7 +46,13 @@ func dispatch(request: Variant) -> Dictionary:
 		return _error(id, -32603, "Internal error", hint)
 	if not outcome.has("result"):
 		return _error(id, -32603, "Internal error", "Successful command outcome omitted result.")
-	return {"jsonrpc": "2.0", "id": id, "result": outcome.result}
+	var response := {"jsonrpc": "2.0", "id": id, "result": outcome.result}
+	if JSON.stringify(response).to_utf8_buffer().size() <= MAX_RESPONSE_BYTES: return response
+	return _error(id, -32603, "Internal error", "Command result exceeded the maximum JSON-RPC response size.")
 
 func _error(id: Variant, code: int, message: String, hint: String) -> Dictionary:
-	return {"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message, "data": {"hint": hint}}}
+	var response := {"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message, "data": {"hint": hint}}}
+	if JSON.stringify(response).to_utf8_buffer().size() <= MAX_RESPONSE_BYTES: return response
+	response = {"jsonrpc": "2.0", "id": id, "error": {"code": -32603, "message": "Internal error", "data": {"hint": "Error response exceeded the maximum JSON-RPC response size."}}}
+	if JSON.stringify(response).to_utf8_buffer().size() <= MAX_RESPONSE_BYTES: return response
+	return {"jsonrpc": "2.0", "id": null, "error": {"code": -32603, "message": "Internal error"}}

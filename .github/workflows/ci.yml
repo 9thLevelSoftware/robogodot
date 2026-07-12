@@ -52,4 +52,6 @@ jobs:
         run: node tests/godot/run-smoke.mjs
       - name: Live editor acceptance
         working-directory: server
-        run: npm run test:live
+        run: |
+          npm run test:live
+          npm run test:live:phase3

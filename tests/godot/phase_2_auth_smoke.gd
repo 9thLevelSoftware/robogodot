@@ -7,6 +7,7 @@ const Introspection = preload("../../addons/godot_control_mcp/commands/introspec
 const TOKEN := "0123456789abcdef0123456789abcdef"
 const PORT := 19201
 var failures: Array[String] = []
+var session_end_count := 0
 
 func _initialize() -> void:
 	call_deferred("_run")
@@ -59,6 +60,7 @@ func _run() -> void:
 	router.register_command("introspection.search", Introspection.search)
 	var server = Server.new()
 	root.add_child(server)
+	server.session_ended.connect(func(): session_end_count += 1)
 	_check(server.start(PORT, router, "short") == ERR_INVALID_PARAMETER, "server must reject a short configured token")
 	_check(not server.is_listening(), "invalid token must not open a listener")
 	_check(server.start(PORT, router, TOKEN) == OK, "authenticated server must listen")
@@ -125,6 +127,8 @@ func _run() -> void:
 	var wrong_result := await _request(wrong, {"jsonrpc":"2.0", "id":3, "method":"auth.authenticate", "params":{"token":"wrong-token-wrong-token-wrong-token"}})
 	_check(wrong_result.get("error", {}).get("code") == -32001, "wrong token must be rejected; got %s" % wrong_result)
 	await _wait_closed(wrong)
+	_check(session_end_count == 1, "only the earlier authenticated oversized peer may have ended a session")
+	session_end_count = 0
 
 	var owner := await _connect()
 	var authenticated := await _request(owner, {"jsonrpc":"2.0", "id":4, "method":"auth.authenticate", "params":{"token":TOKEN}})
@@ -160,7 +164,16 @@ func _run() -> void:
 	_check(owner.get_ready_state() == WebSocketPeer.STATE_OPEN, "second client must not displace owner")
 
 	owner.close()
+	await _wait_peer_count(server, 0, Server.HARD_CLOSE_TIMEOUT_MSEC + 500)
+	_check(session_end_count == 1, "authenticated owner disconnect must end its session exactly once")
 	server.stop()
+	_check(session_end_count == 1, "stop after owner cleanup must not duplicate session end")
+	_check(server.start(PORT, router, TOKEN) == OK, "server must restart after duplicate-cleanup check")
+	var stop_owner := await _connect()
+	var stop_authenticated := await _request(stop_owner, {"jsonrpc":"2.0", "id":7, "method":"auth.authenticate", "params":{"token":TOKEN}})
+	_check(stop_authenticated.get("result", {}).get("authenticated") == true, "stop-test owner must authenticate")
+	server.stop()
+	_check(session_end_count == 2, "stop with an authenticated owner must end its session exactly once")
 	server.queue_free()
 	print("PASS authenticated single-client transport")
 	quit(0 if failures.is_empty() else 1)
