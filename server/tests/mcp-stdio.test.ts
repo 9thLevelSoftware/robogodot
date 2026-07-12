@@ -60,6 +60,8 @@ describe("freshly built stdio server", () => {
       "godot_signal_list", "godot_signal_connect", "godot_signal_disconnect",
       "godot_resource_load", "godot_resource_create", "godot_resource_save",
       "godot_project_setting_get", "godot_project_setting_set", "godot_project_setting_list",
+      "godot_lsp_diagnostics", "godot_lsp_completion", "godot_lsp_hover", "godot_lsp_signature_help",
+      "godot_lsp_document_symbols", "godot_lsp_workspace_symbols", "godot_lsp_native_symbol",
     ]);
   });
 

@@ -1,35 +1,53 @@
-# Phase 3 Task 4 report
+# Phase 4 Task 4 Report
 
-## Result
+## Status
 
-Implemented undoable canonical PackedScene instancing and exactly three signal tools: bounded deterministic listing, connect, and disconnect. Mutations share the server FIFO `MutationLane`; Godot validates live sources/signals/targets/methods before creating history actions. Disconnect snapshots and restores the exact `Callable` flags.
+Implemented the seven bounded public MCP LSP tools and registered them unconditionally, bringing the exact public inventory to 38. The tools use a structural `LspToolClient`, remain independent of editor WebSocket status, strictly gate negotiated capabilities, issue only the specified LSP requests, and return `not_connected` through the standalone fallback.
 
 ## TDD evidence
 
-- Server RED: `npm test -- --run tests/phase3-signal-instance-tools.test.ts` failed 3/4 because all four registrations and RPC mappings were absent.
-- Server GREEN: focused suite passes 4/4.
-- Godot RED: real Godot 4.6.2 smoke failed on nonexistent `EditController.instance_scene` before production implementation.
-- Godot GREEN: real smoke prints `PASS phase 3 signal instance`; assertions cover owner/scene identity, one-action instance undo/redo, exact callable and flags, and unchanged history for duplicate/missing operations.
+### RED 1 — public inventory and tool contracts
+
+Command:
+
+`cd server && npm test -- --run tests/lsp-tools.test.ts tests/server.test.ts tests/mcp-stdio.test.ts`
+
+Observed: exit 1; 6 failures. The new inventory tests reported 31 instead of 38, the LSP inventory was empty, and calls reported each `godot_lsp_*` tool as absent. This was the expected failure caused by the missing production registration and implementation.
+
+### GREEN 1 — seven public tools
+
+After the minimal implementation and disconnected fallback, the focused suite passed except for the fallback returning `feature_disabled`. Changing the disconnected client's capability check to raise its dedicated `not_connected` error produced a clean focused pass and a clean typecheck.
+
+### RED 2 — nested range bounds
+
+Command:
+
+`cd server && npm test -- --run tests/lsp-tools.test.ts`
+
+Observed: exit 1; 1 failure. A hover response containing line `1_000_001` and a nonnumeric line was returned instead of omitted. This proved the nested remote-range bound was not enforced.
+
+### GREEN 2 — nested range bounds
+
+Added strict remote-position normalization (integer, zero through 1,000,000) and omitted invalid ranges. The focused public verification then passed: 3 files, 14 tests.
 
 ## Verification
 
-- Full server: 21 files passed, 1 skipped; 170 tests passed, 1 skipped.
-- TypeScript typecheck: passed.
-- TypeScript build: passed.
-- Full `tests/godot/run-smoke.mjs`: exit 0, including the new signal/instance smoke. The existing Godot editor run remains noisy with expected .NET SDK/editor cache/leak diagnostics.
-- GDScript `--check-only` for modified command/controller scripts: passed.
+- Focused/public: `npm test -- --run tests/lsp-tools.test.ts tests/server.test.ts tests/mcp-stdio.test.ts` — 3 files passed, 14 tests passed.
+- Full server suite: `npm test -- --run` — 27 files passed, 2 skipped; 240 tests passed, 2 skipped.
+- Typecheck: `npm run typecheck` — passed.
+- Build: `npm run build` — passed.
+- Patch hygiene: `git diff --check` — passed.
 
-## Design notes
+The first full-suite run exposed one pre-existing Phase 3 inventory assertion that selected the last six tools. It was updated to select the six resource/project tools by their stable prefixes; the subsequent full suite passed.
 
-- PackedScene loading accepts only canonical `res://` paths and rejects non-scenes.
-- Instancing retains `scene_file_path`, assigns the instanced root to the edited-scene owner, and preserves nested scene ownership.
-- Signal list sorts signal descriptors and connection records, caps args/connections/page size, limits cursor skip, and enforces the response envelope.
-- Connect/disconnect validate the exact live signal and callable before `create_action`; invalid, duplicate, and missing operations cannot alter history.
+## Self-review
 
-## Review-fix RED/GREEN evidence
+- Confirmed all seven descriptions explicitly exclude rename, formatting, and code actions.
+- Confirmed exact annotations are read-only, non-destructive, idempotent, and closed-world.
+- Confirmed workspace symbols are never synthesized and `workspace/symbol` is not called when capability-gated.
+- Confirmed native lookup sends exactly `{ native_class, symbol_name }` and maps `null` to `found: false`.
+- Confirmed inputs, nested collections, recursion depth/node counts, positions, and normalized strings are bounded.
 
-- RED: focused server suite failed three assertions: disconnect injected `flags: 0`, connect accepted mask bit 16, and the exact list response rejected missing `connectionCount`/`connectionsTruncated` support.
-- GREEN: focused server suite passes 6/6. Connect accepts only safe integer flags 0..15; disconnect has no flags field/default and rejects extras before dispatch.
-- Real Godot GREEN: the focused smoke covers inherited and script-declared signals, typed argument metadata, page-by-page cursor progression, invalid/end cursors, multibyte names, and 260 deliberately unordered eligible connections plus an out-of-scene connection. It verifies filter → stable sort → first-256 cap, `connectionCount: 260`, and truncation metadata.
-- A real regression exposed that Godot can emit compile diagnostics yet exit 0. `run-smoke.mjs` now requires the named `PASS phase 3 signal instance` output marker; a process-runner test proves a misleading successful exit without the marker is rejected.
-- Review-fix verification: focused server 6/6; full server 172 passed and 1 skipped; typecheck/build passed; focused Godot printed the named PASS marker; full Godot runner passed with the marker enforced.
+## Concerns
+
+None. The two skipped tests are the repository's existing opt-in live tests.

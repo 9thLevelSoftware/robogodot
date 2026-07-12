@@ -15,7 +15,7 @@ describe("Phase 3 resource and project tools", () => {
   it("registers six exact tools with opaque handles and exact annotations", async () => {
     const h = await harness();
     try {
-      const tools = (await h.client.listTools()).tools.slice(-6);
+      const tools = (await h.client.listTools()).tools.filter((tool) => tool.name.startsWith("godot_resource_") || tool.name.startsWith("godot_project_setting_"));
       expect(tools.map(tool => tool.name)).toEqual([
         "godot_resource_load", "godot_resource_create", "godot_resource_save",
         "godot_project_setting_get", "godot_project_setting_set", "godot_project_setting_list",
