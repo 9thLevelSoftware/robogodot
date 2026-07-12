@@ -15,7 +15,7 @@ describe("Phase 3 node tools", () => {
   it("registers exactly eight strict node tools with accurate annotations", async () => {
     const h = await harness();
     try {
-      const tools = (await h.client.listTools()).tools.slice(8);
+      const tools = (await h.client.listTools()).tools.slice(8, 16);
       expect(tools.map(t => t.name)).toEqual(["godot_node_add", "godot_node_delete", "godot_node_reparent", "godot_node_rename", "godot_node_duplicate", "godot_node_get", "godot_node_set_property", "godot_node_call_method"]);
       expect(tools.every(t => t.inputSchema.additionalProperties === false)).toBe(true);
       const mutation = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };

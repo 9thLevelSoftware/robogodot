@@ -7,6 +7,7 @@ import { registerIntrospectionTools } from "./tools/introspection.js";
 import type { DocsIndex } from "./docs/class-docs.js";
 import { MutationLane } from "./mutation/lane.js";
 import { registerNodeTools } from "./tools/node.js";
+import { registerSceneTools } from "./tools/scene.js";
 
 export interface ServerDependencies { bridge?: CoreBridge; mode?: SafetyMode; docsLoader?: () => Promise<DocsIndex> }
 
@@ -22,5 +23,6 @@ export function createServer(dependencies: ServerDependencies): McpServer {
   registerScriptTool(server, bridge, dependencies.mode ?? "full");
   registerIntrospectionTools(server, bridge, dependencies.docsLoader);
   registerNodeTools(server, bridge, new MutationLane());
+  registerSceneTools(server, bridge);
   return server;
 }

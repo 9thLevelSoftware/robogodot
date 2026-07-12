@@ -29,6 +29,65 @@ static func _path(node: Node) -> String:
 	var prefix := "/root/%s" % root.name
 	return prefix if node == root else "%s/%s" % [prefix, root.get_path_to(node)]
 
+static func scene_current(_params: Dictionary) -> Dictionary:
+	return _success({"path": Compat.current_scene_path(), "unsaved": Compat.scene_is_unsaved()})
+
+static func scene_open(params: Dictionary) -> Dictionary:
+	var path := Compat.canonical_project_path(params.get("path"))
+	if path.is_empty() or not FileAccess.file_exists(path): return _failure("Provide an existing canonical res:// scene path.")
+	if Compat.scene_is_unsaved() and not bool(params.get("discardUnsaved", false)): return _failure("Current scene has unsaved changes; set discardUnsaved true to discard them.")
+	Compat.scene_open(path)
+	return _success({"path": path, "unsaved": false})
+
+static func scene_new(params: Dictionary) -> Dictionary:
+	if Compat.scene_is_unsaved() and not bool(params.get("discardUnsaved", false)): return _failure("Current scene has unsaved changes; set discardUnsaved true to discard them.")
+	var type = params.get("rootType", "Node"); var name = params.get("rootName", "Root")
+	if not type is String or not ClassDB.class_exists(type) or not ClassDB.is_parent_class(type, "Node") or not name is String or name.is_empty() or name.validate_node_name() != name:
+		return _failure("Provide a valid Node root type and root name.")
+	var root: Node = ClassDB.instantiate(type); root.name = name
+	var error := Compat.scene_new(root)
+	if error != OK: root.free(); return _failure("Godot could not create the scene with the public editor lifecycle API (error %d)." % error)
+	return _success({"path": "", "unsaved": true})
+
+static func scene_save(params: Dictionary) -> Dictionary:
+	if _root() == null: return _failure("There is no edited scene to save.")
+	var current := Compat.current_scene_path(); var requested = params.get("path", current)
+	var path := Compat.canonical_project_path(requested)
+	if path.is_empty(): return _failure("Provide a canonical res:// save path.")
+	if FileAccess.file_exists(path) and path != current and not bool(params.get("overwrite", false)):
+		return _failure("The different target path already exists; set overwrite true to replace it.")
+	var error := Compat.scene_save("" if path == current else path)
+	if error != OK: return _failure("Godot could not save the scene (error %d)." % error)
+	return _success({"path": path, "unsaved": false})
+
+static func scene_tree(params: Dictionary) -> Dictionary:
+	var root := _root() if not params.has("root") else _node(params.get("root"))
+	if root == null: return _failure("Provide a live root in the edited scene.")
+	var max_depth := clampi(int(params.get("maxDepth", 8)), 1, 32)
+	var limit := clampi(int(params.get("limit", 100)), 1, 500)
+	var cursor_text := String(params.get("cursor", "0"))
+	if not cursor_text.is_valid_int() or cursor_text.to_int() < 0: return _failure("Cursor must be a non-negative traversal offset.")
+	var offset := cursor_text.to_int(); var flattened: Array[Dictionary] = []
+	var stack: Array[Dictionary] = [{"node": root, "depth": 0}]
+	while not stack.is_empty():
+		var entry := stack.pop_back() as Dictionary; var node := entry.node as Node; var depth := int(entry.depth)
+		var child_entries: Array[Dictionary] = []
+		if depth < max_depth:
+			var children := node.get_children()
+			for child in children: child_entries.append({"name": String(child.name), "class": child.get_class(), "path": _path(child), "children": []})
+			for index in range(children.size() - 1, -1, -1): stack.append({"node": children[index], "depth": depth + 1})
+		flattened.append({"name": String(node.name), "class": node.get_class(), "path": _path(node), "children": child_entries})
+	var nodes: Array[Dictionary] = []; var index := offset
+	while index < flattened.size() and nodes.size() < limit:
+		var candidate: Array[Dictionary] = nodes.duplicate(); candidate.append(flattened[index])
+		var probe := {"nodes": candidate, "truncated": index + 1 < flattened.size(), "nextCursor": str(index + 1)}
+		if JSON.stringify(probe).to_utf8_buffer().size() > 262144: break
+		nodes.append(flattened[index]); index += 1
+	var truncated := index < flattened.size()
+	var result := {"nodes": nodes, "truncated": truncated}
+	if truncated: result["nextCursor"] = str(index)
+	return _success(result)
+
 static func node_add(params: Dictionary) -> Dictionary:
 	var parent := _node(params.get("parent"))
 	var type = params.get("type"); var name = params.get("name")
