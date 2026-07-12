@@ -12,7 +12,7 @@ Baseline: 22 test files passed, 2 skipped; 178 tests passed, 2 skipped.
 | 4 — seven MCP tools | `7ff5793..70eef90` | Approved after descriptor-safe, bounded normalization hardening | Compliant | 15 tool tests; final server suite 252 passed / 2 skipped; typecheck and build passed |
 | 5 — optional LSP host | `70eef90..638cff2` | Approved after close-race, child-lifetime, listener, and owned-error fixes | Compliant | 25 focused tests; final server suite 279 passed / 2 skipped; typecheck and build passed |
 | 6 — live acceptance | `638cff2..fe729ec` | Approved after capability, identity, cleanup, and fixture-isolation fixes | Compliant | Phase 4 live 2/2; two normal parallel all-live runs 305/305; standard suite/typecheck/build passed |
-| 7 — docs/integration | Existing range `fe729ec..e04e59d` (initial `5c5bd51`, contract correction `e04e59d`); final metadata/docs correction pending | **Changes requested after `e04e59d`:** clarify malformed workspace-symbol success versus request/protocol failure; this final correction and re-review approval are pending | Final Task 7 spec approval and controller-owned whole-branch review pending | Initial matrix is in `task-7-report.md`; the controller will finalize the corrected range and review result after approval. Do not mark Phase 4 complete before both gates pass |
+| 7 — docs/integration | `fe729ec..ec68042` | Approved after exact-contract, ledger, and workspace-symbol semantics corrections | Compliant | Architecture 90 passed / 1 optional skip; docs check and build passed; complete matrix recorded in `task-7-report.md` |
 
 ## Capability and deferral ledger
 
