@@ -27,6 +27,7 @@ export function runBounded(executable, args, options = {}) {
   const cleanupTimeoutMs = options.cleanupTimeoutMs ?? 5_000;
   return new Promise((resolve, reject) => {
     const expectedOutput = options.expectedOutput;
+    const forbiddenOutput = options.forbiddenOutput;
     let output = "";
     const child = spawnImpl(executable, args, {
       cwd: options.cwd,
@@ -69,7 +70,7 @@ export function runBounded(executable, args, options = {}) {
       if (!timingOut) finish(() => reject(error));
     });
     child.once("exit", (code) => {
-      if (!timingOut) finish(() => code !== 0 ? reject(new Error(`Godot exited with code ${code}`)) : expectedOutput && !output.includes(expectedOutput) ? reject(new Error(`Godot exited without required output marker: ${expectedOutput}`)) : resolve());
+      if (!timingOut) finish(() => code !== 0 ? reject(new Error(`Godot exited with code ${code}`)) : expectedOutput && !output.includes(expectedOutput) ? reject(new Error(`Godot exited without required output marker: ${expectedOutput}`)) : forbiddenOutput && forbiddenOutput.test(output) ? reject(new Error(`Godot emitted forbidden output matching ${forbiddenOutput}`)) : resolve());
     });
   });
 }

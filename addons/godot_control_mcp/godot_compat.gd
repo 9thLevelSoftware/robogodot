@@ -64,7 +64,7 @@ static func scene_dirty_state() -> Dictionary:
 	if _known_unsaved: return {"state": "dirty", "reason": "mcp_lifecycle_change"}
 	var stack: Array[Node] = [root]
 	while not stack.is_empty():
-		var node := stack.pop_back()
+		var node: Node = stack.pop_back()
 		if EditorInterface.is_object_edited(node): return {"state": "dirty", "reason": "edited_object"}
 		for child in node.get_children(): stack.append(child)
 	if EditorInterface.has_method("get_unsaved_scenes"): return {"state": "clean", "reason": "editor_unsaved_scenes"}

@@ -1,6 +1,6 @@
 extends SceneTree
 
-const Plugin = preload("../fixtures/godot_project/addons/godot_control_mcp/plugin.gd")
+const Plugin = preload("res://addons/godot_control_mcp/plugin.gd")
 const TOKEN := "0123456789abcdef0123456789abcdef"
 var failures: Array[String] = []
 

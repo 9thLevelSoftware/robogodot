@@ -94,4 +94,5 @@ func _init() -> void:
 	assert(JSON.stringify(boundary_response).to_utf8_buffer().size() <= 262144)
 	var oversized_id := router.dispatch({"jsonrpc": "2.0", "id": "é".repeat((Router.MAX_REQUEST_ID_BYTES / 2) + 1), "method": "exec.run", "params": {}})
 	assert(oversized_id.id == null and oversized_id.error.code == -32600)
+	print("PASS guarded execution")
 	quit()

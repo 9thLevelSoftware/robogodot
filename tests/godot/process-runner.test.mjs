@@ -17,6 +17,13 @@ test("required PASS marker rejects a misleading successful exit", async () => {
   await assert.rejects(pending, /without required output marker/);
 });
 
+test("forbidden compile diagnostics reject an otherwise marked successful exit", async () => {
+  const godot = child(42); godot.stdout = new EventEmitter(); godot.stderr = new EventEmitter();
+  const pending = runBounded("godot", [], { spawnImpl: () => godot, expectedOutput: "PASS lifecycle", forbiddenOutput: /(?:SCRIPT ERROR|Compile Error)/ });
+  queueMicrotask(() => { godot.stderr.emit("data", "SCRIPT ERROR: Compile Error\nPASS lifecycle\n"); godot.emit("exit", 0); });
+  await assert.rejects(pending, /forbidden output/);
+});
+
 test("Windows timeout preserves the original error when taskkill errors", async () => {
   const calls = [];
   const godot = child(42);

@@ -17,3 +17,18 @@ test("Q-005 is accepted and CI runs Phase 3 live acceptance", async () => {
   const ci = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
   assert.match(ci, /npm run test:live\r?\n\s+npm run test:live:phase3/);
 });
+
+test("named Godot smokes enforce canonical plugin compilation from a clean fixture", async () => {
+  const compat = await readFile(new URL("../../addons/godot_control_mcp/godot_compat.gd", import.meta.url), "utf8");
+  assert.match(compat, /var node: Node = stack\.pop_back\(\)/);
+  for (const name of ["editor_plugin_missing_token_smoke.gd", "editor_plugin_lifecycle_smoke.gd"]) {
+    const smoke = await readFile(new URL(`../godot/${name}`, import.meta.url), "utf8");
+    assert.match(smoke, /preload\("res:\/\/addons\/godot_control_mcp\/plugin\.gd"\)/);
+  }
+  const runner = await readFile(new URL("../godot/run-smoke.mjs", import.meta.url), "utf8");
+  const invocations = [...runner.matchAll(/await run\((\[[\s\S]*?)\);/g)];
+  assert.equal(invocations.length, 12);
+  for (const invocation of invocations) assert.match(invocation[1], /"PASS /);
+  assert.match(runner, /await rm\(resolve\(root, "tests\/fixtures\/godot_project\/addons"\)[\s\S]*?await cp\(/);
+  assert.match(runner, /forbiddenOutput/);
+});
