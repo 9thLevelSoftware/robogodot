@@ -34,6 +34,16 @@ describe("LspDiagnostics", () => {
     await expect(store.waitFor(uri, 3, 0, DIAGNOSTIC_LIMITS.minWaitMs)).resolves.toMatchObject({ diagnostics: [{ message: "phase4_missing_identifier" }] });
   });
 
+  it("remaps a lowercase-drive publication after document authorization", async () => {
+    const godotUri = "file:///c%3A/project/phase4/broken.gd";
+    let authorized = false;
+    const store = new LspDiagnostics((value) => authorized && value === godotUri ? uri : value);
+    store.accept(notification(3, godotUri, [{ message: "phase4_missing_identifier" }]));
+    authorized = true;
+    store.remap("file:///C:/project/phase4/broken.gd", uri);
+    await expect(store.waitFor(uri, 3, 0, DIAGNOSTIC_LIMITS.minWaitMs)).resolves.toMatchObject({ diagnostics: [{ message: "phase4_missing_identifier" }] });
+  });
+
   it("ignores malformed notifications and requires matching generation", async () => {
     const store = new LspDiagnostics(() => uri); store.accept({ generation: 3, method: "other" });
     store.accept(notification(2, "file:///project/phase4/broken.gd", [{ message: "old" }]));

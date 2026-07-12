@@ -73,6 +73,17 @@ describe("LspDocuments", () => {
     expect(notifications.at(-1)).toMatchObject({ method: "textDocument/didSave", params: { text: "extends Node\r\nvar café = 1\r\n" } });
   });
 
+  it("reuses one synchronized document for equivalent res URI spellings", async () => {
+    const { root, session, notifications } = await setup();
+    await writeFile(join(root, "phase4", "player.gd"), "extends Node\n", "utf8");
+    const docs = new LspDocuments(root, session);
+    const encoded = await docs.sync("res://phase4/player%2Egd");
+    const plain = await docs.sync("res://phase4/player.gd");
+    expect(plain.uri).toBe(encoded.uri);
+    expect(notifications.filter(({ method }) => method === "textDocument/didOpen")).toHaveLength(1);
+    expect(notifications).toHaveLength(3);
+  });
+
   it("replays current documents in sorted URI order", async () => {
     const { root, session, notifications } = await setup();
     await writeFile(join(root, "phase4", "z.gd"), "z", "utf8"); await writeFile(join(root, "phase4", "a.gd"), "a", "utf8");
@@ -81,11 +92,13 @@ describe("LspDocuments", () => {
     expect(notifications.map((n) => n.params.textDocument.text)).toEqual(["a", "z"]);
   });
 
-  it("maps Godot's percent-encoded Windows drive URI to an authorized document", async () => {
+  it("maps Godot's percent-encoded lowercase Windows drive URI to an authorized document", async () => {
     const { root, session } = await setup();
     await writeFile(join(root, "phase4", "player.gd"), "extends Node\n", "utf8");
     const docs = new LspDocuments(root, session); const document = await docs.sync("res://phase4/player.gd");
-    const encodedDrive = document.fileUri.replace("file:///", "file:///").replace(/file:\/\/\/([A-Za-z]):/, "file:///$1%3A");
+    const encodedDrive = process.platform === "win32"
+      ? document.fileUri.replace(/file:\/\/\/([A-Za-z]):/, (_match, drive: string) => `file:///${drive.toLowerCase()}%3A`)
+      : document.fileUri;
     expect(docs.publicUriForFileUri(encodedDrive)).toBe("res://phase4/player.gd");
   });
 

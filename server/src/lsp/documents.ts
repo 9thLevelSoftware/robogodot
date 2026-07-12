@@ -18,6 +18,9 @@ export interface LspDocumentOptions { realpath?: (path: string) => Promise<strin
 
 const invalid = (message: string) => new GodotMcpError("invalid_args", message, "Pass a res:// URI for a readable file inside the project root.");
 const hash = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+const pathIdentity = (value: string): string => process.platform === "win32"
+  ? value.replace(/^([A-Za-z]):/, (_match, drive: string) => `${drive.toUpperCase()}:`)
+  : value;
 
 export class LspDocuments {
   private readonly documents = new Map<string, StoredDocument>();
@@ -32,7 +35,7 @@ export class LspDocuments {
     const bytes = await this.readAuthorizedTarget(root, target);
     let text: string;
     try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { throw invalid("Document is not valid UTF-8."); }
-    const existing = this.documents.get(uri); const contentHash = hash(bytes); const fileUri = pathToFileURL(target).href;
+    const key = pathIdentity(target); const existing = this.documents.get(key); const contentHash = hash(bytes); const fileUri = pathToFileURL(target).href;
     const initialReady = await this.session.ensureReady();
     if (existing?.hash === contentHash) return this.publicDocument({ ...existing, generation: initialReady.generation });
     if (!existing && this.documents.size >= DOCUMENT_LIMITS.maxDocuments) throw invalid("Synchronized document limit reached.");
@@ -56,8 +59,8 @@ export class LspDocuments {
         ready = next;
       }
     }
-    const stored: StoredDocument = { uri, fileUri, path: target, text, version: existing ? version : version + 1, generation: ready.generation, hash: contentHash };
-    this.documents.set(uri, stored); return this.publicDocument(stored);
+    const stored: StoredDocument = { uri: existing?.uri ?? uri, fileUri, path: target, text, version: existing ? version : version + 1, generation: ready.generation, hash: contentHash };
+    this.documents.set(key, stored); return this.publicDocument(stored);
   }
 
   assertPosition(document: SyncedDocument, position: LspPosition): void {
@@ -79,8 +82,7 @@ export class LspDocuments {
 
   publicUriForFileUri(fileUri: string): string | undefined {
     let candidate: string; try { candidate = fileURLToPath(fileUri); } catch { return undefined; }
-    for (const document of this.documents.values()) if (document.path === candidate) return document.uri;
-    return undefined;
+    return this.documents.get(pathIdentity(candidate))?.uri;
   }
 
   private async resolveUri(uri: string): Promise<{ root: string; target: string }> {

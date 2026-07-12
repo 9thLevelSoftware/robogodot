@@ -60,6 +60,17 @@ describe("LspHost", () => {
     expect(terminate).not.toHaveBeenCalled();
   });
 
+  it("reprobes an attached server and auto-starts after its listener disappears", async () => {
+    const probe = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false).mockResolvedValue(true);
+    const { host, spawn, terminate, ownedChild } = fixture({ probe });
+    await expect(host.ensureAvailable()).resolves.toBe("attached");
+    await expect(host.ensureAvailable()).resolves.toBe("owned");
+    expect(probe).toHaveBeenCalledTimes(3);
+    expect(spawn).toHaveBeenCalledOnce();
+    await host.close();
+    expect(terminate).toHaveBeenCalledWith(ownedChild);
+  });
+
   it("terminates only the child it launched", async () => {
     const probe = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true);
     const { host, terminate, ownedChild } = fixture({ probe });
@@ -85,7 +96,7 @@ describe("LspHost", () => {
   it("is idempotent across ensure and close", async () => {
     const { host, probe, terminate } = fixture();
     await host.ensureAvailable(); await host.ensureAvailable(); await host.close(); await host.close();
-    expect(probe).toHaveBeenCalledOnce(); expect(terminate).not.toHaveBeenCalled();
+    expect(probe).toHaveBeenCalledTimes(2); expect(terminate).not.toHaveBeenCalled();
   });
 
   it("terminates its exact child when bounded startup fails", async () => {

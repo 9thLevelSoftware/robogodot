@@ -97,7 +97,7 @@ export class LspHost {
 
   ensureAvailable(): Promise<LspOwnership> {
     if (this.state !== "open") return Promise.reject(this.closedError());
-    if (this.ownership) return Promise.resolve(this.ownership);
+    if (this.ownership === "owned") return Promise.resolve(this.ownership);
     if (!this.ensuring) {
       const attempt = this.performEnsure();
       this.ensuring = attempt;
@@ -120,6 +120,7 @@ export class LspHost {
   private async performEnsure(): Promise<LspOwnership> {
     if (await this.deps.probe("127.0.0.1", this.config.lspPort, 500)) { this.assertOpen(); return this.ownership = "attached"; }
     this.assertOpen();
+    if (this.ownership === "attached") this.ownership = undefined;
     const godotPath = this.config.godotPath;
     const projectPath = this.config.projectPath;
     const command = `${display(godotPath ?? "<GODOT_PATH>")} --editor --headless --lsp-port ${this.config.lspPort} --path ${display(projectPath ?? "<GODOT_PROJECT_PATH>")}`;

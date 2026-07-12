@@ -80,7 +80,7 @@ export class LspDiagnostics {
   remap(fromUri: string, toUri: string): void {
     if (fromUri === toUri || this.closed) return;
     const canonical = (value: string) => { try { return fileURLToPath(value); } catch { return value; } };
-    const source = [...this.publications.keys()].find((value) => canonical(value) === canonical(fromUri));
+    const source = [...this.publications.keys()].find((value) => this.publicUri(value) === toUri || canonical(value) === canonical(fromUri));
     if (!source) return; const publication = this.publications.get(source)!;
     this.publications.delete(source); this.publications.set(toUri, { ...publication, uri: toUri });
   }
