@@ -12,6 +12,7 @@
     "test": "vitest",
     "test:live": "vitest run tests/live-godot.test.ts",
     "test:live:phase3": "vitest run tests/live-phase3.test.ts",
+    "test:live:phase4": "vitest run tests/live-phase4.test.ts",
     "lint": "tsc --noEmit",
     "start": "node dist/index.js",
     "docs:generate": "npm run build && node scripts/generate-doc-index.mjs",
