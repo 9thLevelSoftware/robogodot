@@ -44,6 +44,8 @@ test("Phase 4 runbook documents the exact public surface and operating contract"
   for (const [name, tokens] of Object.entries(perTool)) {
     for (const token of tokens) assert.ok(row(name).includes(token), `${name} contract token: ${token}`);
   }
+  assert.match(row("godot_lsp_workspace_symbols"), /malformed[^|]*(null|non-array)[^|]*empty[^|]*truncated[^|]*true/i);
+  assert.match(row("godot_lsp_workspace_symbols"), /godot_error[^|]*(request|protocol)[^|]*failure/i);
   assert.match(readme, /GODOT_LSP_PORT[^\n]*6005/);
   assert.match(readme, /GODOT_MCP_LSP_AUTO_START[^\n]*false/i);
   assert.match(readme, /godot --editor --headless --lsp-port 6005 --path <project>/);
