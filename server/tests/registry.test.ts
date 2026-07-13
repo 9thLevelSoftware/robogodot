@@ -65,11 +65,11 @@ describe("registerTool", () => {
     const typed = recordingServer();
     registerTool(typed.server, definition(async () => { throw new GodotMcpError("not_connected", "offline", "Start Godot"); }));
     const typedCallback = typed.registrations[0]?.[2] as (input: { value: string }) => Promise<any>;
-    expect((await typedCallback({ value: "x" })).structuredContent).toEqual({ code: "not_connected", message: "offline", hint: "Start Godot" });
+    const typedResult = await typedCallback({ value: "x" }); expect(typedResult.isError).toBe(true); expect(typedResult.structuredContent).toBeUndefined(); expect(JSON.parse(typedResult.content[0].text)).toEqual({ code: "not_connected", message: "offline", hint: "Start Godot" });
 
     const unknown = recordingServer();
     registerTool(unknown.server, definition(async () => { throw new Error("boom"); }));
     const unknownCallback = unknown.registrations[0]?.[2] as (input: { value: string }) => Promise<any>;
-    expect((await unknownCallback({ value: "x" })).structuredContent.code).toBe("godot_error");
+    const unknownResult = await unknownCallback({ value: "x" }); expect(JSON.parse(unknownResult.content[0].text).code).toBe("godot_error"); expect(unknownResult.structuredContent).toBeUndefined();
   });
 });

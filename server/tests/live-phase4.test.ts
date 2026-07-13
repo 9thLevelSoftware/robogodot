@@ -117,7 +117,7 @@ liveDescribe("Phase 4 live Godot 4.6 LSP acceptance (set GODOT_PATH to enable)",
       expect(nativeSymbol.found).toBe(true);
       expect(JSON.stringify(nativeSymbol)).toContain("Sprite2D");
       const workspace = await harness.client.callTool({ name: "godot_lsp_workspace_symbols", arguments: { query: "phase4", limit: 50 } });
-      expect(workspace.structuredContent).toMatchObject({ code: "feature_disabled" });
+      expect(JSON.parse((workspace.content[0] as any).text)).toMatchObject({ code: "feature_disabled" }); expect(workspace.structuredContent).toBeUndefined();
     } catch (error) { primaryFailure = error;
       if (editor && error instanceof Error && !error.message.includes(editor.capture.diagnostics())) error.message += `\n${editor.capture.diagnostics()}`;
       throw error;
@@ -135,8 +135,8 @@ liveDescribe("Phase 4 live Godot 4.6 LSP acceptance (set GODOT_PATH to enable)",
     const unavailable = await mcpHarness(unavailablePort, false);
     try {
       const result = await unavailable.client.callTool({ name: "godot_lsp_native_symbol", arguments: { nativeClass: "Sprite2D" } });
-      expect(result.structuredContent).toMatchObject({ code: "not_connected" });
-      const hint = String((result.structuredContent as { hint?: unknown }).hint);
+      const payload = JSON.parse((result.content[0] as any).text); expect(payload).toMatchObject({ code: "not_connected" }); expect(result.structuredContent).toBeUndefined();
+      const hint = String(payload.hint);
       expect(hint).toContain("--lsp-port"); expect(hint).toContain(String(unavailablePort));
       expect(hint).toContain("--path"); expect(hint).toContain(projectPath);
     } finally { await unavailable.close(); }
