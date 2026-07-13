@@ -8,7 +8,6 @@ export interface ToolDefinition<Input extends Record<string, unknown>, Output ex
   description: string;
   inputSchema: z.ZodObject;
   outputSchema: z.ZodObject;
-  errorCompatibleOutput?: boolean;
   annotations: Required<Pick<ToolAnnotations, "readOnlyHint" | "destructiveHint" | "idempotentHint" | "openWorldHint">>;
   handler(input: Input): Promise<Output>;
 }
@@ -29,7 +28,7 @@ export function registerTool<Input extends Record<string, unknown>, Output exten
   server.registerTool(definition.name, {
     description: definition.description,
     inputSchema: definition.inputSchema,
-    outputSchema: definition.errorCompatibleOutput ? compatibleOutputSchema(definition.outputSchema) : definition.outputSchema,
+    outputSchema: definition.outputSchema,
     annotations: definition.annotations,
   }, async (input) => {
     try {
@@ -40,13 +39,4 @@ export function registerTool<Input extends Record<string, unknown>, Output exten
     }
   });
   names.add(definition.name);
-}
-
-const errorOutputSchema = z.object({ code: z.enum(["not_connected", "editor_required", "invalid_args", "godot_error", "timeout", "blocked_by_policy", "feature_disabled"]), message: z.string(), hint: z.string(), data: z.unknown().optional() }).strict();
-function compatibleOutputSchema(success: z.ZodObject): z.ZodObject {
-  const shape: Record<string, z.ZodType> = {};
-  for (const [key, schema] of Object.entries({ ...success.shape, ...errorOutputSchema.shape })) shape[key] = schema.optional();
-  return z.object(shape).strict().superRefine((value, context) => {
-    if (!success.safeParse(value).success && !errorOutputSchema.safeParse(value).success) context.addIssue({ code: "custom", message: "Output must match the success or standard error schema." });
-  }) as z.ZodObject;
 }

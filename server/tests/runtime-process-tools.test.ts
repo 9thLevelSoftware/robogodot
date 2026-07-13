@@ -10,7 +10,7 @@ describe("public runtime process tools", () => {
       { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
       { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    ]); expect(await h.client.callTool({ name: "godot_run_project", arguments: {} })).toMatchObject({ isError: true, structuredContent: { code: "not_connected", message: "The runtime process service is not configured." } }); } finally { await h.close(); } });
+    ]); } finally { await h.close(); } const disconnected = await harness(); try { expect(await disconnected.client.callTool({ name: "godot_run_project", arguments: {} })).toMatchObject({ isError: true, structuredContent: { code: "not_connected", message: "The runtime process service is not configured." } }); } finally { await disconnected.close(); } });
 
   it("dispatches normalized inputs and outputs independently of editor and LSP", async () => {
     const runtime = { launch: vi.fn().mockResolvedValue({ id: "a".repeat(32), mode: "normal", state: "running", pid: 4, startedAt: 9, bridgeTransport: "socket" }), stop: vi.fn().mockResolvedValue({ sessionId: "a".repeat(32), alreadyStopped: false, graceful: true, forced: false }), output: vi.fn().mockResolvedValue({ sessionId: "a".repeat(32), running: true, records: [], next: 0, lost: 0, truncated: false }) };
@@ -30,5 +30,14 @@ describe("public runtime process tools", () => {
     const hostile = Object.assign(Object.create({ secret: "inherited" }), { id: "b".repeat(32), mode: "normal", state: "running", pid: 5, startedAt: 10, bridgeTransport: "file", secret: "own", extra: true });
     const good = await harness({ launch: vi.fn().mockResolvedValue(hostile), stop: vi.fn().mockResolvedValue({ sessionId: "b".repeat(32), alreadyStopped: false, graceful: true, forced: false, childId: "leak", secret: "leak" }), output: vi.fn().mockResolvedValue({ sessionId: "b".repeat(32), running: false, exit: { code: 0, signal: null, at: 11 }, records: [{ cursor: 0, stream: "stdout", at: 10, text: "ok", truncated: false, secret: "leak" }], next: 1, lost: 0, truncated: false, extra: true }) });
     try { for (const [name, args] of [["godot_run_project", {}], ["godot_stop_project", { sessionId: "b".repeat(32) }], ["godot_run_output", { sessionId: "b".repeat(32), since: 0, limit: 1 }]] as const) { const result = await good.client.callTool({ name, arguments: args }); expect(JSON.parse((result.content as any)[0].text)).toEqual(result.structuredContent); expect(JSON.stringify(result.structuredContent)).not.toMatch(/secret|childId|extra/); } } finally { await good.close(); }
+  });
+
+  it("advertises exact required success fields without registry error fields and permits absent bridge transport", async () => {
+    const runtime = { launch: vi.fn().mockResolvedValue({ id: "c".repeat(32), mode: "normal", state: "running", pid: 6, startedAt: 12 }), stop: vi.fn(), output: vi.fn() }; const h = await harness(runtime);
+    try { const tools = (await h.client.listTools()).tools.filter(tool => tool.name.startsWith("godot_run_")); const launch = tools.find(tool => tool.name === "godot_run_project")!; const output = tools.find(tool => tool.name === "godot_run_output")!;
+      expect(launch.outputSchema).toMatchObject({ type: "object", required: expect.arrayContaining(["sessionId", "mode", "pid", "startedAt"]), additionalProperties: false }); expect((launch.outputSchema as any).required).not.toContain("bridgeTransport"); expect((launch.outputSchema as any).properties).not.toHaveProperty("code");
+      expect(output.outputSchema).toMatchObject({ required: expect.arrayContaining(["sessionId", "running", "records", "next", "lost", "truncated"]), additionalProperties: false }); expect((output.outputSchema as any).properties).not.toHaveProperty("hint");
+      const result = await h.client.callTool({ name: "godot_run_project", arguments: {} }); expect(result).toMatchObject({ structuredContent: { sessionId: "c".repeat(32), pid: 6 } }); expect(result.structuredContent).not.toHaveProperty("bridgeTransport");
+    } finally { await h.close(); }
   });
 });

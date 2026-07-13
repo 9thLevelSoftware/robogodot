@@ -6,7 +6,7 @@ import type { OutputPage } from "./output-ring.js";
 export type RuntimeMode = "normal" | "debug";
 export type RuntimeSessionState = "idle" | "starting" | "running" | "debug_ready" | "stopping" | "failed";
 export interface RuntimeLifecycle { close(): void | Promise<void> }
-export interface RuntimeSessionSnapshot { readonly id: string; readonly mode: RuntimeMode; readonly state: Exclude<RuntimeSessionState, "idle" | "failed">; readonly pid?: number; readonly startedAt?: number }
+export interface RuntimeSessionSnapshot { readonly id: string; readonly mode: RuntimeMode; readonly state: Exclude<RuntimeSessionState, "idle" | "failed">; readonly pid?: number; readonly startedAt?: number; readonly bridgeTransport?: "socket" | "file" }
 export interface RuntimeOutput extends OutputPage { sessionId: string; running: boolean; exit?: ManagedProcess["exit"] }
 export interface RuntimeStopResult extends Omit<StopResult, "childId"> { sessionId: string }
 type Runner = Pick<ProcessRunner, "start" | "stop" | "stopCurrent">;
@@ -86,7 +86,7 @@ export class RuntimeSessionCoordinator {
       if (this.launchWork) { try { await this.launchWork; } catch { /* launch owns failed-start cleanup */ } }
       if (this.owned) await this.stop(this.owned.id);
       else await this.runner.stopCurrent();
-    } finally { this.stopMonitor(); this.closing = false; }
+    } finally { if (!this.owned) this.stopMonitor(); this.closing = false; }
   }
 
   private async performLaunch(owned: OwnedSession, options: ProcessStartOptions): Promise<RuntimeSessionSnapshot> {
@@ -117,19 +117,20 @@ export class RuntimeSessionCoordinator {
   }
 
   private async performStop(owned: OwnedSession): Promise<RuntimeStopResult> {
-    const retainOnFailure = owned.state === "failed";
     owned.state = "stopping";
     let first: unknown; let result: StopResult | undefined;
     const attempt = async (action: (() => void | Promise<void>) | undefined) => { if (!action) return; try { await action(); } catch (error) { first ??= error; } };
     await attempt(owned.dap ? () => owned.dap!.close() : undefined);
+    owned.dap = undefined;
     await attempt(owned.bridge ? () => owned.bridge!.close() : undefined);
+    owned.bridge = undefined; owned.secret = "";
     let processConfirmed = true;
     await attempt(async () => { try { result = owned.process ? await this.runner.stop(owned.process.childId) : await this.runner.stopCurrent(); } catch (error) { processConfirmed = false; throw error; } });
     const terminalExit = result?.exit ?? owned.process?.exit;
     const terminal: RuntimeStopResult = Object.freeze({ sessionId: owned.id, alreadyStopped: result?.alreadyStopped ?? true, graceful: result?.graceful ?? false, forced: result?.forced ?? false, ...(terminalExit ? { exit: terminalExit } : {}) });
+    processConfirmed ||= owned.process?.running === false;
     if (processConfirmed) { this.lastStopped = terminal; this.clear(owned); }
-    else if (retainOnFailure) owned.state = "failed";
-    else this.clear(owned);
+    else { owned.state = "failed"; if (owned.process) this.startMonitor(owned); }
     if (first) throw first;
     return terminal;
   }

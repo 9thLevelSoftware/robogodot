@@ -74,4 +74,18 @@ describe("RuntimeSessionCoordinator", () => {
     reject(new Error("launch")); const error = await launched.catch(value => value); expect(error).toBeInstanceOf(AggregateError); expect(error.errors[0].message).toBe("launch"); expect(order).toEqual(["dap", "bridge", "process"]);
     expect(coordinator.state).toBe("failed"); await expect(coordinator.launch("normal", options)).rejects.toMatchObject({ code: "godot_error" });
   });
+
+  it("retains every unconfirmed normal stop in failed state and retries the same exact child", async () => {
+    const managed = processView(); const runner = { start: vi.fn().mockResolvedValue(managed), stop: vi.fn().mockRejectedValueOnce(new Error("denied")).mockResolvedValueOnce({ childId: "child", alreadyStopped: false, graceful: false, forced: true }), stopCurrent: vi.fn() };
+    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any }); const session = await coordinator.launch("normal", options);
+    await expect(coordinator.stop(session.id)).rejects.toThrow("denied"); expect(coordinator.state).toBe("failed");
+    await expect(coordinator.launch("normal", options)).rejects.toMatchObject({ code: "godot_error" });
+    await expect(coordinator.stop(session.id)).resolves.toMatchObject({ sessionId: session.id, forced: true }); expect(runner.stop).toHaveBeenCalledTimes(2); expect(runner.stop.mock.calls.every(call => call[0] === "child")).toBe(true);
+  });
+
+  it("retains unconfirmed ownership through close and permits later exact-session retry", async () => {
+    const runner = { start: vi.fn().mockResolvedValue(processView()), stop: vi.fn().mockRejectedValueOnce(new Error("close denied")).mockResolvedValueOnce({ childId: "child", alreadyStopped: false, graceful: true, forced: false }), stopCurrent: vi.fn() };
+    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any }); const session = await coordinator.launch("normal", options);
+    await expect(coordinator.close()).rejects.toThrow("close denied"); expect(coordinator.state).toBe("failed"); await expect(coordinator.stop(session.id)).resolves.toMatchObject({ graceful: true });
+  });
 });
