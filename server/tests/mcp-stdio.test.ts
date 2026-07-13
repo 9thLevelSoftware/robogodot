@@ -62,6 +62,7 @@ describe("freshly built stdio server", () => {
       "godot_project_setting_get", "godot_project_setting_set", "godot_project_setting_list",
       "godot_lsp_diagnostics", "godot_lsp_completion", "godot_lsp_hover", "godot_lsp_signature_help",
       "godot_lsp_document_symbols", "godot_lsp_workspace_symbols", "godot_lsp_native_symbol",
+      "godot_run_project", "godot_stop_project", "godot_run_output",
     ]);
   });
 
