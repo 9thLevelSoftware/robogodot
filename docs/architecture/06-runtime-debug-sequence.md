@@ -72,7 +72,8 @@ sequenceDiagram
     Note over RUNTIME_DRIVER,IPC_FILES: Q-011 accepted — Godot publishes the canonical session root and Node never guesses user://
     Note over RUNTIME_DRIVER,AUTOLOADS: Q-012 accepted — pre-request mutual authentication locks socket or file, with no switch or replay after publication
     %% atlas-flow: FLOW-RUN-010
-    RUNTIME_DRIVER->>IPC_FILES: file fallback atomically writes req-<id>.json
+    RUNTIME_DRIVER->>IPC_FILES: atomically publish correlated request file
+    Note over RUNTIME_DRIVER,IPC_FILES: exact user://.mcp/<sessionId>/req-<id>.json
     %% atlas-flow: FLOW-RUN-011
     AUTOLOADS->>IPC_FILES: autoload polls and reads request
     %% atlas-flow: FLOW-RUN-012
@@ -139,7 +140,7 @@ The participants below are indexed in the [Traceability index](traceability.md#a
 | `FLOW-RUN-007` | `CMP-RUNTIME-TOOLS` → `CMP-RUNTIME-DRIVER` | Inject or use bridge autoloads through the Phase 2 execution seam. | Explicit | Phase 5 / Phase 2 execution boundary | Phase 5 §§3,6 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-008` | `CNT-MCP-CLIENT` → `CMP-RUNTIME-TOOLS` | Request live inspect, input, or screenshot work. | Explicit | Phase 5 / MCP runtime-tool dispatch | Phase 5 §2 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-009` | `CMP-RUNTIME-TOOLS` → `CMP-RUNTIME-DRIVER` | Allocate a monotonic request ID. | Explicit | Phase 5 / in-process runtime driver | Phase 5 §§5–6 · [trace](traceability.md#architecture-atlas-traceability) |
-| `FLOW-RUN-010` | `CMP-RUNTIME-DRIVER` → `CNT-RUNTIME-IPC-FILES` | File fallback atomically publishes exact `req-<id>.json` after transport lock. | Implemented / accepted | Phase 5 / canonical file IPC | Phase 5 implementation · [Q-011](open-questions.md#architecture-open-questions) · [Q-012](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
+| `FLOW-RUN-010` | `CMP-RUNTIME-DRIVER` → `CNT-RUNTIME-IPC-FILES` | File fallback atomically publishes exact `user://.mcp/<sessionId>/req-<id>.json` after transport lock. | Implemented / accepted | Phase 5 / canonical file IPC | Phase 5 implementation · [Q-011](open-questions.md#architecture-open-questions) · [Q-012](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-011` | `CMP-RUNTIME-AUTOLOADS` → `CNT-RUNTIME-IPC-FILES` | Poll and read the request. | Explicit | Phase 5 / autoload file polling | Phase 5 §§4,7 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-012` | `CMP-RUNTIME-AUTOLOADS` → `CNT-RUNNING-GAME` | Execute the requested inspect, input, or screenshot operation. | Explicit | Phase 5 / in-game GDScript operation | Phase 5 §§2,4,6–7 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-013` | `CMP-RUNTIME-AUTOLOADS` → `CNT-RUNTIME-IPC-FILES` | Write `user://.mcp/<sessionId>/resp-<id>.json`. | Explicit | Phase 5 / correlated response file | Phase 5 §§4,7 · [trace](traceability.md#architecture-atlas-traceability) |

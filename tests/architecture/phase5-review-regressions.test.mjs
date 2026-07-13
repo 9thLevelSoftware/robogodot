@@ -136,9 +136,13 @@ test("runtime bridge parity uses advertised UTF-8 byte limits and peer readiness
   for (const source of [scene, input, screenshot]) assert.match(source, /to_utf8_buffer\(\)\.size\(\) > 256/);
   assert.match(bridge, /hello_ready/); assert.match(bridge, /robogodot-ready-v1/);
   assert.match(client, /hello_ready/); assert.match(client, /robogodot-ready-v1/);
-  for (const source of [trace, sequence]) assert.match(source, /user:\/\/\.mcp\/<sessionId>\/resp-<id>\.json/);
+  for (const source of [trace, sequence]) {
+    assert.match(source, /user:\/\/\.mcp\/<sessionId>\/req-<id>\.json/);
+    assert.match(source, /user:\/\/\.mcp\/<sessionId>\/resp-<id>\.json/);
+  }
   assert.doesNotMatch(`${trace}\n${sequence}`, /user:\/\/\.mcp\/resp-<id>\.json/);
   const visibleSvgText = renderedSequence.replace(/<[^>]+>/g, "").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+  assert.match(visibleSvgText, /user:\/\/\.mcp\/<sessionId>\/req-<id>\.json/, "rendered visible text must preserve the exact request path without abbreviation or hyphenation");
   assert.match(visibleSvgText, /user:\/\/\.mcp\/<sessionId>\/resp-<id>\.json/, "rendered visible text must preserve the exact response path without hyphenation");
   assert.match(trace, /req-<id>\.json/); assert.doesNotMatch(trace, /host path and socket fallback unresolved/i);
 });

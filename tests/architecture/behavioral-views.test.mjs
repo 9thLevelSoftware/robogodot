@@ -65,7 +65,7 @@ const runtimeMessages = new Map([
   ["FLOW-RUN-007", "RUNTIME_TOOLS->>RUNTIME_DRIVER: plugin resolves canonical user:// root and injects bridge"],
   ["FLOW-RUN-008", "MCP_CLIENT->>RUNTIME_TOOLS: runtime inspect/input/screenshot request"],
   ["FLOW-RUN-009", "RUNTIME_TOOLS->>RUNTIME_DRIVER: allocate ID after authenticated transport lock"],
-  ["FLOW-RUN-010", "RUNTIME_DRIVER->>IPC_FILES: file fallback atomically writes req-<id>.json"],
+  ["FLOW-RUN-010", "RUNTIME_DRIVER->>IPC_FILES: atomically publish correlated request file"],
   ["FLOW-RUN-011", "AUTOLOADS->>IPC_FILES: autoload polls and reads request"],
   ["FLOW-RUN-012", "AUTOLOADS->>RUNNING_GAME: execute requested operation"],
   ["FLOW-RUN-013", "AUTOLOADS->>IPC_FILES: write correlated response file"],
