@@ -13,7 +13,7 @@ export interface RuntimeSessionSnapshot { readonly id: string; readonly mode: Ru
 export interface RuntimeOutput extends OutputPage { sessionId: string; running: boolean; exit?: ManagedProcess["exit"] }
 export interface RuntimeStopResult extends Omit<StopResult, "childId"> { sessionId: string }
 type Runner = Pick<ProcessRunner, "start" | "stop" | "stopCurrent">;
-export interface RuntimeSessionDependencies { runner: Runner; sessionId?: () => string; secret?: () => string; monitorMs?: number }
+export interface RuntimeSessionDependencies { runner: Runner; sessionId?: () => string; secret?: () => string; monitorMs?: number; screenshotOpen?: typeof open }
 
 interface OwnedSession { id: string; secret: string; mode: RuntimeMode; state: Exclude<RuntimeSessionState, "idle">; process: ManagedProcess | undefined; bridge: RuntimeBridgeAttachment | undefined; bridgeRoot: string | undefined; dap: RuntimeLifecycle | undefined }
 
@@ -28,6 +28,7 @@ export class RuntimeSessionCoordinator {
   private closing = false;
   private readonly sessionId: () => string;
   private readonly secret: () => string;
+  private readonly screenshotOpen: typeof open;
   readonly runner: Runner;
 
   constructor(dependencies: RuntimeSessionDependencies) {
@@ -35,6 +36,7 @@ export class RuntimeSessionCoordinator {
     this.sessionId = dependencies.sessionId ?? (() => randomBytes(16).toString("hex"));
     this.secret = dependencies.secret ?? (() => randomBytes(32).toString("hex"));
     this.monitorMs = dependencies.monitorMs ?? 25;
+    this.screenshotOpen = dependencies.screenshotOpen ?? open;
   }
 
   get state(): RuntimeSessionState { return this.owned?.state ?? "idle"; }
@@ -66,7 +68,9 @@ export class RuntimeSessionCoordinator {
   }
 
   attachBridge(sessionId: string, bridge: RuntimeBridgeAttachment, sessionRoot?: string): RuntimeSessionSnapshot {
-    const owned = this.getOwned(sessionId, ["starting", "running", "debug_ready"]); owned.bridge = bridge; owned.bridgeRoot = sessionRoot; return snapshot(owned);
+    const owned = this.getOwned(sessionId, ["starting", "running", "debug_ready"]);
+    if (owned.bridge) throw runtimeError("A runtime bridge is already attached to this session.", "Stop the active runtime session before attaching a different bridge.");
+    owned.bridge = bridge; owned.bridgeRoot = sessionRoot; return snapshot(owned);
   }
 
   async sceneTree(sessionId: string, maxDepth: number): Promise<unknown> {
@@ -74,6 +78,8 @@ export class RuntimeSessionCoordinator {
     if (nodes.length > 1000) throw invalidBridge();
     const normalized = nodes.map(item => Object.freeze({ path: ownString(item, "path", 1024), name: ownString(item, "name", 256), type: ownString(item, "type", 256), depth: ownInteger(item, "depth", 0, 32) }));
     const nodeTruncated = ownBoolean(raw, "truncated");
+    // Task 4 exposes no child-count proof at the cutoff, so reaching maxDepth is
+    // conservatively declared as depth truncation rather than claiming completeness.
     return Object.freeze({ sessionId, nodes: Object.freeze(normalized), truncated: Object.freeze({ nodes: nodeTruncated, depth: normalized.some(node => node.depth >= maxDepth) }) });
   }
 
@@ -98,8 +104,8 @@ export class RuntimeSessionCoordinator {
     const rootInput = resolve(owned.bridgeRoot); const rootStat = await lstat(rootInput); if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw screenshotError();
     const root = await realpath(rootInput); const absolutePath = await realpath(resolve(path)); const contained = relative(root, absolutePath);
     if (!contained || contained === ".." || contained.startsWith(`..${sep}`) || isAbsolute(contained)) throw screenshotError();
-    const before = await lstat(absolutePath); if (!before.isFile() || before.isSymbolicLink() || before.size < 24 || before.size > 16 * 1024 * 1024 || before.size !== claimedBytes) throw screenshotError();
-    const handle = await open(absolutePath, "r"); let bytes: Buffer;
+    const before = await lstat(absolutePath); if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size < 24 || before.size > 16 * 1024 * 1024 || before.size !== claimedBytes) throw screenshotError();
+    const handle = await this.screenshotOpen(absolutePath, "r"); let bytes: Buffer;
     try { const opened = await handle.stat(); if (opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size) throw screenshotError(); bytes = Buffer.alloc(opened.size); const read = await handle.read(bytes, 0, bytes.length, 0); const after = await handle.stat(); if (read.bytesRead !== bytes.length || after.dev !== opened.dev || after.ino !== opened.ino || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) throw screenshotError(); } finally { await handle.close(); }
     if (!bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) || bytes.toString("ascii", 12, 16) !== "IHDR") throw screenshotError();
     const width = bytes.readUInt32BE(16); const height = bytes.readUInt32BE(20); if (width !== claimedWidth || height !== claimedHeight || width === 0 || height === 0) throw screenshotError();
@@ -199,7 +205,7 @@ export class RuntimeSessionCoordinator {
   }
 
   private getBridge(id: string): OwnedSession { const owned = this.getOwned(id, ["running", "debug_ready"]); if (!owned.process?.running) throw invalidSession(); if (!owned.bridge) throw new GodotMcpError("not_connected", "The runtime bridge is unavailable.", "Launch a new runtime session and wait for bridge attachment."); return owned; }
-  private async bridgeRequest(id: string, method: string, params: unknown): Promise<unknown> { const owned = this.getBridge(id); try { const result = await owned.bridge!.request<unknown>(id, method, params, 5000); const error = optionalOwn(result, "error"); if (typeof error === "string") throw new GodotMcpError("godot_error", "The runtime bridge operation failed.", "Check the running scene and retry with valid runtime values."); return result; } catch (error) { if (error instanceof GodotMcpError) throw error; throw new GodotMcpError(/deadline|timeout/i.test(error instanceof Error ? error.message : "") ? "timeout" : "not_connected", "The runtime bridge request failed.", "Launch a new runtime session if the bridge is no longer connected."); } }
+  private async bridgeRequest(id: string, method: string, params: unknown): Promise<unknown> { const owned = this.getBridge(id); try { const result = await owned.bridge!.request<unknown>(id, method, params, 5000); const error = optionalOwn(result, "error"); if (typeof error === "string") throw new GodotMcpError("godot_error", "The runtime bridge operation failed.", "Check the running scene and retry with valid runtime values."); return result; } catch (error) { if (error instanceof GodotMcpError) throw error; const message = error instanceof Error ? error.message : ""; if (/deadline|timeout/i.test(message)) throw new GodotMcpError("timeout", "The runtime bridge request failed.", "Launch a new runtime session if the bridge is no longer connected."); if (/closed|not connected|socket|transport|publication failed/i.test(message)) throw new GodotMcpError("not_connected", "The runtime bridge request failed.", "Launch a new runtime session if the bridge is no longer connected."); throw invalidBridge(); } }
 }
 
 function snapshot(owned: OwnedSession): RuntimeSessionSnapshot {

@@ -53,3 +53,35 @@ Status: complete
 
 - The deterministic screenshot fixture validates the host acceptance path with a minimal PNG header/IHDR. End-to-end rendered viewport capture remains covered by the environment-gated live Godot work in later Phase 5 tasks.
 - Depth truncation is conservatively declared when a returned node reaches the caller's maximum depth; the approved Task 4 bridge exposes only an aggregate node-bound truncation flag and no child-count proof at the cutoff.
+
+## Important-review fix wave
+
+### Fixes
+
+- Locked bridge attachment for the complete active-session lifetime. A second `attachBridge` now returns a stable `godot_error` without replacing or closing the original bridge, changing screenshot-root authority, or changing which bridge receives requests. Normal stop still closes the original bridge before the process.
+- Completed the public-boundary matrix for coordinator-backed scene node/depth truncation, property omissions, accessor/revoked-proxy payloads, timeout and bridge-error mappings, and screenshot containment/identity/format verification.
+- Screenshot checks now reject multi-link files (`nlink !== 1`) in addition to escaped canonical paths, symbolic links where the platform permits creating them, non-regular files, bad PNG signatures, IHDR dimension mismatch, claimed-size mismatch, and files over 16 MiB.
+- The bounded screenshot read uses an injected production file-open dependency, enabling a deterministic same-handle `stat -> read -> stat` mutation test. Identity, byte count, size, and modification time must remain stable across the read.
+- Malformed bridge/proxy failures map to stable `godot_error`; explicit deadline failures remain `timeout`, and known closed/socket/transport failures remain `not_connected`. Raw bridge error text is never exposed.
+- Added an inline code comment documenting the accepted Minor: because Task 4 provides no child-count proof at the requested depth cutoff, reaching `maxDepth` conservatively declares depth truncation.
+
+### Review-fix TDD evidence
+
+- RED: `cd server && npm test -- --run tests/runtime-session.test.ts` failed the new duplicate-attachment test because the replacement bridge and root were accepted.
+- GREEN: the same command passed 10/10 after locking the first attachment.
+- RED: `cd server && npm test -- --run tests/runtime-bridge-tools.test.ts tests/runtime-session.test.ts` failed three expanded boundary cases: revoked proxies mapped to `not_connected`, hard links were accepted, and the deterministic same-handle open seam was unused.
+- GREEN: the same command passed 19/19 after error classification, link-count rejection, and same-handle dependency injection. A test-fixture correction aligned the fake handle's initial device/inode with the real file so the intended post-read mutation assertion was reached.
+
+### Fresh review-fix verification
+
+- `cd server && npm test -- --run tests/runtime-bridge-tools.test.ts tests/runtime-session.test.ts tests/runtime-bridge-client.test.ts tests/runtime-process-tools.test.ts tests/server.test.ts`: PASS, 5 files / 42 tests.
+- `cd server && npm test -- --run tests/mcp-stdio.test.ts`: PASS, 1 file / 2 tests; freshly built stdio inventory remains exactly 45.
+- `cd server && npm run typecheck`: PASS.
+- `cd server && npm run build`: PASS.
+- `cd server && npm test -- --run --hookTimeout=30000`: PASS, 35 files passed / 3 skipped; 384 tests passed / 4 skipped.
+- `git diff --check`: PASS.
+
+### Review-fix concerns
+
+- Symlink creation can require Windows Developer Mode or elevated privilege; that assertion runs when creation succeeds and tolerates only `EPERM`. The portable hard-link case always runs and proves link rejection through `nlink`.
+- The conservative depth-truncation semantics remain the documented Minor noted above.

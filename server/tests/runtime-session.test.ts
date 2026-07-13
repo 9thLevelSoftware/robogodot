@@ -31,6 +31,17 @@ describe("RuntimeSessionCoordinator", () => {
     expect(order).toEqual(["dap", "bridge", "process"]); expect(coordinator.state).toBe("idle");
   });
 
+  it("locks the first bridge and screenshot containment authority for the active session", async () => {
+    const order: string[] = []; const runner = { start: vi.fn().mockResolvedValue(processView()), stop: vi.fn().mockImplementation(async () => { order.push("process"); return { childId: "child", alreadyStopped: false, graceful: true, forced: false }; }), stopCurrent: vi.fn() };
+    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any }); const session = await coordinator.launch("normal", options);
+    const original = { request: vi.fn().mockResolvedValue({ nodes: [], truncated: false }), close: vi.fn().mockImplementation(() => { order.push("original"); }) };
+    const replacement = { request: vi.fn().mockResolvedValue({ nodes: [], truncated: false }), close: vi.fn().mockImplementation(() => { order.push("replacement"); }) };
+    coordinator.attachBridge(session.id, original, "C:/original-authority");
+    expect(() => coordinator.attachBridge(session.id, replacement, "C:/replacement-authority")).toThrowError(expect.objectContaining({ code: "godot_error" }));
+    await coordinator.sceneTree(session.id, 8); expect(original.request).toHaveBeenCalledOnce(); expect(replacement.request).not.toHaveBeenCalled();
+    await coordinator.stop(session.id); expect(order).toEqual(["original", "process"]); expect(replacement.close).not.toHaveBeenCalled();
+  });
+
   it("cleans a failed start through stopCurrent and close handles a launch in progress", async () => {
     let reject!: (error: Error) => void; const starting = new Promise<any>((_, no) => { reject = no; });
     const runner = { start: vi.fn().mockReturnValue(starting), stop: vi.fn(), stopCurrent: vi.fn().mockResolvedValue(undefined) };
