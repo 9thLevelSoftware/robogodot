@@ -2,7 +2,7 @@
 
 ## Status
 
-Implementation and fresh verification complete; the first whole-branch review rejected the branch with seven Important findings, every finding has been fixed and verified, and final re-review is pending.
+Implementation and fresh verification complete. The first whole-branch review's seven Important findings and the independent Task 8 review's architecture-contract findings were fixed and verified. Final Task 8 re-review passed spec compliance and code quality with zero findings.
 
 ## Delivered
 
@@ -57,7 +57,7 @@ The Mono editor emits `ERROR: .NET Sdk not found. The required version is '8.0.2
 
 ## Concerns
 
-Hosted Linux/Xvfb proof cannot run on this Windows workstation; configuration and fail-closed command structure are tested deterministically, and the actual Linux execution remains CI evidence. Awaiting the required final independent whole-branch re-review.
+Hosted Linux/Xvfb proof cannot run on this Windows workstation; configuration and fail-closed command structure are tested deterministically, and the actual Linux execution remains CI evidence.
 
 ## Follow-up review corrections
 
