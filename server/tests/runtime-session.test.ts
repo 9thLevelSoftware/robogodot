@@ -47,4 +47,31 @@ describe("RuntimeSessionCoordinator", () => {
     await expect(coordinator.output(session.id, 0, 100)).rejects.toMatchObject({ code: "invalid_args" });
     expect(coordinator.state).toBe("idle");
   });
+
+  it("retains one idempotent terminal stop result and rejects unrelated stale IDs", async () => {
+    const runner = { start: vi.fn().mockResolvedValue(processView()), stop: vi.fn().mockResolvedValue({ childId: "child", alreadyStopped: false, graceful: true, forced: false }), stopCurrent: vi.fn() };
+    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any }); const first = await coordinator.launch("normal", options);
+    const stopped = await coordinator.stop(first.id); expect(await coordinator.stop(first.id)).toEqual(stopped); expect(runner.stop).toHaveBeenCalledOnce();
+    await expect(coordinator.stop("f".repeat(32))).rejects.toMatchObject({ code: "invalid_args" });
+    const second = await coordinator.launch("normal", options); await expect(coordinator.stop(first.id)).rejects.toMatchObject({ code: "invalid_args" }); await coordinator.stop(second.id);
+  });
+
+  it("asynchronously tears down natural exit once and coalesces an explicit-stop race", async () => {
+    vi.useFakeTimers(); const order: string[] = []; const managed = processView();
+    const runner = { start: vi.fn().mockResolvedValue(managed), stop: vi.fn().mockImplementation(async () => { order.push("process"); return { childId: "child", alreadyStopped: true, graceful: false, forced: false, exit: { code: 7, signal: null, at: 101 } }; }), stopCurrent: vi.fn() };
+    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, monitorMs: 10 }); const session = await coordinator.launch("debug", options);
+    coordinator.attachBridge(session.id, { close: async () => { order.push("bridge"); } }); coordinator.attachDap(session.id, { close: async () => { order.push("dap"); } });
+    Reflect.defineProperty(managed, "running", { value: false }); Reflect.defineProperty(managed, "exit", { value: { code: 7, signal: null, at: 101 } });
+    await vi.advanceTimersByTimeAsync(10); const raced = coordinator.stop(session.id); await expect(raced).resolves.toMatchObject({ sessionId: session.id, exit: { code: 7 } });
+    expect(order).toEqual(["dap", "bridge", "process"]); expect(await coordinator.stop(session.id)).toEqual(await raced); vi.useRealTimers();
+  });
+
+  it("cleans attached starting seams in order, aggregates cleanup errors, and retains unconfirmed ownership", async () => {
+    let reject!: (error: Error) => void; const pending = new Promise<any>((_, no) => { reject = no; }); const order: string[] = [];
+    const runner = { start: vi.fn().mockReturnValue(pending), stop: vi.fn(), stopCurrent: vi.fn().mockImplementation(async () => { order.push("process"); throw new Error("owned"); }) };
+    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, sessionId: () => "a".repeat(32) }); const launched = coordinator.launch("debug", options);
+    coordinator.attachBridge("a".repeat(32), { close: async () => { order.push("bridge"); throw new Error("bridge"); } }); coordinator.attachDap("a".repeat(32), { close: async () => { order.push("dap"); throw new Error("dap"); } });
+    reject(new Error("launch")); const error = await launched.catch(value => value); expect(error).toBeInstanceOf(AggregateError); expect(error.errors[0].message).toBe("launch"); expect(order).toEqual(["dap", "bridge", "process"]);
+    expect(coordinator.state).toBe("failed"); await expect(coordinator.launch("normal", options)).rejects.toMatchObject({ code: "godot_error" });
+  });
 });
