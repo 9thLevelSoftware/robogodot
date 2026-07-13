@@ -78,7 +78,7 @@ export class RuntimeBridgeClient {
     const root = await this.canonicalFileRoot(); const final = join(root, `req-${id}.json`); const temp = join(root, `.req-${id}-${randomBytes(16).toString("hex")}.tmp`); const response = join(root, `resp-${id}.json`);
     const body = JSON.stringify(request); let handle;
     try {
-      handle = await open(temp, "wx", 0o600); await handle.writeFile(body, "utf8"); await handle.sync(); await handle.close(); handle = undefined; await this.canonicalFileRoot(); await link(temp, final); await unlink(temp);
+      handle = await open(temp, "wx", 0o600); await handle.writeFile(body, "utf8"); await handle.sync(); await handle.close(); handle = undefined; await this.canonicalFileRoot(); await link(temp, final); await unlink(temp); const published = await lstat(final); if (!published.isFile() || published.isSymbolicLink() || published.nlink !== 1) throw new Error("Runtime bridge request publication identity failed.");
       let delay = 5;
       while (Date.now() < deadline) { if (this.closed) throw new Error("Runtime bridge closed."); await this.canonicalFileRoot(); const value = await readStableResponse(response); if (value) { if (value.type !== "response" || value.id !== id || value.version !== this.secret!.protocolVersion || value.sessionId !== this.secret!.sessionId) { await unlink(response).catch(() => {}); continue; } await unlink(response); if (typeof value.error === "string") throw new Error(value.error); return plainJson(value.result) as T; } await new Promise(r => setTimeout(r, Math.min(delay, Math.max(1, deadline - Date.now())))); delay = Math.min(50, delay * 2); }
       throw new Error("Runtime bridge request deadline exceeded.");
@@ -95,10 +95,10 @@ export class RuntimeBridgeClient {
 function proof(token: string, label: string, session: string, version: number, ...nonces: string[]) { return createHmac("sha256", token).update([label, session, String(version), ...nonces].join("\0")).digest("hex"); }
 function fixedProof(actual: string, expected: string) { if (!/^[a-f0-9]{64}$/.test(actual)) return false; return timingSafeEqual(Buffer.from(actual, "hex"), Buffer.from(expected, "hex")); }
 
-async function readStableResponse(path: string): Promise<Record<string, unknown> | undefined> {
+export async function readStableResponse(path: string): Promise<Record<string, unknown> | undefined> {
   try {
-    const before = await lstat(path); if (!before.isFile() || before.isSymbolicLink() || before.size <= 0 || before.size > MAX_JSON_BYTES || await realpath(path) !== resolve(path)) return undefined;
-    const handle = await open(path, "r"); try { const opened = await handle.stat(); if (opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size) return undefined; const raw = Buffer.alloc(opened.size); const read = await handle.read(raw, 0, raw.length, 0); const after = await handle.stat(); if (read.bytesRead !== raw.length || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) return undefined; try { const value = JSON.parse(raw.toString("utf8")); return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined; } catch { return undefined; } } finally { await handle.close(); }
+    const before = await lstat(path); if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size <= 0 || before.size > MAX_JSON_BYTES || await realpath(path) !== resolve(path)) return undefined;
+    const handle = await open(path, "r"); try { const opened = await handle.stat(); if (opened.dev !== before.dev || opened.ino !== before.ino || opened.nlink !== 1 || opened.size !== before.size) return undefined; const raw = Buffer.alloc(opened.size); const read = await handle.read(raw, 0, raw.length, 0); const after = await handle.stat(); if (read.bytesRead !== raw.length || after.dev !== opened.dev || after.ino !== opened.ino || after.nlink !== 1 || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) return undefined; try { const value = JSON.parse(raw.toString("utf8")); return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined; } catch { return undefined; } } finally { await handle.close(); }
   } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
 }
 

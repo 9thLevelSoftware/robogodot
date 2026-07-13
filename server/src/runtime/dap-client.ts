@@ -1,5 +1,7 @@
 import { connect } from "node:net";
 import type { Duplex } from "node:stream";
+import { lstatSync, realpathSync } from "node:fs";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { GodotMcpError } from "../errors.js";
 import { DapTransport, type DapEvent } from "./dap-transport.js";
 
@@ -15,7 +17,7 @@ export interface DapAttachOptions {
 }
 export interface DapReadyState { readonly state: "ready"; readonly runtimeSessionId: string; readonly process: DapProcessMetadata; readonly bridge?: DapBridgeMetadata; readonly capabilities: Readonly<Record<string, unknown>>; readonly stoppedGeneration: number }
 export interface DapClientStatus { readonly state: DapClientState; readonly runtimeSessionId?: string; readonly process?: DapProcessMetadata; readonly bridge?: DapBridgeMetadata; readonly stoppedGeneration: number; readonly capabilities?: Readonly<Record<string, unknown>>; readonly degradation?: { readonly mode: "process_plus_bridge"; readonly dapAvailable: false; readonly reason: string } }
-interface Dependencies { socketFactory?: (host: string, port: number, timeoutMs: number, signal: AbortSignal) => Promise<Duplex>; transportFactory?: () => DapTransport }
+interface Dependencies { socketFactory?: (host: string, port: number, timeoutMs: number, signal: AbortSignal) => Promise<Duplex>; transportFactory?: () => DapTransport; projectRoot?: string }
 interface EventWait { readonly promise: Promise<void>; cancel(error: Error): void }
 
 const MAX_THREADS = 64, MAX_FRAMES = 256, MAX_SCOPES = 64, MAX_VARIABLES = 500, MAX_TEXT_BYTES = 8_192;
@@ -37,8 +39,9 @@ export class DapClient {
   private closing = false;
   private attachAbort: AbortController | undefined;
   private initializedWait: EventWait | undefined;
+  private readonly projectRoot: string | undefined;
 
-  constructor(dependencies: Dependencies = {}) { this.socketFactory = dependencies.socketFactory ?? createSocket; this.transportFactory = dependencies.transportFactory ?? (() => new DapTransport()); }
+  constructor(dependencies: Dependencies = {}) { this.socketFactory = dependencies.socketFactory ?? createSocket; this.transportFactory = dependencies.transportFactory ?? (() => new DapTransport()); try { this.projectRoot = dependencies.projectRoot ? realpathSync(dependencies.projectRoot) : undefined; } catch { this.projectRoot = undefined; } }
   get status(): DapClientStatus {
     const base: DapClientStatus = { state: this.currentState, stoppedGeneration: this.stoppedGeneration };
     return Object.freeze({ ...base, ...(this.options ? { runtimeSessionId: this.options.runtimeSessionId, process: this.options.process, ...(this.options.bridge ? { bridge: this.options.bridge } : {}) } : {}), ...(this.capabilities ? { capabilities: this.capabilities } : {}), ...(this.degradation ? { degradation: this.degradation } : {}) });
@@ -121,7 +124,7 @@ export class DapClient {
   private requireConfigured(): void { if (!this.transport || (this.currentState !== "ready" && this.currentState !== "stopped")) throw unavailable(); }
   private requireCapability(name: string): void { if (this.capabilities?.[name] !== true) throw disabled(name); }
   private waitForEvent(name: string, timeoutMs: number): EventWait { let settled = false, rejectWait!: (error: Error) => void, timer: NodeJS.Timeout; let remove: () => void = () => undefined; const finish = (error?: Error) => { if (settled) return; settled = true; clearTimeout(timer); remove(); error ? rejectWait(error) : undefined; }; const promise = new Promise<void>((resolve, reject) => { rejectWait = reject; remove = this.onEvent((event) => { if (event.event !== name) return; finish(); resolve(); }); timer = setTimeout(() => finish(new GodotMcpError("timeout", `DAP ${name} event timed out.`, "Launch a new managed debug session and attach again.")), timeoutMs); }); return { promise, cancel: (error) => finish(error) }; }
-  private normalizeFrame(value: unknown, generation: number): unknown { const raw = copyRecord(value, "stack frame"); const id = requiredId(raw.id, "frame"); return Object.freeze({ id, ref: this.ref(id, generation), name: boundedText(raw.name), line: requiredId(raw.line, "line"), column: requiredId(raw.column, "column"), ...(raw.source === undefined ? {} : { source: normalizeSource(raw.source) }) }); }
+  private normalizeFrame(value: unknown, generation: number): unknown { const raw = copyRecord(value, "stack frame"); const id = requiredId(raw.id, "frame"); return Object.freeze({ id, ref: this.ref(id, generation), name: boundedText(raw.name), line: requiredId(raw.line, "line"), column: requiredId(raw.column, "column"), ...(raw.source === undefined ? {} : { source: normalizeSource(raw.source, this.projectRoot) }) }); }
   private normalizeThread(value: unknown, generation: number): unknown { const raw = copyRecord(value, "thread"); const id = requiredId(raw.id, "thread"); return Object.freeze({ id, ref: this.ref(id, generation), name: boundedText(raw.name) }); }
   private normalizeScope(value: unknown, generation: number): unknown { const raw = copyRecord(value, "scope"); const id = requiredId(raw.variablesReference, "variablesReference"); return Object.freeze({ name: boundedText(raw.name), ref: this.ref(id, generation), ...(typeof raw.expensive === "boolean" ? { expensive: raw.expensive } : {}) }); }
   private normalizeVariable(value: unknown, generation: number): unknown { const raw = copyRecord(value, "variable"); const id = requiredId(raw.variablesReference, "variablesReference"); return Object.freeze({ name: boundedText(raw.name), value: boundedText(raw.value), ...(raw.type === undefined ? {} : { type: boundedText(raw.type) }), ref: this.ref(id, generation) }); }
@@ -149,4 +152,12 @@ function validateId(value: number, label: string): void { if (!Number.isSafeInte
 function validateOffset(value: number): void { if (!Number.isSafeInteger(value) || value < 0) throw new GodotMcpError("invalid_args", "Invalid DAP pagination offset.", "Use a non-negative integer offset."); }
 function boundedText(value: unknown): string { if (typeof value !== "string") throw bad("Invalid DAP text field."); if (byteLength(value) <= MAX_TEXT_BYTES) return value; let low = 0, high = value.length; while (low < high) { const middle = Math.ceil((low + high) / 2); if (byteLength(value.slice(0, middle)) <= MAX_TEXT_BYTES) low = middle; else high = middle - 1; } if (low > 0 && /[\uD800-\uDBFF]/.test(value[low - 1]!)) low--; return value.slice(0, low); }
 function byteLength(value: string): number { return Buffer.byteLength(value, "utf8"); }
-function normalizeSource(value: unknown): unknown { const raw = copyRecord(value, "source"); return Object.freeze({ ...(raw.name === undefined ? {} : { name: boundedText(raw.name) }), ...(raw.path === undefined ? {} : { path: boundedText(raw.path) }) }); }
+function normalizeSource(value: unknown, projectRoot?: string): unknown {
+  const raw = copyRecord(value, "source"); const output: Record<string, unknown> = {};
+  if (raw.name !== undefined) output.name = boundedText(raw.name);
+  if (typeof raw.path === "string" && projectRoot) try {
+    const logical = raw.path.startsWith("res://") ? raw.path.slice(6) : raw.path; const candidate = realpathSync(isAbsolute(logical) ? logical : resolve(projectRoot, logical)); const stat = lstatSync(candidate); const contained = relative(projectRoot, candidate);
+    if (contained && contained !== ".." && !contained.startsWith(`..${sep}`) && !isAbsolute(contained) && stat.isFile() && !stat.isSymbolicLink()) output.path = boundedText(`res://${contained.split(sep).join("/")}`);
+  } catch { /* omit unresolvable, symbolic, or outside source paths */ }
+  return Object.freeze(output);
+}

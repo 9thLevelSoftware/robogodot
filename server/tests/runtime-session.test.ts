@@ -37,6 +37,20 @@ describe("RuntimeSessionCoordinator", () => {
     vi.useRealTimers();
   });
 
+  it("retains a late prepared artifact whose cleanup fails and retries it before another launch", async () => {
+    vi.useFakeTimers(); try {
+      let release!: (value: any) => void; const delayed = new Promise<any>(resolve => { release = resolve; });
+      const close = vi.fn().mockRejectedValueOnce(new Error("late artifacts busy")).mockResolvedValueOnce(undefined);
+      const runner = { start: vi.fn(), stop: vi.fn(), stopCurrent: vi.fn() };
+      const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, sessionId: () => "c".repeat(32) });
+      const launch = coordinator.integratedLaunch("debug", () => delayed, { host: "127.0.0.1", port: 6006, timeoutMs: 100 });
+      const failure = expect(launch).rejects.toMatchObject({ code: "timeout" }); await vi.advanceTimersByTimeAsync(100); await failure;
+      await expect(coordinator.launch("normal", options)).rejects.toMatchObject({ code: "godot_error" });
+      release({ process: options, connect: vi.fn(), close }); await Promise.resolve(); await Promise.resolve();
+      expect(coordinator.state).toBe("failed"); await expect(coordinator.stop("c".repeat(32))).resolves.toMatchObject({ sessionId: "c".repeat(32) }); expect(close).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("enforces the shared deadline during a DAP attach and closes its late resolution", async () => {
     vi.useFakeTimers(); let release!: () => void;
     const attaching = new Promise<void>(resolve => { release = resolve; });
@@ -51,21 +65,21 @@ describe("RuntimeSessionCoordinator", () => {
     vi.useRealTimers();
   });
 
-  it("rejects and closes a bridge that connects after natural exit cleared launch ownership", async () => {
+  it("retains a bridge that connects after natural exit for explicit retryable cleanup", async () => {
     vi.useFakeTimers();
     try {
       let release!: (value: any) => void; const connecting = new Promise<any>(resolve => { release = resolve; });
       const managed = processView(); const bridgeClose = vi.fn();
       const runner = { start: vi.fn().mockResolvedValue(managed), stop: vi.fn().mockResolvedValue({ childId: "child", alreadyStopped: true, graceful: false, forced: false }), stopCurrent: vi.fn() };
       const prepared = { process: options, connect: vi.fn().mockReturnValue(connecting), close: vi.fn() };
-      const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, monitorMs: 10 });
-      const launch = coordinator.integratedLaunch("normal", async () => prepared as any);
+      const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, monitorMs: 10 }); let activeId = "";
+      const launch = coordinator.integratedLaunch("normal", async (sessionId) => { activeId = sessionId; return prepared as any; });
       await vi.waitFor(() => expect(prepared.connect).toHaveBeenCalledOnce());
       Reflect.defineProperty(managed, "running", { value: false }); await vi.advanceTimersByTimeAsync(10);
-      await vi.waitFor(() => expect(coordinator.state).toBe("idle"));
+      await vi.waitFor(() => expect(coordinator.state).toBe("failed"));
       release({ attachment: { close: bridgeClose }, root: "root", transport: "socket" });
       await expect(launch).rejects.toThrow(/ended|cancelled/i);
-      expect(bridgeClose).toHaveBeenCalledOnce(); expect(prepared.close).toHaveBeenCalledOnce();
+      expect(bridgeClose).not.toHaveBeenCalled(); await coordinator.stop(activeId); expect(bridgeClose).toHaveBeenCalledOnce(); expect(prepared.close).toHaveBeenCalledOnce();
     } finally { vi.useRealTimers(); }
   });
 
@@ -137,7 +151,7 @@ describe("RuntimeSessionCoordinator", () => {
     expect(coordinator.attachBridge(session.id, bridge)).toMatchObject({ state: "running" });
     expect(coordinator.attachDap(session.id, dap)).toMatchObject({ state: "debug_ready" });
     await expect(coordinator.stop(session.id)).rejects.toThrow("dap failed");
-    expect(order).toEqual(["dap", "bridge", "process"]); expect(coordinator.state).toBe("idle");
+    expect(order).toEqual(["dap", "bridge", "process"]); expect(coordinator.state).toBe("failed");
   });
 
   it("locks the first bridge and screenshot containment authority for the active session", async () => {
@@ -160,12 +174,14 @@ describe("RuntimeSessionCoordinator", () => {
     expect(runner.stopCurrent).toHaveBeenCalled(); expect(coordinator.state).toBe("idle");
   });
 
-  it("denies output after natural exit", async () => {
-    const managed = processView(); const runner = { start: vi.fn().mockResolvedValue(managed), stop: vi.fn(), stopCurrent: vi.fn() };
+  it("retains final output and exit metadata after natural exit until explicit stop", async () => {
+    const managed = processView(); managed.output.mockImplementation((since: number) => since === 0 ? { records: [{ cursor: 0, stream: "stdout", at: 100, text: "final partial", truncated: false }], next: 1, lost: 0, truncated: false } : { records: [], next: 1, lost: 0, truncated: false }); const runner = { start: vi.fn().mockResolvedValue(managed), stop: vi.fn().mockResolvedValue({ childId: "child", alreadyStopped: true, graceful: false, forced: false, exit: { code: 7, signal: null, at: 101 } }), stopCurrent: vi.fn() };
     const coordinator = new RuntimeSessionCoordinator({ runner: runner as any }); const session = await coordinator.launch("normal", options);
-    Reflect.defineProperty(managed, "running", { value: false });
-    await expect(coordinator.output(session.id, 0, 100)).rejects.toMatchObject({ code: "invalid_args" });
-    expect(coordinator.state).toBe("idle");
+    Reflect.defineProperty(managed, "running", { value: false }); Reflect.defineProperty(managed, "exit", { value: { code: 7, signal: null, at: 101 } });
+    await expect(coordinator.output(session.id, 0, 100)).resolves.toMatchObject({ running: false, exit: { code: 7 }, records: [{ cursor: 0, text: "final partial" }], next: 1 });
+    await expect(coordinator.output(session.id, 1, 100)).resolves.toMatchObject({ running: false, records: [], next: 1 });
+    await expect(coordinator.sceneTree(session.id, 8)).rejects.toMatchObject({ code: "invalid_args" });
+    await coordinator.stop(session.id); await expect(coordinator.output(session.id, 0, 100)).rejects.toMatchObject({ code: "invalid_args" });
   });
 
   it("retains one idempotent terminal stop result and rejects unrelated stale IDs", async () => {
@@ -176,7 +192,7 @@ describe("RuntimeSessionCoordinator", () => {
     const second = await coordinator.launch("normal", options); await expect(coordinator.stop(first.id)).rejects.toMatchObject({ code: "invalid_args" }); await coordinator.stop(second.id);
   });
 
-  it("asynchronously tears down natural exit once and coalesces an explicit-stop race", async () => {
+  it("retains natural exit until explicit stop then tears down once", async () => {
     vi.useFakeTimers(); const order: string[] = []; const managed = processView();
     const runner = { start: vi.fn().mockResolvedValue(managed), stop: vi.fn().mockImplementation(async () => { order.push("process"); return { childId: "child", alreadyStopped: true, graceful: false, forced: false, exit: { code: 7, signal: null, at: 101 } }; }), stopCurrent: vi.fn() };
     const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, monitorMs: 10 }); const session = await coordinator.launch("debug", options);
@@ -201,6 +217,19 @@ describe("RuntimeSessionCoordinator", () => {
     await expect(coordinator.stop(session.id)).rejects.toThrow("denied"); expect(coordinator.state).toBe("failed");
     await expect(coordinator.launch("normal", options)).rejects.toMatchObject({ code: "godot_error" });
     await expect(coordinator.stop(session.id)).resolves.toMatchObject({ sessionId: session.id, forced: true }); expect(runner.stop).toHaveBeenCalledTimes(2); expect(runner.stop.mock.calls.every(call => call[0] === "child")).toBe(true);
+  });
+
+  it("retains bridge and bootstrap ownership independently and retries exact failed cleanup", async () => {
+    const bridgeClose = vi.fn().mockRejectedValueOnce(new Error("bridge busy")).mockResolvedValueOnce(undefined);
+    const artifactClose = vi.fn().mockRejectedValueOnce(new Error("artifacts busy")).mockResolvedValueOnce(undefined);
+    const runner = { start: vi.fn().mockResolvedValue(processView()), stop: vi.fn().mockResolvedValue({ childId: "child", alreadyStopped: false, graceful: true, forced: false }), stopCurrent: vi.fn() };
+    const prepared = { process: options, connect: vi.fn().mockResolvedValue({ attachment: { request: vi.fn(), close: bridgeClose }, root: "root", transport: "file" }), close: artifactClose };
+    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any }); let id = "";
+    await coordinator.integratedLaunch("normal", async sessionId => { id = sessionId; return prepared as any; });
+    await expect(coordinator.stop(id)).rejects.toThrow("bridge busy"); expect(coordinator.state).toBe("failed");
+    await expect(coordinator.launch("normal", options)).rejects.toMatchObject({ code: "godot_error" });
+    await expect(coordinator.stop(id)).resolves.toMatchObject({ sessionId: id });
+    expect(bridgeClose).toHaveBeenCalledTimes(2); expect(artifactClose).toHaveBeenCalledTimes(2); expect(runner.stop).toHaveBeenCalledTimes(2);
   });
 
   it("retains unconfirmed ownership through close and permits later exact-session retry", async () => {

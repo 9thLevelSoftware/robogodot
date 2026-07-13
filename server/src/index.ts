@@ -96,24 +96,24 @@ export function createRuntimeService(config: ReturnType<typeof resolveConfig>, e
     if (!config.godotPath || !config.projectPath) throw new GodotMcpError("not_connected", "The runtime process service is not configured.", "Set GODOT_PATH and GODOT_PROJECT_PATH before launching a managed runtime.");
     return { godotPath: config.godotPath, projectPath: config.projectPath };
   };
-  const launchIntegrated = (mode: "normal" | "debug", options: { scene?: string; args?: string[]; timeoutMs?: number }) => {
+  const launchIntegrated = (mode: "normal" | "debug", options: { scene?: string; args?: string[]; timeoutMs?: number; initialBreakpoints?: { path: string; lines: number[] }[] }) => {
     const paths = configured(); const scene = options.scene ?? "res://test_scene.tscn";
     return coordinator.integratedLaunch(mode, async (sessionId, token) => {
       const runtimePort = Number(process.env.GODOT_RUNTIME_PORT ?? config.editorPort + 1);
       const debugPort = Number(process.env.GODOT_REMOTE_DEBUG_PORT ?? 6007);
       const prepared = await bootstrap.prepare({ sessionId, token, protocolVersion: 1, preferredPort: runtimePort, scene });
       const client = new RuntimeBridgeClient();
-      let closed = false;
-      const close = async () => { if (closed) return; closed = true; let first: unknown; try { await client.close(); } catch (error) { first = error; } try { await bootstrap.cleanup(prepared); } catch (error) { first ??= error; } if (first) throw first; };
+      let artifactsClosed = false;
+      const closeArtifacts = async () => { if (artifactsClosed) return; await bootstrap.cleanup(prepared); artifactsClosed = true; };
       return {
         process: { ...paths, args: [...(mode === "debug" ? ["--remote-debug", `tcp://127.0.0.1:${debugPort}`] : []), ...prepared.args, ...(options.args ?? [])] },
-        close,
+        close: closeArtifacts,
         connect: async () => {
           const transport = await client.connect(prepared);
-          return { attachment: { request: client.request.bind(client), close }, root: prepared.sessionRoot, transport };
+          return { attachment: { request: client.request.bind(client), close: client.close.bind(client) }, root: prepared.sessionRoot, transport };
         },
       };
-    }, mode === "debug" ? { host: "127.0.0.1", port: config.dapPort, timeoutMs: options.timeoutMs ?? 15_000 } : undefined);
+    }, mode === "debug" ? { host: "127.0.0.1", port: config.dapPort, timeoutMs: options.timeoutMs ?? 15_000, ...(options.initialBreakpoints ? { initialBreakpoints: options.initialBreakpoints } : {}) } : undefined);
   };
   return {
     launch: (mode, options) => mode === "normal" ? launchIntegrated("normal", options) : launchIntegrated("debug", options),

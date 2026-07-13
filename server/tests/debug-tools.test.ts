@@ -32,7 +32,7 @@ describe("public debug tools", () => {
       for (const tool of tools) expect(tool.inputSchema).toMatchObject({ type: "object", additionalProperties: false });
       for (const tool of tools) expect(tool.outputSchema).toMatchObject({ type: "object", additionalProperties: false });
       expect(tools.map(tool => Object.keys((tool.outputSchema as any).properties))).toEqual([
-        ["sessionId", "mode", "state", "pid", "startedAt", "bridgeTransport"],
+        ["sessionId", "mode", "state", "pid", "startedAt", "bridgeTransport", "capabilities"],
         ["sessionId", "path", "breakpoints"],
         ["sessionId", "resumed"],
         ["sessionId", "kind", "resumed"],
@@ -49,7 +49,7 @@ describe("public debug tools", () => {
   it("maps all operations and emits only own normalized data", async () => {
     const ref = { runtimeSessionId: SESSION, stoppedGeneration: 2, id: 7 };
     const debug = {
-      debugLaunch: vi.fn().mockResolvedValue({ id: SESSION, mode: "debug", state: "debug_ready", pid: 3, startedAt: 4, dap: { state: "ready", stoppedGeneration: 0 } }),
+      debugLaunch: vi.fn().mockResolvedValue({ id: SESSION, mode: "debug", state: "debug_ready", pid: 3, startedAt: 4, capabilities: { supportsConfigurationDoneRequest: true, supportsTerminateRequest: false, supportsVariablePaging: true, secretCapability: "drop" } }),
       debugSetBreakpoints: vi.fn().mockResolvedValue({ sessionId: SESSION, path: "phase5/runtime_fixture.gd", breakpoints: [{ line: 12, verified: true }] }),
       debugContinue: vi.fn().mockResolvedValue({ sessionId: SESSION, resumed: true }),
       debugStep: vi.fn().mockResolvedValue({ sessionId: SESSION, kind: "over", resumed: true }),
@@ -58,7 +58,8 @@ describe("public debug tools", () => {
     };
     const h = await harness(debug);
     try {
-      expect((await h.client.callTool({ name: "godot_debug_launch", arguments: { scene: "res://phase5/main.tscn", timeoutMs: 5000 } })).structuredContent).toMatchObject({ sessionId: SESSION, state: "debug_ready", pid: 3 });
+      expect((await h.client.callTool({ name: "godot_debug_launch", arguments: { scene: "res://phase5/main.tscn", initialBreakpoints: [{ path: "phase5/runtime_fixture.gd", lines: [12] }], timeoutMs: 5000 } })).structuredContent).toMatchObject({ sessionId: SESSION, state: "debug_ready", pid: 3, capabilities: { supportsConfigurationDoneRequest: true, supportsTerminateRequest: false, supportsVariablePaging: true } });
+      expect(debug.debugLaunch).toHaveBeenCalledWith(expect.objectContaining({ initialBreakpoints: [{ path: "phase5/runtime_fixture.gd", lines: [12] }] }));
       await h.client.callTool({ name: "godot_debug_set_breakpoints", arguments: { sessionId: SESSION, path: "phase5/runtime_fixture.gd", lines: [12] } });
       await h.client.callTool({ name: "godot_debug_continue", arguments: { sessionId: SESSION, thread: ref } });
       await h.client.callTool({ name: "godot_debug_step", arguments: { sessionId: SESSION, thread: ref, kind: "over" } });

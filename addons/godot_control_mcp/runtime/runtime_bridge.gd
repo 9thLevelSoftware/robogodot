@@ -98,8 +98,13 @@ func _process_file(name: String) -> void:
 	var path: String = config.sessionRoot.path_join(name)
 	var directory := DirAccess.open(config.sessionRoot)
 	if directory == null or directory.is_link(name): return
-	if FileAccess.get_size(path) <= 0 or FileAccess.get_size(path) > MAX_JSON: return
-	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null: return
+	var length := file.get_length()
+	if length <= 0 or length > MAX_JSON: file.close(); return
+	var bytes := file.get_buffer(length); var read_error := file.get_error(); var final_length := file.get_length(); file.close()
+	if read_error != OK or bytes.size() != length or final_length != length: return
+	var parsed: Variant = JSON.parse_string(bytes.get_string_from_utf8())
 	if not parsed is Dictionary or not _authenticated(parsed) or int(parsed.id) != filename_id: return
 	DirAccess.remove_absolute(path)
 	if _transport.is_empty(): _transport = "file"; _server.stop(); _drop_peer()
@@ -111,9 +116,9 @@ func _process_file(name: String) -> void:
 	var text := JSON.stringify(response)
 	if text.to_utf8_buffer().size() > MAX_JSON: response = {"type":"response", "version":config.protocolVersion, "sessionId":config.sessionId, "id":id, "error":"response exceeds bound"}; text = JSON.stringify(response)
 	var temp: String = config.sessionRoot.path_join(".resp-%d-%s.tmp" % [id, Crypto.new().generate_random_bytes(16).hex_encode()]); var final: String = config.sessionRoot.path_join("resp-%d.json" % id)
-	var file := FileAccess.open(temp, FileAccess.WRITE)
-	if file == null: return
-	file.store_string(text); file.flush(); var write_error := file.get_error(); file.close()
+	var response_file := FileAccess.open(temp, FileAccess.WRITE)
+	if response_file == null: return
+	response_file.store_string(text); response_file.flush(); var write_error := response_file.get_error(); response_file.close()
 	if write_error != OK or FileAccess.get_size(temp) != text.to_utf8_buffer().size() or FileAccess.file_exists(final) or DirAccess.rename_absolute(temp, final) != OK: DirAccess.remove_absolute(temp)
 
 func _authenticated(request: Dictionary) -> bool:

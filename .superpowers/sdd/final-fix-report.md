@@ -1,5 +1,7 @@
 # Phase 4 Final Review Fix Report
 
+> Historical Phase 4 evidence follows. The current Phase 5 final-fix evidence is appended below.
+
 Date: 2026-07-12
 
 ## Scope and outcome
@@ -84,3 +86,51 @@ Result: exit 0; 5 files passed; 87 tests passed.
 - Live Phase 1: exit 0; 1/1 passed.
 - Live Phase 3: exit 0; 1/1 passed.
 - Live Phase 4: exit 0; 2/2 passed.
+
+---
+
+# Phase 5 Whole-Branch Final-Fix Report
+
+Date: 2026-07-13
+
+## Design adjudications and implemented outcomes
+
+1. Natural exit retains the exact managed process view and its drained ring until explicit `godot_stop_project`. `godot_run_output` returns `running:false`, exit metadata, stable cursors, and final records. Runtime and debug mutations fail closed after exit.
+2. Process, bridge, and prepared/bootstrap artifacts are independently owned. A failed close remains attached to the same session, blocks launch, and is retried by the next exact stop/close. Late preparation cleanup is tracked while unresolved and a late failed close is retained rather than swallowed.
+3. `godot_debug_launch` accepts at most 32 unique contained initial-breakpoint groups and 500 total lines. Groups are canonicalized and sent before `configurationDone` under the one launch deadline. Success exposes only three negotiated boolean capabilities: configuration-done, terminate, and variable paging. Inventory remains exactly 51 names.
+4. DAP stack sources expose only contained normalized `res://` paths; absolute, traversal, accessor, and proxy-shaped remote paths fail closed or are omitted. Name-only sources remain safe.
+5. Node file IPC requires `nlink === 1` before publication and before/during/after same-handle response reads. Godot 4.6 GDScript exposes neither portable link count nor descriptor identity, so its consumer uses one bounded `FileAccess` handle, verifies complete stable-length content, removes the pathname before dispatch, and authenticates session/token/filename ID/request ID/monotonic sequence. This preserves authenticated-content integrity and pathname-race safety without claiming unavailable Godot-side hard-link-count proof.
+6. README distinguishes page `truncated` (more retained records remain) from `record.truncated` (shortened/invalid-UTF-8 line) and documents terminal retention, cleanup retry, debug launch, and precise file-IPC guarantees.
+
+## RED and root-cause evidence
+
+- Focused pre-fix command: `cd server; npm test -- --run tests/runtime-session.test.ts tests/debug-tools.test.ts tests/dap-client.test.ts tests/runtime-bridge-client.test.ts`
+  - Exit 1: natural-exit tests observed eager invalidation/idle, launch schema lacked capabilities, and cleanup tests encoded unconditional ownership clearing.
+- The `loseReadyAfterSend` bridge test intermittently reported `readinessWrites=0` only in the parallel four-file run. Root cause was its 25 ms test wall-clock budget expiring before Windows scheduled the mock's multi-turn TCP handshake; the protocol loss point had not occurred. The test-only deadline is now 250 ms (well below production's 3 s), while the synchronized assertion still requires exactly one readiness write. Production deadlines were not changed.
+
+## GREEN and focused verification
+
+- `cd server; npm run typecheck; npm test -- --run tests/runtime-session.test.ts tests/debug-tools.test.ts tests/dap-client.test.ts tests/runtime-bridge-client.test.ts tests/runtime-process-tools.test.ts`
+  - Exit 0: typecheck passed; 5 files, 63 tests passed.
+- `cd server; 1..3 | % { npm test -- --run tests/runtime-bridge-client.test.ts }`
+  - Three consecutive exits 0; 14/14 tests passed in every run.
+- Deterministic regressions cover final drain/cursor/later stop, bridge/bootstrap retry and launch blocking, late prepared cleanup failure, breakpoint forwarding/schema/capabilities, hostile source suppression, hard-link rejection, and documentation wording.
+
+## Full verification
+
+- `cd server; npm run typecheck; npm run build; npm test -- --run`
+  - Exit 0: 38 files passed, 4 skipped; 439 tests passed, 6 skipped.
+- `node docs/architecture/render.mjs --check`
+  - Exit 0: Atlas validation passed.
+- `node --test tests/architecture/*.test.mjs`
+  - Exit 0: 95 passed, 1 external-archive skip.
+- `cd server; npm run docs:check`
+  - Exit 0: verified 1,065 classes, 24,256 members, 9,697,180 bytes.
+- Exact inventory remains 51 through server, stdio, and architecture contract tests.
+- Exact configured Godot 4.6.2 aggregate smoke command exited 0 with Phase 5 authenticated bootstrap and locked runtime bridge markers plus all prior markers.
+- Exact configured live suites: Phase 1 1/1, Phase 3 1/1, Phase 4 2/2, Phase 5 2/2; all exited 0.
+
+## Concerns
+
+- Godot's GDScript API cannot prove hard-link count. The implemented and documented fallback is authenticated, monotonic, bounded, one-handle consumption with pathname removal before dispatch; Node performs exact link-count checks.
+- The configured Mono binary continues to print the known missing .NET SDK 8.0.28 and teardown leak warnings. Required markers and all smoke/live processes exit 0.

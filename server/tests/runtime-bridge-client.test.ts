@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { RuntimeBridgeClient } from "../src/runtime/bridge-client.js";
+import { readStableResponse, RuntimeBridgeClient } from "../src/runtime/bridge-client.js";
 import { encodeFrame, FrameDecoder, plainJson } from "../src/runtime/bridge-protocol.js";
 import { MockRuntimeBridge } from "./mock-runtime-bridge.js";
 
@@ -21,6 +21,11 @@ async function fixture(port: number) {
 afterEach(async () => { await Promise.all(roots.splice(0).map(p => rm(p, { recursive: true, force: true }))); });
 
 describe("runtime bridge protocol", () => {
+  it("rejects a response inode with another hard-link name", async () => {
+    const root = await mkdtemp(join(tmpdir(), "robogodot-hardlink-")); roots.push(root); const response = join(root, "resp-1.json");
+    await writeFile(response, JSON.stringify({ type: "response", id: 1 })); await link(response, join(root, "alias.json"));
+    await expect(readStableResponse(response)).resolves.toBeUndefined();
+  });
   it("decodes partial and coalesced bounded frames", () => {
     const decoder = new FrameDecoder(); const a = encodeFrame({ a: 1 }); const b = encodeFrame({ b: 2 });
     expect(decoder.push(a.subarray(0, 3))).toEqual([]);
@@ -115,7 +120,10 @@ describe("RuntimeBridgeClient", () => {
   it("keeps both peers file-eligible when readiness was written but lost before the client observed it", async () => {
     const provisional = await fixture(1); const bridge = await MockRuntimeBridge.socket({ sessionId: SESSION, token: TOKEN, sessionRoot: provisional.sessionRoot, loseReadyAfterSend: true });
     const stored = JSON.parse(await (await import("node:fs/promises")).readFile(provisional.args[4]!, "utf8")); stored.preferredPort = bridge.port; await writeFile(provisional.args[4]!, JSON.stringify(stored));
-    const client = new RuntimeBridgeClient({ handshakeTimeoutMs: 25 }); expect(await client.connect(provisional)).toBe("file"); expect(bridge.readinessWrites).toBe(1);
+    // The mock deliberately drops hello_ready after the kernel accepts the write.
+    // Allow Windows worker scheduling to reach that synchronized protocol point;
+    // this remains far below the production 3-second handshake deadline.
+    const client = new RuntimeBridgeClient({ handshakeTimeoutMs: 250 }); expect(await client.connect(provisional)).toBe("file"); expect(bridge.readinessWrites).toBe(1);
     await expect(client.request(SESSION, "runtime.scene_tree", {}, 1000)).resolves.toEqual({ ok: true }); expect(bridge.requests).toHaveLength(1);
     await client.close(); await bridge.close();
   });
