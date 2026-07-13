@@ -1,209 +1,155 @@
-# Task 6 report: live Godot 4.6 editor and owned-host acceptance
+# Task 6 Report — Bounded attach-only DAP client
 
-## Status
+## Outcome
 
-Implemented and verified. The live Phase 4 suite passes against the exact supplied Godot 4.6.2 Mono console executable, and the full server regression/typecheck/build pass.
+Implemented and committed the bounded attach-only DAP transport/client beneath the existing runtime coordinator layers. `DapClient` has no spawn or process-runner dependency; it accepts coordinator-owned loopback endpoint, runtime session, process, and optional bridge metadata. `ProcessRunner` remains the sole OS process owner, and the coordinator's existing DAP-before-bridge-before-process cleanup ordering is unchanged.
 
-## Commands and outputs
+Commit: `fde1537 feat: add attach-only Godot DAP client`
 
-### TDD red/green support tests
+## Files committed
 
-`cd server; npm test -- --run tests/live-support.test.ts`
+- `server/src/runtime/dap-transport.ts`
+- `server/src/runtime/dap-client.ts`
+- `server/tests/mock-dap.ts`
+- `server/tests/dap-transport.test.ts`
+- `server/tests/dap-client.test.ts`
 
-- RED: 3 failures (`allocateLoopbackPort is not a function`; `waitForProcessExit is not a function`).
-- GREEN: 1 file passed, 10 tests passed. After exact-PID polling coverage was added: 11 support tests pass as part of the full suite.
+Pre-existing dirty changes in `.superpowers/sdd/progress.md` and `.superpowers/sdd/task-2-report.md` were preserved, not edited, and not staged. This report was written after the scoped Task 6 commit and is not part of that commit.
 
-`cd server; npm test -- --run tests/lsp-diagnostics.test.ts tests/lsp-tools.test.ts`
+## TDD evidence and exact commands
 
-- RED: missing diagnostic URI remap and disconnected native-symbol returned `feature_disabled` instead of `not_connected`.
-- GREEN: targeted diagnostics/tools regressions pass in the subsequent 81-test targeted run.
+All commands ran from `C:\Users\dasbl\Documents\RoboGodot\.worktrees\codex-phase-5\server` unless noted.
 
-`cd server; npm test -- --run tests/lsp-session.test.ts -t "serverInfo is omitted"`
+1. RED transport:
+   - `npm test -- --run tests/dap-transport.test.ts`
+   - Result: exit 1; suite could not import missing `../src/runtime/dap-transport.js`. This was the expected missing-feature failure.
+2. First transport GREEN/debug cycle:
+   - `npm test -- --run tests/dap-transport.test.ts`
+   - Result: exit 1; 8 passed, 2 failed. Root causes were test fixtures: a 10 ms default expired during mock polling, and `maxBufferBytes: 64` violated the intended `frame <= buffer` option invariant.
+   - Fixture-only corrections were made, then the same command returned exit 0; 10/10 passed.
+3. RED client:
+   - `npm test -- --run tests/dap-client.test.ts`
+   - Result: exit 1; suite could not import missing `../src/runtime/dap-client.js`. This was the expected missing-feature failure.
+4. Client debug cycles:
+   - `npm test -- --run tests/dap-client.test.ts`
+   - Initial result: exit 1; 3 passed, 5 failed, with four late rejection reports. Root causes: capability checks occurred after readiness checks; resume state rejected stale handles as disconnected; and the initialized-event waiter lacked an immediate rejection observer.
+   - `npm test -- --run tests/dap-transport.test.ts tests/dap-client.test.ts`
+   - Intermediate result: assertions passed but exit 1 because one initialized-event timeout was handled too late. An immediate cleanup observer fixed the lifecycle leak.
+   - Rerun result: exit 0; 18/18 passed.
+5. Additional RED lifecycle/binding tests:
+   - `npm test -- --run tests/dap-client.test.ts`
+   - Result: exit 1; 7 passed, 2 failed, proving thread handles lacked generation-bound references and cancelled attach incorrectly published degraded state.
+   - After minimal fixes, `npm test -- --run tests/dap-transport.test.ts tests/dap-client.test.ts` returned exit 0; 19/19 passed.
+6. Coordinator close RED:
+   - `npm test -- --run tests/dap-client.test.ts -t "uses the DAP disconnect handshake"`
+   - Result: exit 1; expected `disconnect`, observed prior `configurationDone`, proving `close()` destroyed the socket without the required live-session DAP handshake.
+   - After the lifecycle fix, focused DAP verification returned exit 0; 20/20 passed.
 
-- RED: expected native-symbol support `true`, received `false`.
-- GREEN: Godot 4.6 capability-shape fallback added and included in passing targeted/full runs.
+## Final fresh verification
 
-### Live debugging runs
+The following chained commands ran after the last implementation/refactor change:
 
-All live commands used:
-
-`$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; $env:GODOT_PROJECT_PATH=(Resolve-Path '..\tests\fixtures\godot_project'); npm run test:live:phase4`
-
-Observed red sequence and root causes:
-
-1. Diagnostics timed out because Godot parsed the invalid workspace fixture before synchronization and did not republish on the first open.
-2. Unavailable native-symbol returned `feature_disabled` because capability gating happened before session readiness.
-3. Owned startup timed out after about 1.7 seconds because immediate connection refusals made the nominal 15-second attempt loop elapse too quickly.
-4. Godot's initialize response omitted `serverInfo`; its exact capability payload had document symbols enabled, workspace symbols disabled, and completion trigger characters including `.` and `$`.
-5. Godot emitted diagnostics URIs as `file:///C%3A/...`, while Node canonicalized the same path as `file:///C:/...`.
-6. Godot first published empty diagnostics, then the undeclared-identifier diagnostic; the public tool now waits within the same caller budget for the later publication.
-7. Godot completion labels are display labels such as `queue_free()`; public normalization now exposes the symbol label `queue_free` while preserving insert text.
-8. Godot document symbols are hierarchical; the live assertion recursively consumes the public hierarchy to check `phase4_sum`.
-9. Windows signal termination did not reliably reap the Godot console child. The owned host now falls back to exact spawned PID tree termination (`taskkill /pid <pid> /t /f`), never a process-name search, and acceptance condition-polls that PID until absent.
-
-Final live output:
-
-```
-Test Files  1 passed (1)
-Tests       2 passed (2)
-Duration    10.28s (fresh final run; an earlier passing run was 9.81s)
-Exit code   0
-```
-
-### Targeted regression
-
-`cd server; npm run typecheck; npm test -- --run tests/lsp-host.test.ts tests/lsp-documents.test.ts tests/lsp-session.test.ts tests/lsp-diagnostics.test.ts tests/lsp-tools.test.ts tests/live-support.test.ts`
-
-Output before the final small URI/completion additions: typecheck exit 0; 6 files passed; 81 tests passed. All additions are covered by the final full run below.
-
-### Final full verification
-
-`cd server; npm test -- --run; npm run typecheck; npm run build`
-
-```
-Test Files  28 passed | 3 skipped (31)
-Tests       290 passed | 4 skipped (294)
-typecheck   exit 0
-build       exit 0
+```powershell
+npm test -- --run tests/dap-transport.test.ts tests/dap-client.test.ts
+npm run typecheck
+npm run build
+npm test -- --run
 ```
 
-The skips are the existing environment-gated live/archive suites. The explicitly enabled Phase 4 live suite was run separately and passed fail-closed.
+Results:
 
-## Godot quirks / environment notes
+- Focused DAP tests: exit 0; 2 files passed, 20/20 tests passed.
+- Typecheck: exit 0; `tsc --noEmit` produced no errors.
+- Build: exit 0; `tsc` produced no errors.
+- Full server suite: exit 0; 37 files passed and 3 skipped; 405 tests passed and 4 skipped out of 409.
+- `git diff --cached --check`: exit 0 before commit.
+- Scoped staged stat: exactly five Task 6 files, 372 insertions.
+- Commit command from the worktree root: `git commit -m "feat: add attach-only Godot DAP client"`; exit 0, commit `fde1537`.
 
-- The supplied Mono editor logs `.NET Sdk not found. The required version is '8.0.28'.` This does not prevent GDScript LSP acceptance.
-- The fixture project references the RoboGodot editor addon but the fixture directory does not include it, so Godot logs that the addon directory was not found and disables it. This does not affect the standalone Godot LSP.
-- The fixture is temporarily made valid before launch, synchronized through public MCP, then restored to its exact required invalid contents to deterministically force a valid-to-invalid diagnostic publication. A `finally` restores the required fixture bytes on every test exit.
-- No fixed readiness sleeps or process-name kills are used. Polling is bounded and condition-driven; ports are OS-assigned.
+## Design decisions
+
+- DAP framing is independent of LSP: separate buffer, monotonic numeric request sequence, pending map, event listeners, and no JSON-RPC/generation reuse.
+- Transport defaults are the approved 1 MiB frame, 2 MiB buffer, 128 pending requests, and 5-second request deadline. Input and envelope violations fail closed, reject pending requests, clear timers, detach socket listeners, and destroy the socket.
+- Attach uses only an injected/default TCP socket factory and coordinator-provided metadata. No spawn, child-process, `ProcessRunner`, terminate-tree, or launch request exists in the DAP implementation.
+- Lifecycle ordering is `initialize` response, `attach` response, `initialized` event, initial `setBreakpoints`, then capability-gated `configurationDone`.
+- One shared attach deadline covers connection and configuration. Mid-attach `close()` cancels attachment, destroys any late socket, and remains disconnected rather than publishing degradation.
+- Live coordinator `close()` performs the DAP `disconnect` request before closing transport; attach cancellation and exited cleanup close immediately. Resume commands invalidate stopped references before request completion is exposed.
+- Threads, frames, scopes, and variable references carry `{ runtimeSessionId, stoppedGeneration, id }`. Stale or cross-session handles return `invalid_args`.
+- Read bounds are 64 threads, 256 frames, 64 scopes, 500 variables per page, and 8,192 UTF-8 bytes for names/values/types. Long UTF-8 fields use bounded logarithmic prefix selection.
+- `inspect` sends only `scopes` and `variables`; tests assert that no `evaluate` request is emitted.
+- Capability gates return `feature_disabled` for configuration completion, terminate, and nonzero variable paging when the adapter does not advertise support.
+- DAP failure retains coordinator-owned process/bridge metadata and exposes explicit `process_plus_bridge` degradation metadata without claiming debug readiness.
 
 ## Self-review
 
-- CI preserves the pinned download/checksum behavior and adds `GODOT_PROJECT_PATH` plus the fail-closed Phase 4 invocation without `continue-on-error`.
-- Public MCP is used for every acceptance assertion.
-- Unavailable hints include exact allocated `--lsp-port` and `--path` arguments.
-- Owned teardown observes the exact child PID captured from the production host spawn.
-- `git diff --check` passed (only Git's local LF-to-CRLF warnings were printed).
+- Confirmed production DAP files contain no `spawn`, `child_process`, `ProcessRunner`, `evaluate`, LSP, or JSON-RPC dependency.
+- Confirmed the mock records zero spawn calls and tests assert attach-only behavior.
+- Confirmed malformed JSON, missing/duplicate/negative/oversized content length, fragmented/coalesced frames, UTF-8 length, out-of-order responses, pending limits, request deadlines, response errors, listener isolation, close rejection, and separate DAP identifiers are covered.
+- Confirmed initialization/configuration order, capability failures, attach timeout, cancellation, graceful disconnect, events/exit, degradation, stopped-handle invalidation, pagination/count caps, and no-evaluate inspection are covered.
+- Confirmed the commit contains exactly the five requested Task 6 code/test files.
 
-## Follow-up hardening
+## Concerns
 
-After review, native-symbol capability detection was tightened and teardown paths were hardened further.
+None. Integration of this client into public Phase 5 debug tools/coordinator launch wiring is intentionally left to the later plan task that consumes `DapClient`; Task 6 only provides the approved attach-only layer.
 
-- Captured the exact serverInfo-omitted Godot initialize result. It contains only generic LSP capabilities and no affirmative Godot-specific extension field.
-- Removed the generic capability-shape heuristic. When explicit `serverInfo` does not identify Godot 4.6, initialization now makes a bounded request to Godot's proprietary `textDocument/nativeSymbol` method and enables the capability only after a valid bounded object/array response.
-- Added an impostor test with the identical generic capability shape whose proprietary request returns method-not-found; native symbols remain disabled.
-- Wrapped owned-host calls/assertions in `try/finally`, always closes the owned harness, condition-checks its exact PID, and retains the primary failure while appending a cleanup failure.
-- Visible editor cleanup now escalates on Windows from bounded signal waiting to exact-PID `taskkill /pid <pid> /t /f`, followed by exact-PID liveness polling.
-- Production taskkill now has finite timeout handling, synchronous/spawn-error handling, nonzero-exit handling, listener/timer cleanup, and no process-name lookup. Tests cover spawn error, stalled child, and synchronous exit during listener registration.
+## Review correction wave — 2026-07-13
 
-Focused command:
+The Task 6 review findings were addressed without changing Task 7/tools or the runtime coordinator/process ownership layers.
 
-`cd server; npm test -- --run tests/live-support.test.ts tests/lsp-session.test.ts tests/lsp-host.test.ts`
+### RED evidence
 
-```
-Test Files  3 passed (3)
-Tests       50 passed (50)
-Exit code   0
+From `C:\Users\dasbl\Documents\RoboGodot\.worktrees\codex-phase-5\server`:
+
+```powershell
+npm test -- --run tests/dap-transport.test.ts tests/dap-client.test.ts
 ```
 
-Real live command (same exact `GODOT_PATH` and fixture `GODOT_PROJECT_PATH` shown above):
+Initial review-regression result: exit 1; 2 files failed; 21 tests passed and 10 failed out of 31, with two unhandled-rejection reports caused by failing-test cleanup. The failures reproduced the reviewed gaps: never-settling socket acquisition did not cancel, late sockets were not destroyed, public breakpoints were admitted while attaching, initialized waiter listener remained, stale threads/stackTrace/scopes/variables responses were normalized with the new generation, and transport subscriber sets remained populated. The sequence-exhaustion RED also exposed a mock-only overflow because its synthetic response sequence added 10,000 to `Number.MAX_SAFE_INTEGER`; that fixture was corrected to use a valid independent response sequence. The concurrent-breakpoint RED originally awaited the incorrectly admitted request, so it was corrected to assert wire ordering without blocking on the defect.
 
-```
-Test Files  1 passed (1)
-Tests       2 passed (2)
-Duration    12.29s
-Exit code   0
-```
+### GREEN/debug evidence
 
-Full verification before the final timer-race test:
-
-```
-Test Files  28 passed | 3 skipped (31)
-Tests       293 passed | 4 skipped (297)
-typecheck   exit 0
-build       exit 0
+```powershell
+npm test -- --run tests/dap-transport.test.ts tests/dap-client.test.ts
 ```
 
-Fresh final combined verification after all changes:
+Result after the correction wave: exit 0; 2 files passed; 31/31 tests passed.
 
-`$env:GODOT_PATH='<exact supplied executable>'; $env:GODOT_PROJECT_PATH=(Resolve-Path '..\tests\fixtures\godot_project'); npm run test:live:phase4; npm test -- --run; npm run typecheck; npm run build`
-
-```
-Phase 4 live: 1 file passed, 2 tests passed, duration 8.73s
-Full suite:   31 files passed, 298 tests passed (live environment enabled, so no skips)
-typecheck:    exit 0
-build:        exit 0
-overall:      exit 0
+```powershell
+npm run typecheck
 ```
 
-## Final capability and cleanup tightening
+First result: exit 1 with two `TS2322` cleanup-callback inference errors in `dap-client.ts`. Root cause: callbacks initialized as `() => undefined` were inferred more narrowly than replacement `() => void` listener removers. Both cleanup variables were explicitly typed `() => void`.
 
-- Native-symbol fallback probing now occurs only when `serverInfo` is absent. Explicit non-Godot or non-4.6 identities are never probed and remain disabled.
-- Captured the actual Godot `Node` native-symbol root. Validation now requires a bounded record with `name: "Node"`, `native_class: "Node"`, symbol `kind: 5`, a detail containing `class Node`, and a children array. Empty objects/arrays and method-not-found impostors remain disabled.
-- Visible cleanup uses an independently executed cleanup sequence: fixture restoration, MCP/LSP harness closure, and exact-PID editor termination all run even if an earlier cleanup step fails. The primary test failure is retained; without one, the first cleanup failure is reported.
-- Unavailable acceptance now asserts the exact allocated port string and resolved project path in addition to both flags.
-
-Focused final command:
-
-`cd server; npm test -- --run tests/live-support.test.ts tests/lsp-session.test.ts tests/lsp-host.test.ts; npm run typecheck`
-
-```
-Test Files  3 passed (3)
-Tests       55 passed (55)
-typecheck   exit 0
+```powershell
+npm run typecheck; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; npm test -- --run tests/dap-transport.test.ts tests/dap-client.test.ts
 ```
 
-Final Phase 4 live:
+Result: exit 0; typecheck clean and focused DAP tests 31/31 passed.
 
-```
-Test Files  1 passed (1)
-Tests       2 passed (2)
-Duration    8.65s
-Exit code   0
-```
+After self-review tightened socket ownership across a synchronously consumed deadline and moved stopped-token checks literally before response-body parsing, the final focused/typecheck command was rerun:
 
-The first all-live parallel full run had one existing `live-godot` plugin connection timeout because multiple Godot suites shared the fixture concurrently. A condition-confirming serial all-live run passed:
-
-`npm test -- --run --maxWorkers=1`
-
-```
-Test Files  31 passed (31)
-Tests       303 passed (303)
-Duration    51.73s
-Exit code   0
+```powershell
+npm test -- --run tests/dap-transport.test.ts tests/dap-client.test.ts; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; npm run typecheck
 ```
 
-The standard full regression also passed with 28 files / 299 tests, 4 environment-gated skips. Typecheck and build both exited 0.
+Result: exit 0; 2 focused files passed, 31/31 tests passed, and `tsc --noEmit` completed without errors.
 
-## Final live-suite isolation
+### Final build and regression evidence
 
-- Phase 4 now copies `GODOT_PROJECT_PATH` to a per-suite temporary directory before launch, excluding every `.godot` path while retaining `project.godot`, Phase 4 fixtures, and other required project files.
-- Every Phase 4 launch, host configuration, unavailable hint, fixture transition, and path assertion uses the resolved isolated path. The source fixture is no longer opened or mutated by Phase 4 Godot processes.
-- The harness close path independently attempts `client.close`, `server.close`, `lsp.close`, and `host.close` in that order and reports the first close error only after all four were attempted. Owned PID observation happens after this close coordinator, guaranteeing the host close attempt.
-- The temporary project is recursively removed in suite teardown. Unit coverage proves `.godot` exclusion and ordered all-attempt close behavior.
-- Normal parallel all-live verification initially showed the pre-existing `live-godot` suite's condition-driven 10-second plugin deadline expiring under concurrent cold editor scans. Phase 4 isolation removed shared mutation; the existing live deadline was raised to a bounded 20 seconds so normal parallel execution tolerates concurrent initialization without serializing tests.
-
-Focused support/session/host verification:
-
-```
-Test Files  3 passed (3)
-Tests       57 passed (57)
-typecheck   exit 0
+```powershell
+npm run build; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; npm test -- --run
 ```
 
-Phase 4 live on the isolated copy:
+Result: exit 0. Build (`tsc`) completed without errors. Full server suite: 37 files passed and 3 skipped; 416 tests passed and 4 skipped out of 420.
 
-```
-Test Files  1 passed (1)
-Tests       2 passed (2)
-Duration    9.32s
-Exit code   0
-```
+### Review fixes and self-review
 
-Two required normal parallel all-live repetitions after the bounded deadline adjustment:
+- Socket acquisition now receives an `AbortSignal`, races an owned abort path, rejects attach immediately on close, and retains a settlement handler that destroys any socket delivered after close or timeout. The default TCP factory also destroys its in-progress socket on abort.
+- The initialized-event waiter now owns an explicit cancel operation that clears its timer and listener on initialize/attach failure or close.
+- Public `setBreakpoints` now requires `ready` or `stopped`; attach-only initial breakpoint configuration continues through its private ordering path.
+- `threads`, `stackTrace`, `scopes`, and `variables` capture the stopped generation before sending and validate state/generation immediately after each await, before parsing or normalizing the returned body. References are created only with the captured generation.
+- Transport failure/close snapshots the one-shot close subscribers, clears event/closed listener sets and pending timers, then isolates each close callback. Repeated close cannot notify again.
+- Deterministic tests now cover last safe sequence/exhaustion, late response after timeout, duplicate responses, and isolation from subsequent requests.
+- `ProcessRunner` remains the sole process owner; no spawn, Task 7, tool-registration, or coordinator lifecycle changes were introduced.
 
-```
-Run 1: 31 files passed, 305 tests passed, duration 23.87s
-Run 2: 31 files passed, 305 tests passed, duration 24.11s
-```
-
-No serial/max-worker override was used for either final repetition.
+Review-wave concerns: none.

@@ -44,4 +44,29 @@ describe("DapClient", () => {
     const mock = await server(); const client = new DapClient(); const attaching = client.attach({ host: "127.0.0.1", port: mock.port, runtimeSessionId: SESSION, process: { pid: 2 } }); await respondHandshake(mock); await expect.poll(() => mock.messages.length).toBe(3); mock.respond(mock.messages[2]); await attaching;
     const closing = client.close(); await expect.poll(() => mock.messages.at(-1)?.command).toBe("disconnect"); expect(mock.messages.at(-1).arguments).toEqual({ restart: false, terminateDebuggee: false }); mock.respond(mock.messages.at(-1)); await expect(closing).resolves.toBeUndefined(); expect(client.status.state).toBe("disconnected");
   });
+  it("immediately cancels a never-resolving socket acquisition", async () => {
+    const client = new DapClient({ socketFactory: () => new Promise(() => undefined) }); const attaching = client.attach({ host: "127.0.0.1", port: 6006, runtimeSessionId: SESSION, process: { pid: 9 }, timeoutMs: 10_000 }); await client.close();
+    await expect(attaching).rejects.toMatchObject({ code: "not_connected" }); expect(client.status.state).toBe("disconnected");
+  });
+  it("destroys a socket that resolves after attach timeout", async () => {
+    let resolveSocket!: (socket: any) => void; const acquired = new Promise<any>((resolve) => { resolveSocket = resolve; }); const socket = { destroyed: false, destroy() { this.destroyed = true; } }; const client = new DapClient({ socketFactory: () => acquired });
+    const attaching = client.attach({ host: "127.0.0.1", port: 6006, runtimeSessionId: SESSION, process: { pid: 10 }, timeoutMs: 10 }); await expect(attaching).rejects.toMatchObject({ code: "timeout" }); resolveSocket(socket); await expect.poll(() => socket.destroyed).toBe(true);
+  });
+  it("rejects public setBreakpoints while attach configuration owns ordering", async () => {
+    const mock = await server(); const client = new DapClient(); const attaching = client.attach({ host: "127.0.0.1", port: mock.port, runtimeSessionId: SESSION, process: { pid: 2 } }); await expect.poll(() => mock.messages.length).toBe(1);
+    const concurrent = client.setBreakpoints({ path: "C:/game/main.gd" }, [{ line: 3 }]); await expect(concurrent).rejects.toMatchObject({ code: "not_connected" }); expect(mock.messages.map((message) => message.command)).toEqual(["initialize"]); mock.respond(mock.messages[0], { supportsConfigurationDoneRequest: true }); await expect.poll(() => mock.messages.length).toBe(2); mock.respond(mock.messages[1]); mock.event("initialized"); await expect.poll(() => mock.messages.length).toBe(3); mock.respond(mock.messages[2]); await attaching;
+  });
+  it("cancels the initialized waiter immediately when initialize fails", async () => {
+    const mock = await server(); const client = new DapClient(); const attaching = client.attach({ host: "127.0.0.1", port: mock.port, runtimeSessionId: SESSION, process: { pid: 2 }, timeoutMs: 10_000 }); await expect.poll(() => mock.messages.length).toBe(1); mock.error(mock.messages[0], "initialize failed");
+    await expect(attaching).rejects.toMatchObject({ code: "godot_error" }); expect((client as any).listeners.size).toBe(0);
+  });
+  it.each(["threads", "stackTrace", "scopes", "variables"])("rejects stale %s responses after continue and a new stop", async (phase) => {
+    const mock = await server(); const client = new DapClient(); const attaching = client.attach({ host: "127.0.0.1", port: mock.port, runtimeSessionId: SESSION, process: { pid: 2 } }); await respondHandshake(mock); await expect.poll(() => mock.messages.length).toBe(3); mock.respond(mock.messages[2]); await attaching; mock.event("stopped", { threadId: 1 }); await expect.poll(() => client.status.state).toBe("stopped");
+    const frame = { runtimeSessionId: SESSION, stoppedGeneration: 1, id: 9 }; const variable = { runtimeSessionId: SESSION, stoppedGeneration: 1, id: 12 }; let reading: Promise<any>;
+    if (phase === "threads" || phase === "stackTrace") { reading = client.stack(); await expect.poll(() => mock.messages.at(-1)?.command).toBe("threads"); if (phase === "stackTrace") { mock.respond(mock.messages.at(-1), { threads: [{ id: 1, name: "main" }] }); await expect.poll(() => mock.messages.at(-1)?.command).toBe("stackTrace"); } }
+    else { reading = client.inspect(frame, phase === "variables" ? variable : undefined); await expect.poll(() => mock.messages.at(-1)?.command).toBe(phase); }
+    const pendingRead = mock.messages.at(-1); const resume = client.continue(1); await expect.poll(() => mock.messages.at(-1)?.command).toBe("continue"); mock.respond(mock.messages.at(-1)); await resume; mock.event("stopped", { threadId: 2 }); await expect.poll(() => client.status.stoppedGeneration).toBe(2);
+    if (phase === "threads") mock.respond(pendingRead, { threads: [{ id: 1, name: "stale" }] }); else if (phase === "stackTrace") mock.respond(pendingRead, { stackFrames: [{ id: 9, name: "stale", line: 1, column: 1 }] }); else if (phase === "scopes") mock.respond(pendingRead, { scopes: [{ name: "stale", variablesReference: 12 }] }); else mock.respond(pendingRead, { variables: [{ name: "stale", value: "1", variablesReference: 0 }] });
+    await expect(reading).rejects.toMatchObject({ code: "invalid_args" });
+  });
 });

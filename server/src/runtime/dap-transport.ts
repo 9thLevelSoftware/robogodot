@@ -27,6 +27,7 @@ export class DapTransport {
   private readonly eventListeners = new Set<(event: DapEvent) => void>();
   private readonly closedListeners = new Set<(error: Error) => void>();
   private closing = false;
+  private closed = false;
   private readonly options: Options;
 
   constructor(options: DapTransportOptions = DAP_LIMITS) {
@@ -38,7 +39,7 @@ export class DapTransport {
   get isAttached(): boolean { return this.socket !== undefined; }
   attach(socket: Duplex): void {
     if (this.socket) this.fail(unavailable("Godot debug adapter connection was replaced."));
-    this.socket = socket; this.buffer = Buffer.alloc(0); this.bodyLength = undefined; this.closing = false;
+    this.socket = socket; this.buffer = Buffer.alloc(0); this.bodyLength = undefined; this.closing = false; this.closed = false;
     socket.on("data", this.onData); socket.once("close", this.onClose); socket.once("error", this.onError);
   }
   request<T>(command: string, args?: unknown, timeoutMs = this.options.defaultRequestMs): Promise<T> {
@@ -55,9 +56,9 @@ export class DapTransport {
       try { this.socket!.write(frame); } catch (error) { this.fail(unavailable(error instanceof Error ? error.message : undefined)); }
     });
   }
-  onEvent(listener: (event: DapEvent) => void): () => void { this.eventListeners.add(listener); return () => this.eventListeners.delete(listener); }
-  onClosed(listener: (error: Error) => void): () => void { this.closedListeners.add(listener); return () => this.closedListeners.delete(listener); }
-  async close(reason: Error = unavailable("Godot debug adapter connection closed.")): Promise<void> { const socket = this.socket; if (!socket) return; this.closing = true; this.fail(reason); socket.destroy(); }
+  onEvent(listener: (event: DapEvent) => void): () => void { if (this.closed) return () => undefined; this.eventListeners.add(listener); return () => this.eventListeners.delete(listener); }
+  onClosed(listener: (error: Error) => void): () => void { if (this.closed) return () => undefined; this.closedListeners.add(listener); return () => this.closedListeners.delete(listener); }
+  async close(reason: Error = unavailable("Godot debug adapter connection closed.")): Promise<void> { const socket = this.socket; this.closing = true; this.fail(reason); socket?.destroy(); }
 
   private deadline(value: number): number { return Math.min(this.options.maxRequestMs, Math.max(this.options.minRequestMs, Number.isFinite(value) ? value : this.options.defaultRequestMs)); }
   private frame(value: unknown): Buffer { let body: Buffer; try { body = Buffer.from(JSON.stringify(value), "utf8"); } catch { throw invalid("DAP request is not serializable."); } if (body.length > this.options.maxFrameBytes) throw invalid("DAP outbound frame exceeds the size limit."); return Buffer.concat([Buffer.from(`Content-Length: ${body.length}\r\n\r\n`, "ascii"), body]); }
@@ -100,11 +101,12 @@ export class DapTransport {
   private readonly onClose = (): void => this.fail(unavailable());
   private readonly onError = (error: Error): void => this.fail(unavailable(error.message));
   private fail(error: Error): void {
-    const socket = this.socket; if (!socket) return; this.socket = undefined;
-    socket.off("data", this.onData); socket.off("close", this.onClose); socket.off("error", this.onError); this.buffer = Buffer.alloc(0); this.bodyLength = undefined;
+    if (this.closed) return; this.closed = true; const socket = this.socket; this.socket = undefined;
+    socket?.off("data", this.onData); socket?.off("close", this.onClose); socket?.off("error", this.onError); this.buffer = Buffer.alloc(0); this.bodyLength = undefined;
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error); } this.pending.clear();
-    for (const listener of this.closedListeners) try { listener(error); } catch { /* isolate subscribers */ }
-    if (!this.closing) socket.destroy();
+    const closedListeners = [...this.closedListeners]; this.eventListeners.clear(); this.closedListeners.clear();
+    for (const listener of closedListeners) try { listener(error); } catch { /* isolate subscribers */ }
+    if (!this.closing) socket?.destroy();
   }
 }
 

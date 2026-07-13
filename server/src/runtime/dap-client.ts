@@ -15,7 +15,8 @@ export interface DapAttachOptions {
 }
 export interface DapReadyState { readonly state: "ready"; readonly runtimeSessionId: string; readonly process: DapProcessMetadata; readonly bridge?: DapBridgeMetadata; readonly capabilities: Readonly<Record<string, unknown>>; readonly stoppedGeneration: number }
 export interface DapClientStatus { readonly state: DapClientState; readonly runtimeSessionId?: string; readonly process?: DapProcessMetadata; readonly bridge?: DapBridgeMetadata; readonly stoppedGeneration: number; readonly capabilities?: Readonly<Record<string, unknown>>; readonly degradation?: { readonly mode: "process_plus_bridge"; readonly dapAvailable: false; readonly reason: string } }
-interface Dependencies { socketFactory?: (host: string, port: number, timeoutMs: number) => Promise<Duplex>; transportFactory?: () => DapTransport }
+interface Dependencies { socketFactory?: (host: string, port: number, timeoutMs: number, signal: AbortSignal) => Promise<Duplex>; transportFactory?: () => DapTransport }
+interface EventWait { readonly promise: Promise<void>; cancel(error: Error): void }
 
 const MAX_THREADS = 64, MAX_FRAMES = 256, MAX_SCOPES = 64, MAX_VARIABLES = 500, MAX_TEXT_BYTES = 8_192;
 const unavailable = () => new GodotMcpError("not_connected", "Godot debug adapter session is not ready.", "Launch a new managed debug session and wait for DAP attachment.");
@@ -34,6 +35,8 @@ export class DapClient {
   private readonly socketFactory: NonNullable<Dependencies["socketFactory"]>;
   private readonly transportFactory: NonNullable<Dependencies["transportFactory"]>;
   private closing = false;
+  private attachAbort: AbortController | undefined;
+  private initializedWait: EventWait | undefined;
 
   constructor(dependencies: Dependencies = {}) { this.socketFactory = dependencies.socketFactory ?? createSocket; this.transportFactory = dependencies.transportFactory ?? (() => new DapTransport()); }
   get status(): DapClientStatus {
@@ -46,51 +49,54 @@ export class DapClient {
     if (this.currentState !== "disconnected") throw bad("DAP client is already attached or attaching.");
     validateAttach(options); this.options = freezeOptions(options); this.currentState = "attaching"; this.degradation = undefined; this.closing = false;
     const timeoutMs = finiteDeadline(options.timeoutMs ?? 5_000), deadline = Date.now() + timeoutMs;
+    const controller = new AbortController(); this.attachAbort = controller;
     const transport = this.transportFactory(); this.transport = transport;
     transport.onEvent(this.handleEvent); transport.onClosed((error) => this.handleClosed(error));
-    let initializedEvent: Promise<void> | undefined;
+    let initializedWait: EventWait | undefined;
     try {
-      const socket = await bounded(this.socketFactory(options.host, options.port, remaining(deadline)), remaining(deadline), "DAP attach timed out.");
+      const socketTimeout = Math.max(1, deadline - Date.now()); const socketPromise = this.socketFactory(options.host, options.port, socketTimeout, controller.signal);
+      if (Date.now() >= deadline) controller.abort(attachTimeout());
+      const socket = await acquireSocket(socketPromise, controller, Math.max(1, deadline - Date.now()));
       if (this.transport !== transport || this.closing) { socket.destroy(); throw unavailable(); }
       transport.attach(socket);
-      initializedEvent = this.waitForEvent("initialized", remaining(deadline));
-      void initializedEvent.catch(() => undefined);
+      initializedWait = this.waitForEvent("initialized", remaining(deadline)); this.initializedWait = initializedWait;
+      void initializedWait.promise.catch(() => undefined);
       const initialize = await transport.request<unknown>("initialize", { clientID: "robogodot", clientName: "RoboGodot", adapterID: "godot", pathFormat: "path", linesStartAt1: true, columnsStartAt1: true, supportsVariableType: true, supportsVariablePaging: true }, remaining(deadline));
       this.capabilities = Object.freeze(copyRecord(initialize, "initialize capabilities"));
       await transport.request("attach", { ...(options.attachArguments ?? {}), processId: options.process.pid }, remaining(deadline));
-      await initializedEvent;
+      await initializedWait.promise; this.initializedWait = undefined;
       for (const group of options.initialBreakpoints ?? []) await this.setBreakpointsInternal(group.source, group.breakpoints, remaining(deadline));
       this.requireCapability("supportsConfigurationDoneRequest");
       await transport.request("configurationDone", {}, remaining(deadline));
       this.currentState = "ready";
       return this.readyState();
     } catch (error) {
-      void initializedEvent?.catch(() => undefined);
+      initializedWait?.cancel(unavailable()); if (this.initializedWait === initializedWait) this.initializedWait = undefined;
       const mapped = mapAttachError(error); await transport.close(mapped).catch(() => undefined);
       if (this.closing) { this.currentState = "disconnected"; this.degradation = undefined; throw unavailable(); }
       this.markDegraded(mapped.message); throw mapped;
-    }
+    } finally { if (this.attachAbort === controller) this.attachAbort = undefined; }
   }
-  async setBreakpoints(source: DapBreakpointGroup["source"], breakpoints: DapBreakpointGroup["breakpoints"]): Promise<unknown> { this.requireUsable(); return this.setBreakpointsInternal(source, breakpoints); }
+  async setBreakpoints(source: DapBreakpointGroup["source"], breakpoints: DapBreakpointGroup["breakpoints"]): Promise<unknown> { this.requireConfigured(); return this.setBreakpointsInternal(source, breakpoints); }
   async continue(thread: number | DapReference): Promise<unknown> { this.requireStopped(); const threadId = this.referenceId(thread, "thread"); this.invalidateStop(); return this.transport!.request("continue", { threadId }); }
   async step(kind: "over" | "into", thread: number | DapReference): Promise<unknown> { this.requireStopped(); const threadId = this.referenceId(thread, "thread"); this.invalidateStop(); return this.transport!.request(kind === "over" ? "next" : "stepIn", { threadId }); }
   async stack(thread?: number | DapReference, startFrame = 0): Promise<{ threads: readonly unknown[]; frames: readonly unknown[]; totalFrames?: number; truncated: boolean }> {
-    this.requireStopped(); const threadId = thread === undefined ? undefined : this.referenceId(thread, "thread"); validateOffset(startFrame);
-    const rawThreads = copyRecord(await this.transport!.request("threads", {}), "threads response"); const allThreads = array(rawThreads.threads, "threads");
-    const threads = allThreads.slice(0, MAX_THREADS).map((item) => this.normalizeThread(item)); const selected = threadId ?? (threads[0] as { id?: number } | undefined)?.id;
+    const generation = this.captureStop(); const threadId = thread === undefined ? undefined : this.referenceId(thread, "thread"); validateOffset(startFrame);
+    const threadsResponse = await this.transport!.request("threads", {}); this.assertStop(generation); const rawThreads = copyRecord(threadsResponse, "threads response"); const allThreads = array(rawThreads.threads, "threads");
+    const threads = allThreads.slice(0, MAX_THREADS).map((item) => this.normalizeThread(item, generation)); const selected = threadId ?? (threads[0] as { id?: number } | undefined)?.id;
     if (selected === undefined) return Object.freeze({ threads: Object.freeze(threads), frames: Object.freeze([]), truncated: allThreads.length > MAX_THREADS });
-    validateId(selected, "thread"); const rawStack = copyRecord(await this.transport!.request("stackTrace", { threadId: selected, startFrame, levels: MAX_FRAMES }), "stack response"); const allFrames = array(rawStack.stackFrames, "stackFrames");
-    const frames = allFrames.slice(0, MAX_FRAMES).map((item) => this.normalizeFrame(item)); const totalFrames = optionalNonnegative(rawStack.totalFrames);
+    validateId(selected, "thread"); const stackResponse = await this.transport!.request("stackTrace", { threadId: selected, startFrame, levels: MAX_FRAMES }); this.assertStop(generation); const rawStack = copyRecord(stackResponse, "stack response"); const allFrames = array(rawStack.stackFrames, "stackFrames");
+    const frames = allFrames.slice(0, MAX_FRAMES).map((item) => this.normalizeFrame(item, generation)); const totalFrames = optionalNonnegative(rawStack.totalFrames);
     return Object.freeze({ threads: Object.freeze(threads), frames: Object.freeze(frames), ...(totalFrames === undefined ? {} : { totalFrames }), truncated: allThreads.length > MAX_THREADS || allFrames.length > MAX_FRAMES || (totalFrames !== undefined && startFrame + frames.length < totalFrames) });
   }
   async inspect(frame: DapReference, variables?: DapReference, start = 0): Promise<any> {
-    this.validateReference(frame); this.requireStopped(); validateOffset(start);
+    this.validateReference(frame); const generation = this.captureStop(); validateOffset(start);
     if (variables) {
       this.validateReference(variables); if (start > 0) this.requireCapability("supportsVariablePaging");
-      const raw = copyRecord(await this.transport!.request("variables", { variablesReference: variables.id, start, count: MAX_VARIABLES }), "variables response"); const all = array(raw.variables, "variables"); const values = all.slice(0, MAX_VARIABLES).map((item) => this.normalizeVariable(item));
+      const response = await this.transport!.request("variables", { variablesReference: variables.id, start, count: MAX_VARIABLES }); this.assertStop(generation); const raw = copyRecord(response, "variables response"); const all = array(raw.variables, "variables"); const values = all.slice(0, MAX_VARIABLES).map((item) => this.normalizeVariable(item, generation));
       return Object.freeze({ variables: Object.freeze(values), ...(all.length === MAX_VARIABLES ? { next: start + MAX_VARIABLES } : {}), truncated: all.length > MAX_VARIABLES });
     }
-    const raw = copyRecord(await this.transport!.request("scopes", { frameId: frame.id }), "scopes response"); const all = array(raw.scopes, "scopes"); const scopes = all.slice(0, MAX_SCOPES).map((item) => this.normalizeScope(item));
+    const response = await this.transport!.request("scopes", { frameId: frame.id }); this.assertStop(generation); const raw = copyRecord(response, "scopes response"); const all = array(raw.scopes, "scopes"); const scopes = all.slice(0, MAX_SCOPES).map((item) => this.normalizeScope(item, generation));
     return Object.freeze({ scopes: Object.freeze(scopes), truncated: all.length > MAX_SCOPES });
   }
   async terminate(): Promise<unknown> { this.requireCapability("supportsTerminateRequest"); this.requireUsable(); this.invalidateStop(); return this.transport!.request("terminate", {}); }
@@ -113,23 +119,28 @@ export class DapClient {
   private validateReference(ref: DapReference): void { if (this.currentState !== "stopped" || ref.runtimeSessionId !== this.options?.runtimeSessionId || ref.stoppedGeneration !== this.stoppedGeneration || !Number.isSafeInteger(ref.id) || ref.id < 0) throw stale(); }
   private requireStopped(): void { if (this.currentState !== "stopped" || !this.transport) throw unavailable(); }
   private requireUsable(): void { if (!this.transport || (this.currentState !== "ready" && this.currentState !== "stopped" && this.currentState !== "attaching")) throw unavailable(); }
+  private requireConfigured(): void { if (!this.transport || (this.currentState !== "ready" && this.currentState !== "stopped")) throw unavailable(); }
   private requireCapability(name: string): void { if (this.capabilities?.[name] !== true) throw disabled(name); }
-  private waitForEvent(name: string, timeoutMs: number): Promise<void> { return new Promise((resolve, reject) => { let timer: NodeJS.Timeout; const remove = this.onEvent((event) => { if (event.event !== name) return; clearTimeout(timer); remove(); resolve(); }); timer = setTimeout(() => { remove(); reject(new GodotMcpError("timeout", `DAP ${name} event timed out.`, "Launch a new managed debug session and attach again.")); }, timeoutMs); }); }
-  private normalizeFrame(value: unknown): unknown { const raw = copyRecord(value, "stack frame"); const id = requiredId(raw.id, "frame"); return Object.freeze({ id, ref: this.ref(id), name: boundedText(raw.name), line: requiredId(raw.line, "line"), column: requiredId(raw.column, "column"), ...(raw.source === undefined ? {} : { source: normalizeSource(raw.source) }) }); }
-  private normalizeThread(value: unknown): unknown { const raw = copyRecord(value, "thread"); const id = requiredId(raw.id, "thread"); return Object.freeze({ id, ref: this.ref(id), name: boundedText(raw.name) }); }
-  private normalizeScope(value: unknown): unknown { const raw = copyRecord(value, "scope"); const id = requiredId(raw.variablesReference, "variablesReference"); return Object.freeze({ name: boundedText(raw.name), ref: this.ref(id), ...(typeof raw.expensive === "boolean" ? { expensive: raw.expensive } : {}) }); }
-  private normalizeVariable(value: unknown): unknown { const raw = copyRecord(value, "variable"); const id = requiredId(raw.variablesReference, "variablesReference"); return Object.freeze({ name: boundedText(raw.name), value: boundedText(raw.value), ...(raw.type === undefined ? {} : { type: boundedText(raw.type) }), ref: this.ref(id) }); }
-  private ref(id: number): DapReference { return Object.freeze({ runtimeSessionId: this.options!.runtimeSessionId, stoppedGeneration: this.stoppedGeneration, id }); }
+  private waitForEvent(name: string, timeoutMs: number): EventWait { let settled = false, rejectWait!: (error: Error) => void, timer: NodeJS.Timeout; let remove: () => void = () => undefined; const finish = (error?: Error) => { if (settled) return; settled = true; clearTimeout(timer); remove(); error ? rejectWait(error) : undefined; }; const promise = new Promise<void>((resolve, reject) => { rejectWait = reject; remove = this.onEvent((event) => { if (event.event !== name) return; finish(); resolve(); }); timer = setTimeout(() => finish(new GodotMcpError("timeout", `DAP ${name} event timed out.`, "Launch a new managed debug session and attach again.")), timeoutMs); }); return { promise, cancel: (error) => finish(error) }; }
+  private normalizeFrame(value: unknown, generation: number): unknown { const raw = copyRecord(value, "stack frame"); const id = requiredId(raw.id, "frame"); return Object.freeze({ id, ref: this.ref(id, generation), name: boundedText(raw.name), line: requiredId(raw.line, "line"), column: requiredId(raw.column, "column"), ...(raw.source === undefined ? {} : { source: normalizeSource(raw.source) }) }); }
+  private normalizeThread(value: unknown, generation: number): unknown { const raw = copyRecord(value, "thread"); const id = requiredId(raw.id, "thread"); return Object.freeze({ id, ref: this.ref(id, generation), name: boundedText(raw.name) }); }
+  private normalizeScope(value: unknown, generation: number): unknown { const raw = copyRecord(value, "scope"); const id = requiredId(raw.variablesReference, "variablesReference"); return Object.freeze({ name: boundedText(raw.name), ref: this.ref(id, generation), ...(typeof raw.expensive === "boolean" ? { expensive: raw.expensive } : {}) }); }
+  private normalizeVariable(value: unknown, generation: number): unknown { const raw = copyRecord(value, "variable"); const id = requiredId(raw.variablesReference, "variablesReference"); return Object.freeze({ name: boundedText(raw.name), value: boundedText(raw.value), ...(raw.type === undefined ? {} : { type: boundedText(raw.type) }), ref: this.ref(id, generation) }); }
+  private ref(id: number, generation = this.stoppedGeneration): DapReference { return Object.freeze({ runtimeSessionId: this.options!.runtimeSessionId, stoppedGeneration: generation, id }); }
   private referenceId(value: number | DapReference, label: string): number { if (typeof value === "number") { validateId(value, label); return value; } this.validateReference(value); return value.id; }
-  private async closeTransport(transport: DapTransport): Promise<void> { this.closing = true; this.invalidateStop(); await transport.close(); if (this.transport === transport) this.transport = undefined; if (this.currentState !== "exited") this.currentState = "disconnected"; }
+  private captureStop(): number { this.requireStopped(); return this.stoppedGeneration; }
+  private assertStop(generation: number): void { if (this.currentState !== "stopped" || this.stoppedGeneration !== generation || !this.transport) throw stale(); }
+  private async closeTransport(transport: DapTransport): Promise<void> { this.closing = true; this.attachAbort?.abort(unavailable()); this.initializedWait?.cancel(unavailable()); this.initializedWait = undefined; this.invalidateStop(); await transport.close(); if (this.transport === transport) this.transport = undefined; if (this.currentState !== "exited") this.currentState = "disconnected"; }
 }
 
-function createSocket(host: string, port: number, timeoutMs: number): Promise<Duplex> { return new Promise((resolve, reject) => { const socket = connect(port, host); const timer = setTimeout(() => { socket.destroy(); reject(new GodotMcpError("timeout", "DAP socket connection timed out.", "Confirm the managed Godot process is listening on its DAP endpoint.")); }, timeoutMs); socket.once("connect", () => { clearTimeout(timer); socket.off("error", fail); resolve(socket); }); const fail = (error: Error) => { clearTimeout(timer); reject(new GodotMcpError("not_connected", error.message, "Confirm the managed Godot process is listening on its DAP endpoint.")); }; socket.once("error", fail); }); }
+function createSocket(host: string, port: number, timeoutMs: number, signal: AbortSignal): Promise<Duplex> { return new Promise((resolve, reject) => { const socket = connect(port, host); const cleanup = () => { clearTimeout(timer); signal.removeEventListener("abort", abort); socket.off("error", fail); }; const timer = setTimeout(() => { cleanup(); socket.destroy(); reject(new GodotMcpError("timeout", "DAP socket connection timed out.", "Confirm the managed Godot process is listening on its DAP endpoint.")); }, timeoutMs); const abort = () => { cleanup(); socket.destroy(); reject(abortReason(signal)); }; socket.once("connect", () => { cleanup(); resolve(socket); }); const fail = (error: Error) => { cleanup(); reject(new GodotMcpError("not_connected", error.message, "Confirm the managed Godot process is listening on its DAP endpoint.")); }; socket.once("error", fail); signal.addEventListener("abort", abort, { once: true }); if (signal.aborted) abort(); }); }
 function validateAttach(value: DapAttachOptions): void { if ((value.host !== "127.0.0.1" && value.host !== "::1" && value.host !== "localhost") || !Number.isSafeInteger(value.port) || value.port < 1 || value.port > 65_535 || typeof value.runtimeSessionId !== "string" || value.runtimeSessionId.length < 1 || value.runtimeSessionId.length > 128 || !Number.isSafeInteger(value.process?.pid) || value.process.pid < 1) throw new GodotMcpError("invalid_args", "Invalid DAP attach metadata.", "Pass a loopback host, valid port, runtime session ID, and coordinator-owned process metadata."); }
 function freezeOptions(value: DapAttachOptions): DapAttachOptions { return Object.freeze({ ...value, process: Object.freeze({ ...value.process }), ...(value.bridge ? { bridge: Object.freeze({ ...value.bridge }) } : {}), ...(value.initialBreakpoints ? { initialBreakpoints: Object.freeze(value.initialBreakpoints.map((group) => Object.freeze({ source: Object.freeze({ ...group.source }), breakpoints: Object.freeze(group.breakpoints.map((point) => Object.freeze({ ...point }))) }))) } : {}), ...(value.attachArguments ? { attachArguments: Object.freeze({ ...value.attachArguments }) } : {}) }); }
 function finiteDeadline(value: number): number { return Number.isFinite(value) ? Math.min(60_000, Math.max(1, Math.floor(value))) : 5_000; }
 function remaining(deadline: number): number { const value = deadline - Date.now(); if (value <= 0) throw new GodotMcpError("timeout", "DAP attach timed out.", "Launch a new managed debug session and attach again."); return value; }
-async function bounded<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> { let timer: NodeJS.Timeout; try { return await Promise.race([promise, new Promise<T>((_, reject) => { timer = setTimeout(() => reject(new GodotMcpError("timeout", message, "Launch a new managed debug session and attach again.")), timeoutMs); })]); } finally { clearTimeout(timer!); } }
+async function acquireSocket(promise: Promise<Duplex>, controller: AbortController, timeoutMs: number): Promise<Duplex> { const signal = controller.signal; const owned = Promise.resolve(promise).then((socket) => { if (signal.aborted) { socket.destroy(); throw abortReason(signal); } return socket; }); let timer: NodeJS.Timeout; let remove: () => void = () => undefined; const aborted = new Promise<never>((_, reject) => { const listener = () => reject(abortReason(signal)); remove = () => signal.removeEventListener("abort", listener); signal.addEventListener("abort", listener, { once: true }); if (signal.aborted) listener(); }); timer = setTimeout(() => controller.abort(attachTimeout()), timeoutMs); try { return await Promise.race([owned, aborted]); } finally { clearTimeout(timer); remove(); } }
+function abortReason(signal: AbortSignal): Error { return signal.reason instanceof Error ? signal.reason : unavailable(); }
+function attachTimeout(): GodotMcpError { return new GodotMcpError("timeout", "DAP attach timed out.", "Launch a new managed debug session and attach again."); }
 function mapAttachError(error: unknown): GodotMcpError { if (error instanceof GodotMcpError) return error; return bad(error instanceof Error ? error.message : "DAP attach failed."); }
 function copyRecord(value: unknown, label: string): Record<string, unknown> { if (typeof value !== "object" || value === null || Array.isArray(value)) throw bad(`Invalid DAP ${label}.`); const out: Record<string, unknown> = Object.create(null); let descriptors: PropertyDescriptorMap; try { descriptors = Object.getOwnPropertyDescriptors(value); } catch { throw bad(`Invalid DAP ${label}.`); } for (const [key, descriptor] of Object.entries(descriptors)) { if (descriptor.enumerable) { if (!("value" in descriptor)) throw bad(`Invalid DAP ${label}.`); out[key] = descriptor.value; } } return out; }
 function array(value: unknown, label: string): unknown[] { if (!Array.isArray(value)) throw bad(`Invalid DAP ${label}.`); return value; }

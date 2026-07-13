@@ -29,4 +29,18 @@ describe("DapTransport", () => {
   });
   it("bounds incomplete headers and total buffering", async () => { const { mock, transport } = await setup({ maxFrameBytes: 64, maxBufferBytes: 64 }); const closed = new Promise<Error>((resolve) => transport.onClosed(resolve)); mock.sendRaw("x".repeat(65)); await expect(closed).resolves.toMatchObject({ code: "godot_error" }); expect(transport.isAttached).toBe(false); });
   it("rejects pending work on close and never shares LSP generations or IDs", async () => { const { mock, transport } = await setup(); const p = transport.request("held", {}); await expect.poll(() => mock.messages.length).toBe(1); expect(mock.messages[0]).not.toHaveProperty("jsonrpc"); await transport.close(); await expect(p).rejects.toMatchObject({ code: "not_connected" }); });
+  it("exhausts numeric sequence IDs deterministically without wrapping", async () => {
+    const { mock, transport } = await setup(); (transport as any).nextSeq = Number.MAX_SAFE_INTEGER;
+    const last = transport.request("last", {}); await expect.poll(() => mock.messages.length).toBe(1); expect(mock.messages[0].seq).toBe(Number.MAX_SAFE_INTEGER); mock.send({ seq: 1, type: "response", request_seq: Number.MAX_SAFE_INTEGER, success: true, command: "last", body: {} }); await last;
+    await expect(transport.request("wrapped", {})).rejects.toMatchObject({ code: "godot_error" }); expect(mock.messages).toHaveLength(1);
+  });
+  it("ignores late and duplicate responses without settling another request", async () => {
+    const { mock, transport } = await setup({ minRequestMs: 10, defaultRequestMs: 10 }); const late = transport.request("late", {}); const lateResult = late.catch((error) => error); await expect.poll(() => mock.messages.length).toBe(1); await expect(lateResult).resolves.toMatchObject({ code: "timeout" }); mock.respond(mock.messages[0], "too late");
+    const current = transport.request<string>("current", {}, 1_000); await expect.poll(() => mock.messages.length).toBe(2); mock.respond(mock.messages[0], "duplicate"); mock.respond(mock.messages[1], "current"); await expect(current).resolves.toBe("current");
+    mock.respond(mock.messages[1], "second duplicate"); expect(transport.isAttached).toBe(true);
+  });
+  it("clears transport subscribers after one-shot close notification", async () => {
+    const { mock, transport } = await setup(); const closed: string[] = []; transport.onEvent(() => undefined); transport.onClosed(() => closed.push("first")); transport.onClosed(() => closed.push("second")); mock.sendRaw("invalid\r\n\r\n{}");
+    await expect.poll(() => closed).toEqual(["first", "second"]); expect((transport as any).eventListeners.size).toBe(0); expect((transport as any).closedListeners.size).toBe(0); await transport.close(); expect(closed).toEqual(["first", "second"]);
+  });
 });
