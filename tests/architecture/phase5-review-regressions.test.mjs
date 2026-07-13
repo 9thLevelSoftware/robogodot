@@ -129,7 +129,8 @@ test("CI keeps the cross-platform matrix and runs every live suite fail-closed",
     assert.equal((ci.match(new RegExp(`run: ${escaped}(?:\\r?\\n|$)`, "g")) ?? []).length, 1, `${command} must own one fail-closed step`);
   }
   for (const existing of ["Architecture", "Server tests", "Typecheck and build", "Offline documentation integrity", "Plugin smoke"]) assert.match(ci, new RegExp(`name: ${existing}`));
-  assert.match(ci, /Xvfb :99/); assert.match(ci, /DISPLAY=:99/);
+  assert.match(ci, /name: Live Phase 5 acceptance \(Linux\)[\s\S]*if: runner\.os == 'Linux'[\s\S]*run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" npm run test:live:phase5/);
+  assert.match(ci, /name: Live Phase 5 acceptance \(Windows\)[\s\S]*if: runner\.os == 'Windows'[\s\S]*run: npm run test:live:phase5/);
 });
 
 test("runtime bridge parity uses advertised UTF-8 byte limits and peer readiness proof", async () => {
