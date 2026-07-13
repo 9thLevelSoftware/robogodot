@@ -14,8 +14,9 @@ import { registerProjectTools } from "./tools/project.js";
 import { registerLspTools, type LspToolClient } from "./tools/lsp.js";
 import { GodotMcpError } from "./errors.js";
 import { disconnectedRuntime, registerRuntimeTools, type RuntimeToolService } from "./tools/runtime.js";
+import { disconnectedDebug, registerDebugTools, type DebugToolService } from "./tools/debug.js";
 
-export interface ServerDependencies { bridge?: CoreBridge; mode?: SafetyMode; docsLoader?: () => Promise<DocsIndex>; lsp?: LspToolClient; runtime?: RuntimeToolService }
+export interface ServerDependencies { bridge?: CoreBridge; mode?: SafetyMode; docsLoader?: () => Promise<DocsIndex>; lsp?: LspToolClient; runtime?: RuntimeToolService; debug?: DebugToolService }
 
 const disconnectedBridge: CoreBridge = {
   getStatus: (): ClientStatus => ({ state: "disconnected", url: "ws://127.0.0.1:9200", connectedSince: undefined, reconnectAttempt: 0, lastError: undefined }),
@@ -43,5 +44,6 @@ export function createServer(dependencies: ServerDependencies): McpServer {
   registerProjectTools(server, bridge, mutationLane);
   registerLspTools(server, dependencies.lsp ?? disconnectedLsp);
   registerRuntimeTools(server, dependencies.runtime ?? disconnectedRuntime);
+  registerDebugTools(server, dependencies.debug ?? disconnectedDebug);
   return server;
 }

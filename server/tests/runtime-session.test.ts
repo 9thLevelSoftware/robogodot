@@ -5,6 +5,24 @@ const processView = (running = true) => ({ childId: "child", pid: 42, startedAt:
 const options = { godotPath: "godot", projectPath: "game" };
 
 describe("RuntimeSessionCoordinator", () => {
+  it("launches the coordinator-owned process before attach and returns only at debug_ready", async () => {
+    const order: string[] = []; const dap = { status: { state: "disconnected" }, attach: vi.fn().mockImplementation(async (value) => { order.push("dap"); expect(value.process.pid).toBe(42); return { state: "ready" }; }), setBreakpoints: vi.fn(), continue: vi.fn(), step: vi.fn(), stack: vi.fn(), inspect: vi.fn(), close: vi.fn() };
+    const runner = { start: vi.fn().mockImplementation(async () => { order.push("process"); return processView(); }), stop: vi.fn().mockResolvedValue({ childId: "child", graceful: true, forced: false }), stopCurrent: vi.fn() };
+    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, dapFactory: () => dap as any, projectPath: "C:/project" } as any);
+    const result = await coordinator.debugLaunch(options, { host: "127.0.0.1", port: 6006, timeoutMs: 1000 });
+    expect(order).toEqual(["process", "dap"]); expect(result.state).toBe("debug_ready"); expect(dap.attach.mock.calls[0][0].timeoutMs).toBeLessThanOrEqual(1000);
+    await coordinator.stop(result.id);
+  });
+
+  it("contains breakpoint files and delegates stopped operations to the active DAP client", async () => {
+    const dap = { status: { state: "stopped", stoppedGeneration: 1 }, attach: vi.fn().mockResolvedValue({ state: "ready" }), setBreakpoints: vi.fn().mockResolvedValue({ breakpoints: [{ line: 2, verified: true }] }), continue: vi.fn().mockResolvedValue({}), step: vi.fn().mockResolvedValue({}), stack: vi.fn().mockResolvedValue({ threads: [], frames: [], truncated: false }), inspect: vi.fn().mockResolvedValue({ scopes: [], truncated: false }), close: vi.fn() };
+    const runner = { start: vi.fn().mockResolvedValue(processView()), stop: vi.fn().mockResolvedValue({ childId: "child", graceful: true, forced: false }), stopCurrent: vi.fn() };
+    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, dapFactory: () => dap as any, projectPath: process.cwd() } as any);
+    const result = await coordinator.debugLaunch(options, { host: "127.0.0.1", port: 6006, timeoutMs: 1000 });
+    await expect(coordinator.debugSetBreakpoints(result.id, "../escape.gd", [2])).rejects.toMatchObject({ code: "invalid_args" });
+    await coordinator.debugContinue(result.id, { runtimeSessionId: result.id, stoppedGeneration: 1, id: 1 });
+    expect(dap.continue).toHaveBeenCalledOnce(); await coordinator.stop(result.id);
+  });
   it("owns one opaque immutable session and rejects concurrent and stale calls", async () => {
     let resolve!: (value: any) => void; const pending = new Promise<any>((yes) => { resolve = yes; });
     const runner = { start: vi.fn().mockReturnValue(pending), stop: vi.fn(), stopCurrent: vi.fn() };

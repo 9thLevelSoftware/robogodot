@@ -1,41 +1,37 @@
-# Phase 4 Task 7 Report
+# Phase 5 Task 7 Report
 
 ## Status
 
-Implemented and verified. Task 7 documents the exact 38-tool branch surface, including all seven Phase 4 LSP contracts, resolves only the Phase 4 portion of `Q-002`, updates implemented architecture evidence without relabeling future Phase 5–8 work, regenerates checked-in diagrams, and records the Tasks 1–6 review ledger. Whole-branch review remains controller-owned and has not been dispatched or represented as complete.
+Implemented the six attach-only public debug tools, integrated the coordinator-owned process/bridge/DAP lifecycle into production startup, raised the exact inventory from 45 to 51, added the deterministic Phase 5 project, and completed the two-flow real-Godot Phase 5 acceptance.
 
-## TDD evidence
+## TDD and implementation evidence
 
-RED: `node --test tests/architecture/*.test.mjs` exited 1 with the three new Phase 4 documentation assertions failing because the README lacked all seven LSP contracts, Phase 4's dependency remained unresolved, and atlas boundaries remained planned/inferred-only.
+- RED: focused debug-tool/inventory tests failed with zero `godot_debug_*` registrations; coordinator tests failed because launch/delegation did not exist.
+- GREEN: the exact six names, strict schemas, annotations, dispatch, containment, stopped references, step enum, and exact 51-name in-memory/stdio inventories pass.
+- Coordinator launch owns one deadline, starts only through `ProcessRunner`, connects the runtime bridge, then attaches DAP. Godot's transient `not_running` attach response is retried with fresh attach-only clients inside the same deadline; no DAP path spawns a process.
+- Breakpoints accept one canonical contained project-relative `.gd` file and replace its line set. Continue/step delegate to `DapClient`, which invalidates stopped references before exposing request completion. Stack/inspect are copied from own data only and never evaluate expressions.
+- Production cleanup attempts editor bridge, runtime coordinator, LSP client, LSP host, and MCP server in order and rethrows the first error.
+- The runtime fixture renders 320x180, prints `PHASE5_READY`, exposes `RuntimeTarget.jump_count`, responds to `phase5_jump`, and has local `phase5_value = 42` at the tested breakpoint.
 
-GREEN after documentation/source changes and rendering: `node --test tests/architecture/*.test.mjs` exited 0 with 90 passed, 0 failed, and 1 explicitly optional external-source-archive check skipped.
+## Real Godot findings
 
-## Implemented integration
+- Godot JSON parses wire numbers as integral floats, so runtime bootstrap validation now accepts only finite exactly-integral int/float values.
+- Windows `user://` config paths arrive with backslashes; the launcher normalizes separators before canonical validation.
+- `--remote-debug` must precede the script `--` separator or Godot treats it as a user argument.
+- Godot 4.6.2 accesses DAP `source.checksums` even though it is optional in DAP. Sending an explicit empty array eliminates the engine error and makes the verified breakpoint stop reliably.
+- DAP initially returns `not_running` while the remote debugger finishes registering. Retrying attach inside the original launch deadline yields `debug_ready` without weakening the deadline.
 
-- README: exactly 38 tools; exact seven LSP names, inputs, structured outputs, and read-only annotations; zero-based UTF-16 positions; exact-disk synchronization; configuration defaults; exact manual command; visible-editor attachment; owned-child-only shutdown; Godot 4.6 workspace-symbol limitation; document-symbol alternative; actionable `not_connected`, `feature_disabled`, and diagnostics-timeout guidance.
-- Architecture: Phase 4's solid Phase 1 API dependency and completed Phase 2 coordination/regression milestone; Phase 6 remains open; implemented Phase 4 channel/component/adapter behavior; implemented lifecycle operations while retaining the named state model's honest inferred-projection status.
-- Q-002: accepted narrowly for Phase 4, explicitly unresolved for Phase 6.
-- Traceability/rendered artifacts: source rows updated and all eleven atlas artifacts regenerated; Task 7 changed the requested Phase 4-relevant SVGs and manifest as determined by source digests.
-- Ledger: exact reviewed ranges and already-recorded focused/live evidence for Tasks 1–6. Portable atomic mutable-path authorization remains deferred to Phase 6/7.
+## Verification
 
-## Complete verification matrix
+- Focused debug/session/server/stdio/live-support: 40/40 passed.
+- Fresh server suite with live variables removed: 38 files passed, 4 skipped; 422 tests passed, 6 skipped.
+- `npm run typecheck`, `npm run build`, and freshly built stdio inventory: passed; inventory is exactly 51.
+- Exact supplied Godot path, Phase 5 command: 2/2 public-MCP flows passed together. Normal flow proves output/tree/property/input/PNG dimensions/hash/containment/stop/artifact and PID cleanup. Debug flow proves attach/breakpoint/stopped stack/local `42`/step/continue/stop.
+- Existing live Phase 3: 1/1 passed. Existing live Phase 4: 2/2 passed. Existing live editor acceptance passed on fresh standalone rerun.
+- Godot smoke reached and passed the Phase 5 authenticated bootstrap and locked runtime bridge after its action timing was made deterministic. A later unrelated Phase 3 node smoke timed out while pre-existing Godot editor processes were present, so the aggregate smoke command did not finish green in this run.
 
-- `cd server; npm test -- --run; npm run typecheck; npm run build; npm run docs:check` — exit 0. Unit suite: 28 files passed / 3 environment-gated files skipped; 301 tests passed / 4 skipped. Typecheck, build, and offline-doc integrity check passed (`1065` classes, `24256` members, `9697180` bytes).
-- `node --test tests/architecture/*.test.mjs` — exit 0; 90 passed, 0 failed, 1 optional external-archive check skipped.
-- Exact supplied `GODOT_PATH`; `node tests/godot/run-smoke.mjs` — exit 0; all named transport, parser, execution, introspection, Phase 3, and lifecycle smokes reported PASS. The Mono executable emitted expected environmental `.NET SDK 8.0.28` and forced-editor teardown/leak noise during negative/lifecycle probes; no smoke assertion, compilation gate, or lifecycle gate was ignored.
-- Exact supplied `GODOT_PATH` and resolved fixture `GODOT_PROJECT_PATH`; `npm run test:live` — 1/1 passed.
-- Same environment; `npm run test:live:phase3` — 1/1 passed.
-- Same environment; `npm run test:live:phase4` — 2/2 passed, including Godot 4.6 capability honesty.
+## Concerns
 
-## Concerns and deferred work
-
-- Godot 4.6 does not advertise `workspace/symbol`; the stable tool correctly returns `feature_disabled` and directs users to per-document symbols.
-- Portable Node APIs do not provide a cross-platform atomic path-authorization-plus-open primitive. Phase 4's canonical pre/post-open checks and same-handle read narrow the race; broader hostile-filesystem containment remains deferred to Phase 6/7.
-- Phase 6's dependency strength under `Q-002`, broader `FsGuard`, and Phase 7 uniform hardening remain open and are not claimed here.
-- The controller must request and adjudicate the whole-branch review before marking Phase 4 complete.
-
-## Changes-requested correction
-
-Review of initial Task 7 commit `5c5bd51` requested exact public contract detail rather than summary output names. The correction expands all seven input schemas and normalized structured-output variants, including nested positions/ranges, completion trigger context, optional normalized fields, diagnostic and signature truncation categories, symbol recursion/location fields, native found variants, and workspace error outcomes. The architecture regression now cross-checks the production registrations/schema markers and requires representative nested/output tokens in the runbook.
-
-The existing Task 7 range is `fe729ec..e04e59d`: initial integration commit `5c5bd51` followed by exact-contract correction `e04e59d`. Re-review then requested one final narrow correction: distinguish malformed successful workspace-symbol payload normalization from LSP request/protocol failure and repair the ledger metadata. That final correction commit and approval are pending at this point in the report. The controller will finalize the exact corrected range and review result only after approval; whole-branch review remains controller-owned and pending.
+- The aggregate Godot smoke remains non-green due to the later Phase 3 node timeout described above; the Phase 5 smoke itself passes.
+- Mono emits the environment's known missing .NET SDK 8.0.28 warning. The Phase 5 fixture is GDScript-only and all Phase 5 assertions pass despite it.
+- Unrelated dirty `.superpowers/sdd/progress.md` and `task-2-report.md` were preserved and are excluded from the Task 7 commit.

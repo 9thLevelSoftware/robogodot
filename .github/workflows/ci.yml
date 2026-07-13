@@ -58,3 +58,4 @@ jobs:
           npm run test:live
           npm run test:live:phase3
           npm run test:live:phase4
+          npm run test:live:phase5

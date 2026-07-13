@@ -36,7 +36,7 @@ func _config_path(args: PackedStringArray) -> String:
 	if args.count(CONFIG_FLAG) != 1: return ""
 	var index := args.find(CONFIG_FLAG)
 	if index < 0 or index + 1 >= args.size(): return ""
-	var path := String(args[index + 1])
+	var path := String(args[index + 1]).replace("\\", "/")
 	return path if path.is_absolute_path() and path.simplify_path() == path else ""
 
 func _validate_config_identity(path: String) -> Dictionary:
@@ -71,7 +71,7 @@ func _read_config(path: String, expected_session: String) -> Dictionary:
 	if keys != expected or parsed.version != Manifest.MANIFEST_VERSION or parsed.protocolVersion != Manifest.PROTOCOL_VERSION: return {}
 	if not parsed.token is String or parsed.token.to_utf8_buffer().size() < 32 or parsed.token.to_utf8_buffer().size() > 256: return {}
 	if not parsed.sessionId is String or parsed.sessionId != expected_session or not _valid_session_id(parsed.sessionId): return {}
-	if not parsed.preferredPort is int or parsed.preferredPort < 1 or parsed.preferredPort > 65535: return {}
+	if not (parsed.preferredPort is int or parsed.preferredPort is float) or not is_finite(float(parsed.preferredPort)) or floorf(float(parsed.preferredPort)) != float(parsed.preferredPort) or parsed.preferredPort < 1 or parsed.preferredPort > 65535: return {}
 	if parsed.launcherResource != Manifest.LAUNCHER_RESOURCE or parsed.bridgeResource != Manifest.BRIDGE_RESOURCE: return {}
 	if _canonical_scene(parsed.scene).is_empty(): return {}
 	return parsed

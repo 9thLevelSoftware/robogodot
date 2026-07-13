@@ -36,9 +36,9 @@ func _run() -> void:
 	_assert(node.get("result", {}).get("properties", {}).get("name") == "RuntimeRoot", "allowlisted property")
 	var guarded := await _request(3, "runtime.get_node", {"path":"GetterProbe", "properties":["dangerous"]})
 	_assert(getter_probe.reads == 0 and guarded.get("result", {}).get("properties", {}).is_empty(), "custom getter not invoked")
-	var input := await _request(4, "runtime.input", {"kind":"action", "action":"runtime_smoke_action", "mode":"press_release", "holdMs":20})
+	var input := await _request(4, "runtime.input", {"kind":"action", "action":"runtime_smoke_action", "mode":"press_release", "holdMs":200})
 	_assert(input.get("result", {}).get("ok") == true and Input.is_action_pressed("runtime_smoke_action"), "action pressed: " + JSON.stringify(input))
-	await create_timer(0.05).timeout
+	await create_timer(0.25).timeout
 	_assert(not Input.is_action_pressed("runtime_smoke_action"), "action released exactly once")
 	await process_frame
 	var screenshot := await _request(5, "runtime.screenshot", {"name":"smoke.png"})

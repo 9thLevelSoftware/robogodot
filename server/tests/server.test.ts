@@ -8,7 +8,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 process.env.GODOT_MCP_TOKEN ??= "0123456789abcdef0123456789abcdef";
 
 describe("createServer", () => {
-  it("exposes exactly the 45 reviewed public tools and no aliases", async () => {
+  it("exposes exactly the 51 reviewed public tools and no aliases", async () => {
     const server = createServer({});
     const client = new Client({ name: "inventory", version: "1" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -27,6 +27,7 @@ describe("createServer", () => {
         "godot_lsp_document_symbols", "godot_lsp_workspace_symbols", "godot_lsp_native_symbol",
         "godot_run_project", "godot_stop_project", "godot_run_output",
         "godot_runtime_scene_tree", "godot_runtime_get_node", "godot_runtime_input", "godot_runtime_screenshot",
+        "godot_debug_launch", "godot_debug_set_breakpoints", "godot_debug_continue", "godot_debug_step", "godot_debug_stack", "godot_debug_inspect",
       ]);
     } finally {
       await client.close();
@@ -50,19 +51,20 @@ describe("createServer", () => {
 });
 
 describe("runServer lifecycle", () => {
-  function runtime(start: () => void, connect: () => Promise<void>, closeFailures: Partial<Record<"lsp" | "host" | "server", Error>> = {}) {
+  function runtime(start: () => void, connect: () => Promise<void>, closeFailures: Partial<Record<"runtime" | "lsp" | "host" | "server", Error>> = {}) {
     const signals = new EventEmitter();
     const input = new EventEmitter();
     const stop = vi.fn();
     const close = vi.fn().mockImplementation(() => closeFailures.server ? Promise.reject(closeFailures.server) : Promise.resolve());
     const lspClose = vi.fn().mockImplementation(() => closeFailures.lsp ? Promise.reject(closeFailures.lsp) : Promise.resolve());
+    const runtimeClose = vi.fn().mockImplementation(() => closeFailures.runtime ? Promise.reject(closeFailures.runtime) : Promise.resolve());
     const hostClose = vi.fn().mockImplementation(() => closeFailures.host ? Promise.reject(closeFailures.host) : Promise.resolve());
     const transport = {} as { onclose?: () => void };
     return {
-      signals, input, stop, close, lspClose, hostClose,
+      signals, input, stop, close, runtimeClose, lspClose, hostClose,
       run: () => runServer({
         bridge: { start, stop, getStatus: vi.fn() as never, call: vi.fn() as never },
-        server: { connect, close }, lspClient: { close: lspClose }, lspHost: { ensureAvailable: vi.fn().mockResolvedValue("attached"), close: hostClose }, transport: transport as never, signals, input,
+        server: { connect, close }, runtime: { close: runtimeClose } as any, lspClient: { close: lspClose }, lspHost: { ensureAvailable: vi.fn().mockResolvedValue("attached"), close: hostClose }, transport: transport as never, signals, input,
       }),
       transport,
     };
@@ -111,10 +113,12 @@ describe("runServer lifecycle", () => {
     expect(fixture.close).toHaveBeenCalledOnce();
   });
 
-  it("attempts LSP client, host, and MCP cleanup in order and rethrows the first failure", async () => {
-    const first = new Error("lsp close failed");
-    const fixture = runtime(vi.fn(), vi.fn().mockRejectedValue(new Error("connect failed")), { lsp: first, host: new Error("host failed"), server: new Error("server failed") });
+  it("attempts bridge, runtime, LSP client, host, and MCP cleanup in order and rethrows the first failure", async () => {
+    const first = new Error("runtime close failed");
+    const fixture = runtime(vi.fn(), vi.fn().mockRejectedValue(new Error("connect failed")), { runtime: first, lsp: new Error("lsp failed"), host: new Error("host failed"), server: new Error("server failed") });
     await expect(fixture.run()).rejects.toBe(first);
+    expect(fixture.stop.mock.invocationCallOrder[0]).toBeLessThan(fixture.runtimeClose.mock.invocationCallOrder[0]!);
+    expect(fixture.runtimeClose.mock.invocationCallOrder[0]).toBeLessThan(fixture.lspClose.mock.invocationCallOrder[0]!);
     expect(fixture.lspClose).toHaveBeenCalledOnce();
     expect(fixture.hostClose).toHaveBeenCalledOnce();
     expect(fixture.close).toHaveBeenCalledOnce();
