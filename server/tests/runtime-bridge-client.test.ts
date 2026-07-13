@@ -87,6 +87,13 @@ describe("RuntimeBridgeClient", () => {
     await client.close(); await bridge.close();
   });
 
+  it("serializes file requests so later IDs are not published while an earlier request is outstanding", async () => {
+    const config = await fixture(65534); const bridge = await MockRuntimeBridge.file({ sessionId: SESSION, token: TOKEN, sessionRoot: config.sessionRoot, hold: true }); const client = new RuntimeBridgeClient(); await client.connect(config);
+    const first = client.request(SESSION, "runtime.scene_tree", {}, 1000); const second = client.request(SESSION, "runtime.get_node", {}, 1000); void first.catch(() => undefined); void second.catch(() => undefined);
+    await expect.poll(() => bridge.requests.length).toBe(1); await new Promise(resolve => setTimeout(resolve, 30)); expect(bridge.ids).toEqual([1]);
+    await client.close(); await expect(first).rejects.toThrow(/closed/i); await expect(second).rejects.toThrow(/closed/i); await bridge.close();
+  });
+
   it("allows a new connection attempt after an unpublished attempt rejects", async () => {
     const client = new RuntimeBridgeClient();
     const invalid = await fixture(1); await writeFile(invalid.args[4]!, "not json");

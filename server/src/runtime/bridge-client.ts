@@ -11,7 +11,7 @@ interface Pending { resolve(value: unknown): void; reject(error: Error): void; t
 
 export class RuntimeBridgeClient {
   private transport: Transport | undefined; private socket: Socket | undefined; private secret: SecretConfig | undefined; private config: BridgeLaunchConfig | undefined;
-  private nextId = 1; private exhausted = false; private connectPromise: Promise<Transport> | undefined; private published = false; private closed = false; private filePending = 0; private readonly pending = new Map<number, Pending>(); private decoder = new FrameDecoder();
+  private nextId = 1; private exhausted = false; private connectPromise: Promise<Transport> | undefined; private published = false; private closed = false; private filePending = 0; private fileQueue: Promise<void> = Promise.resolve(); private readonly pending = new Map<number, Pending>(); private decoder = new FrameDecoder();
   constructor(private readonly options: { handshakeTimeoutMs?: number } = {}) {}
 
   async prepare(config: BridgeLaunchConfig): Promise<void> {
@@ -51,7 +51,7 @@ export class RuntimeBridgeClient {
     const request = plainJson({ type: "request", version: this.secret.protocolVersion, sessionId, id, method, requestNonce, paramsJson, requestProof: proof(this.secret.token, "robogodot-request-v1", sessionId, this.secret.protocolVersion, String(id), method, requestNonce, paramsJson) }) as Record<string, unknown>;
     const bytes = Buffer.from(JSON.stringify(request)); if (bytes.length > MAX_JSON_BYTES) throw new Error("Runtime bridge request exceeds bound.");
     this.published = true;
-    if (this.transport === "file") { this.filePending++; try { return await this.fileRequest<T>(id, request, Date.now() + timeoutMs); } finally { this.filePending--; } }
+    if (this.transport === "file") { this.filePending++; try { return await this.queuedFileRequest<T>(id, request, Date.now() + timeoutMs); } finally { this.filePending--; } }
     return await new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error("Runtime bridge request deadline exceeded.")); }, timeoutMs);
       this.pending.set(id, { resolve: value => resolve(plainJson(value) as T), reject, timer });
@@ -85,6 +85,10 @@ export class RuntimeBridgeClient {
     if (typeof r.error === "string") pending.reject(new Error(r.error)); else { try { pending.resolve(r.result); } catch (e) { pending.reject(e as Error); } }
   }
   private rejectOne(id: number, error: Error) { const p = this.pending.get(id); if (!p) return; clearTimeout(p.timer); this.pending.delete(id); p.reject(error); }
+  private async queuedFileRequest<T>(id: number, request: object, deadline: number): Promise<T> {
+    const previous = this.fileQueue; let release!: () => void; this.fileQueue = new Promise<void>(resolveQueue => { release = resolveQueue; });
+    await previous; try { if (this.closed) throw new Error("Runtime bridge closed."); if (Date.now() >= deadline) throw new Error("Runtime bridge request deadline exceeded."); return await this.fileRequest<T>(id, request, deadline); } finally { release(); }
+  }
   private async fileRequest<T>(id: number, request: object, deadline: number): Promise<T> {
     const root = await this.canonicalFileRoot(); const final = join(root, `req-${id}.json`); const temp = join(root, `.req-${id}-${randomBytes(16).toString("hex")}.tmp`); const response = join(root, `resp-${id}.json`);
     const body = JSON.stringify(request); let handle;
