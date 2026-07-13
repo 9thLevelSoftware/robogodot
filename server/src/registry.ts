@@ -32,7 +32,7 @@ export function registerTool<Input extends Record<string, unknown>, Output exten
     annotations: definition.annotations,
   }, async (input) => {
     try {
-      const output = await definition.handler(input as Input);
+      const output = definition.outputSchema.parse(await definition.handler(input as Input)) as Output;
       return { content: [{ type: "text" as const, text: JSON.stringify(output) }], structuredContent: output };
     } catch (error) {
       return toToolError(error) as unknown as CallToolResult;

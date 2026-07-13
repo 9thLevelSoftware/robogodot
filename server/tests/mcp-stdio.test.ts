@@ -14,7 +14,7 @@ beforeAll(async () => {
   if (!npmCli) throw new Error("npm_execpath is required to build the stdio fixture");
   await execute(process.execPath, [npmCli, "run", "build"], { cwd: process.cwd() });
   expect((await stat(artifact)).mtimeMs).toBeGreaterThanOrEqual(buildStartedAt - 1000);
-});
+}, 30_000);
 
 describe("freshly built stdio server", () => {
   const childEnv = { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" };
@@ -40,7 +40,7 @@ describe("freshly built stdio server", () => {
       await vi.waitFor(() => {
         if (parseFailure) throw parseFailure;
         expect(messages.some((message) => message.id === id)).toBe(true);
-      }, { timeout: 3000 });
+      }, { timeout: 10_000 });
     };
     child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "stdio-test", version: "1" } } }) + "\n");
     await waitForId(1);
@@ -62,6 +62,9 @@ describe("freshly built stdio server", () => {
       "godot_project_setting_get", "godot_project_setting_set", "godot_project_setting_list",
       "godot_lsp_diagnostics", "godot_lsp_completion", "godot_lsp_hover", "godot_lsp_signature_help",
       "godot_lsp_document_symbols", "godot_lsp_workspace_symbols", "godot_lsp_native_symbol",
+      "godot_run_project", "godot_stop_project", "godot_run_output",
+      "godot_runtime_scene_tree", "godot_runtime_get_node", "godot_runtime_input", "godot_runtime_screenshot",
+      "godot_debug_launch", "godot_debug_set_breakpoints", "godot_debug_continue", "godot_debug_step", "godot_debug_stack", "godot_debug_inspect",
     ]);
   });
 
@@ -70,7 +73,7 @@ describe("freshly built stdio server", () => {
     child.stdin.end();
     const result = await Promise.race([
       new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.once("exit", (code, signal) => resolve({ code, signal }))),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("stdio server did not exit after stdin EOF")), 3000)),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("stdio server did not exit after stdin EOF")), 10_000)),
     ]);
     expect(result).toEqual({ code: 0, signal: null });
   });

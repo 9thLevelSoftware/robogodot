@@ -1,6 +1,6 @@
-# Godot Control MCP — Phase 4
+# Godot Control MCP — Phase 5
 
-Godot Control MCP connects an MCP host to one local Godot 4.6.x editor. Phase 4 exposes exactly 38 public tools: Phase 3's 31 public tools plus seven read-only Godot LSP tools. There are no aliases.
+Godot Control MCP connects an MCP host to one local Godot 4.6.x editor and one coordinator-owned game process. Phase 5 exposes exactly 51 public tools: Phase 3 contributed 31 public tools, Phase 4 added seven LSP tools, and Phase 5 adds 13 runtime/debug tools. There are no aliases.
 
 ## Quickstart
 
@@ -67,6 +67,15 @@ Other environment variables:
 | `godot_lsp_document_symbols` | Return a bounded hierarchy for one script |
 | `godot_lsp_workspace_symbols` | Query advertised workspace symbols without inventing an index |
 | `godot_lsp_native_symbol` | Return bounded native Godot class or member documentation |
+| `godot_run_project`, `godot_stop_project`, `godot_run_output` | Start, stop, and page output from one managed game process |
+| `godot_runtime_scene_tree`, `godot_runtime_get_node`, `godot_runtime_input`, `godot_runtime_screenshot` | Inspect and interact with the authenticated running-game bridge |
+| `godot_debug_launch`, `godot_debug_set_breakpoints`, `godot_debug_continue`, `godot_debug_step`, `godot_debug_stack`, `godot_debug_inspect` | Attach to Godot DAP and debug the coordinator-owned process |
+
+The exact ordered public inventory is authoritative and matches both in-memory and freshly built stdio discovery:
+
+<!-- exact-51-tool-inventory -->
+`godot_connection_status`, `godot_get_version`, `godot_ping`, `godot_script_run`, `godot_api_list_classes`, `godot_api_describe_class`, `godot_api_search`, `godot_api_class_doc`, `godot_node_add`, `godot_node_delete`, `godot_node_reparent`, `godot_node_rename`, `godot_node_duplicate`, `godot_node_get`, `godot_node_set_property`, `godot_node_call_method`, `godot_scene_instance`, `godot_scene_open`, `godot_scene_new`, `godot_scene_save`, `godot_scene_tree`, `godot_scene_current`, `godot_signal_list`, `godot_signal_connect`, `godot_signal_disconnect`, `godot_resource_load`, `godot_resource_create`, `godot_resource_save`, `godot_project_setting_get`, `godot_project_setting_set`, `godot_project_setting_list`, `godot_lsp_diagnostics`, `godot_lsp_completion`, `godot_lsp_hover`, `godot_lsp_signature_help`, `godot_lsp_document_symbols`, `godot_lsp_workspace_symbols`, `godot_lsp_native_symbol`, `godot_run_project`, `godot_stop_project`, `godot_run_output`, `godot_runtime_scene_tree`, `godot_runtime_get_node`, `godot_runtime_input`, `godot_runtime_screenshot`, `godot_debug_launch`, `godot_debug_set_breakpoints`, `godot_debug_continue`, `godot_debug_step`, `godot_debug_stack`, `godot_debug_inspect`.
+<!-- /exact-51-tool-inventory -->
 
 All curated in-memory mutations enter a single FIFO mutation lane before reaching Godot, preventing concurrent requests from capturing stale inverse state. Each accepted node, signal, instance, or project-setting mutation creates one `EditorUndoRedoManager` action; users undo it with normal Godot Ctrl-Z. Scene open/new are lifecycle operations, while scene/resource save are explicit persistence operations: none claims UndoRedo semantics.
 
@@ -124,6 +133,48 @@ With `GODOT_MCP_LSP_AUTO_START=true`, RoboGodot first attaches if a compatible l
 
 Godot 4.6 does not register `workspace/symbol`; `godot_lsp_workspace_symbols` therefore returns `feature_disabled`. Use `godot_lsp_document_symbols` with a specific `res://` script instead. A `not_connected` result means no compatible LSP is listening: open the project in Godot, verify `GODOT_PROJECT_PATH` and `GODOT_LSP_PORT`, or opt into auto-start. Other `feature_disabled` results mean the connected server did not advertise that method; use a supported tool rather than expecting a fabricated result. For a diagnostics timeout or `fresh: false`, confirm the script exists on disk, fix Godot parse/import errors, keep the editor responsive, and retry after disk synchronization; do not treat stale diagnostics as current.
 
+## Runtime and debug runbook
+
+The 13 Phase 5 tools use strict inputs. Process and debug `sessionId` fields are 32-character lowercase hexadecimal values; the four bridge-tool schemas admit a nonempty session identifier up to 128 UTF-8 bytes, while the coordinator still rejects anything other than its active ID. Optional `scene` values must be contained `res://` paths. Launch accepts 32 arguments maximum: 1,024 UTF-8 bytes each and 8,192 total UTF-8 bytes. Normal and debug launch are mutually exclusive because one runtime-session coordinator admits only one child.
+
+| Tool | Exact inputs | Normalized success output | MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) |
+| --- | --- | --- | --- |
+| `godot_run_project` | optional `scene`, optional `arguments` | `{ sessionId, mode: "normal", pid, bridgeTransport?, startedAt }` | `false`, `false`, `false`, `true` |
+| `godot_stop_project` | `sessionId` | `{ sessionId, alreadyStopped, graceful, forced, exit? }`; `exit` has `code`, `signal`, `at`, optional `error` | `false`, `true`, `true`, `true` |
+| `godot_run_output` | `sessionId`; `since` safe integer ≥0, default 0; `limit` 1–500, default 100 | `{ sessionId, running, exit?, records, next, lost, truncated }`; each record has `cursor`, `stream` (`stdout` or `stderr`), `at`, `text`, `truncated` | `true`, `false`, `false`, `true` |
+| `godot_runtime_scene_tree` | `sessionId`; `maxDepth` 1–32, default 8 | `{ sessionId, nodes, truncated: { nodes, depth } }`; each node has `path`, `name`, `type`, `depth` | `true`, `false`, `true`, `true` |
+| `godot_runtime_get_node` | `sessionId`, node `path`, up to 64 allowlisted `properties` | `{ sessionId, path, type, properties, omittedProperties }` | `true`, `false`, `true`, `true` |
+| `godot_runtime_input` | `sessionId` and exactly one `action`, `key`, or `mouse_button` form; `holdMs` 0–2000 | `{ sessionId, accepted: true }` | `false`, `false`, `false`, `true` |
+| `godot_runtime_screenshot` | `sessionId`; optional contained leaf `.png` name | `{ sessionId, path, absolutePath, width, height, bytes, sha256, format: "png" }` | `false`, `false`, `false`, `true` |
+| `godot_debug_launch` | optional `scene`, optional `arguments`; up to 32 unique initial breakpoint groups `{ path, lines }` and 500 total lines; `timeoutMs` 100–60000, default 15000 | `{ sessionId, mode: "debug", state: "debug_ready", pid, bridgeTransport?, startedAt, capabilities }`, where `capabilities` contains strict booleans for configuration-done, terminate, and variable paging | `false`, `false`, `false`, `true` |
+| `godot_debug_set_breakpoints` | `sessionId`, one contained project-relative `.gd` `path`, up to 500 unique positive `lines` | `{ sessionId, path, breakpoints }` with the adapter's bounded replaced results | `false`, `false`, `true`, `true` |
+| `godot_debug_continue` | `sessionId`, stopped `thread` reference | `{ sessionId, resumed: true }` | `false`, `false`, `false`, `true` |
+| `godot_debug_step` | `sessionId`, stopped `thread`, `kind` `over` or `into` | `{ sessionId, kind, resumed: true }` | `false`, `false`, `false`, `true` |
+| `godot_debug_stack` | `sessionId`; optional stopped `thread`; `startFrame` safe integer ≥0 | `{ sessionId, stoppedGeneration, threads, frames, totalFrames?, truncated }` with bounded references | `true`, `false`, `false`, `true` |
+| `godot_debug_inspect` | `sessionId`, stopped `frame`; optional `variables`; `start` safe integer ≥0 | Scope page: `{ sessionId, stoppedGeneration, scopes, truncated }`. Variable page: `{ sessionId, stoppedGeneration, variables, next?, truncated }`. | `true`, `false`, `false`, `true` |
+
+Every DAP reference is `{ runtimeSessionId, stoppedGeneration, id }`. A continue or step invalidates all references from the old `stoppedGeneration`; stale or cross-session references fail with `invalid_args`. Inspection uses only `scopes` and `variables`: the attach-only client has no evaluate operation. Adapter capabilities gate `configurationDone`, termination, and nonzero variable paging; unsupported operations return `feature_disabled` rather than being simulated.
+
+### Ownership, security, and cleanup
+
+`ProcessRunner` is the sole process owner for normal and debug launch: it alone spawns, records the exact child PID, captures output, and performs graceful-then-forced exact child teardown. DAP is attach-only and never spawns or owns the game. Debug setup uses one absolute deadline for plugin bootstrap, process start, authenticated runtime-bridge connection, and DAP attach. If DAP is unavailable, the session reports explicit process-plus-bridge degradation; it never claims debug readiness.
+
+The plugin resolves `user://` and returns its canonical absolute session root during authenticated bootstrap; Node never guesses an OS user-data directory. A 256-bit token lives only in the mode-0600 ephemeral config beneath `user://.mcp/<sessionId>`, is injected through the child environment, and is never returned or logged. The loopback bridge uses mutual HMAC authentication and a bounded pre-request `hello` → `hello_ack` → `hello_confirm` → `hello_ready` handshake. Node selects socket only after validating the final readiness proof; Godot commits socket only when the first authenticated request arrives, so a client that misses readiness can disconnect while both peers remain eligible for immutable sequenced-file fallback. Both peers lock transport before processing the first request, and a published request is never replayed across transports. File fallback uses correlated IDs, bounded frames/deadlines, canonical link-free containment, atomic no-replace publication, and exact owned-artifact cleanup. On Node, request publication and response consumption require one link before/through/after the same-handle read. Godot 4.6 does not expose a portable link count or descriptor identity to GDScript, so its consumer instead opens once, validates bounded stable length and complete same-handle content, removes the pathname before dispatch, and authenticates the session, token, filename/request ID, and monotonic sequence; no stronger Godot-side hard-link-count claim is made.
+
+Normal stop invalidates the session. Natural exit immediately rejects bridge/debug mutation but retains a terminal read-only process view—including the fully drained output ring and exit metadata—until explicit stop. Teardown attempts DAP, then the runtime bridge, then bootstrap artifacts, then the exact ProcessRunner child. It preserves the first error while still attempting later cleanup. Process and artifact ownership are tracked independently: any failed close remains retryable under the same session, blocks a new launch, and is never cached as success. Failed start uses the same ownership-aware cleanup. Screenshot success is returned only after the PNG signature, dimensions, byte count, SHA-256, canonical path, and `.mcp/<sessionId>` containment are verified. The dummy renderer used by headless Godot may make viewport readback unavailable; the smoke separately verifies the production PNG publication path.
+
+Tool failures use the accepted MCP SDK-compatible policy: `isError: true`, one JSON text item containing exactly `{ code, message, hint, data? }`; `structuredContent` is omitted for every error. Successes retain identical JSON text and strict structured content. This preserves exact success output schemas after `tools/list` without permissive unions or fake success fields.
+
+`GODOT_MCP_MODE` remains `full`, `read_only`, or `confirm_destructive`; annotations above are the Phase 5 policy inputs. Uniform Phase 7 hardening/audit behavior remains future work and is not claimed here. Phase 6 batch/filesystem, Phase 7 hardening, and Phase 8 packaging/resources/prompts remain future work.
+
+### Start, observe, and stop
+
+Start the stdio server with `cd server && npm run build && npm start`. Call `godot_run_project` for normal execution or `godot_debug_launch` for attach-only debugging. Page process output with `godot_run_output`; pass the prior response's `next` as the next `since`. `lost > 0` means older ring-buffer records were overwritten. Page-level `truncated: true` means more retained records remain after this page; an individual `record.truncated: true` means that record's line was shortened or contained invalid UTF-8. Natural exit returns `running:false` with the final drain and remains readable until `godot_stop_project`; stale IDs cannot stop another process.
+
+For local live verification, `GODOT_PROJECT_PATH` must resolve to `tests/fixtures/godot_project` and `GODOT_PATH` must be the Godot executable. On the verified Windows Mono installation, use exactly `C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe`. The environment's missing .NET SDK 8.0.28 warning is known and non-fatal for these GDScript-only fixtures; script/compile errors and configured Godot failures remain fatal.
+
+The recorded local Phase 5 proof is Windows. Linux CI provisions `Xvfb :99` at 1280×720×24, exports `DISPLAY=:99`, and then runs Phase 5 as its own fail-closed step so screenshot acceptance uses a non-headless display. The workflow configuration is covered deterministically in repository tests; the hosted Linux execution remains CI evidence rather than a claim about this Windows workstation.
+
 ## Verification
 
 ```sh
@@ -143,6 +194,7 @@ cd server
 npm run test:live
 npm run test:live:phase3
 npm run test:live:phase4
+npm run test:live:phase5
 ```
 
 If the bridge stays disconnected, verify the plugin is enabled and that `GODOT_MCP_TOKEN` and `GODOT_MCP_PORT` match in both processes. Errors are structured with an actionable hint.

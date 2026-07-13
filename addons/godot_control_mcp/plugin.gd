@@ -8,6 +8,7 @@ const Core = preload("commands/core.gd")
 const Exec = preload("commands/exec.gd")
 const Introspection = preload("commands/introspection.gd")
 const Edit = preload("commands/edit.gd")
+const Runtime = preload("commands/runtime.gd")
 const ResourceHandles = preload("resource_handles.gd")
 var _server: Node
 
@@ -71,6 +72,7 @@ func _enter_tree() -> void:
 	router.register_command("edit.project_setting_get", Edit.project_setting_get)
 	router.register_command("edit.project_setting_set", Edit.project_setting_set)
 	router.register_command("edit.project_setting_list", Edit.project_setting_list)
+	router.register_command("runtime.prepare", Runtime.prepare)
 	_server = Server.new()
 	_server.session_ended.connect(_on_session_ended)
 	add_child(_server)
@@ -91,7 +93,11 @@ func _exit_tree() -> void:
 			_server.session_ended.disconnect(_on_session_ended)
 		_server.queue_free()
 	_server = null
+	var cleanup_error := Runtime.cleanup_owned_sessions()
+	if cleanup_error != OK: push_warning("Godot Control MCP could not clean one or more exact runtime sessions (error %d)." % cleanup_error)
 	ResourceHandles.clear()
 
 func _on_session_ended() -> void:
+	var cleanup_error := Runtime.cleanup_owned_sessions()
+	if cleanup_error != OK: push_warning("Godot Control MCP could not clean one or more exact runtime sessions (error %d)." % cleanup_error)
 	ResourceHandles.clear()

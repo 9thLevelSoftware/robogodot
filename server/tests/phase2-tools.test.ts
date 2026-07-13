@@ -15,6 +15,7 @@ async function harness(call = vi.fn(), mode: "full" | "read_only" | "confirm_des
   await Promise.all([server.connect(b), client.connect(a)]);
   return { client, call, close: () => Promise.all([client.close(), server.close()]) };
 }
+const errorPayload = (result: any) => JSON.parse(result.content[0].text);
 
 describe("Phase 2 MCP tools", () => {
   it("lists exactly five Phase 2 tools after the three Phase 1 probes with strict schemas and accurate annotations", async () => {
@@ -60,7 +61,7 @@ describe("Phase 2 MCP tools", () => {
       const exact = await fixture.client.callTool({ name: "godot_script_run", arguments: { source: base.source, args: exactArgs, allowDangerous: true } });
       expect(exact.isError).not.toBe(true);
       const over = await fixture.client.callTool({ name: "godot_script_run", arguments: { source: base.source, args: { value: `${exactArgs.value}é` }, allowDangerous: true } });
-      expect(over).toMatchObject({ isError: true, structuredContent: { code: "invalid_args", hint: expect.stringMatching(/reduce script source or arguments/i) } });
+      expect(over.isError).toBe(true); expect(errorPayload(over)).toMatchObject({ code: "invalid_args", hint: expect.stringMatching(/reduce script source or arguments/i) });
       expect(dispatched).toHaveBeenCalledTimes(1);
     } finally { await fixture.close(); }
   });
@@ -69,7 +70,7 @@ describe("Phase 2 MCP tools", () => {
     const fixture = await harness(vi.fn().mockResolvedValue({ ok: true, returnValue: null, stdout: "", errors: [], elapsedMs: 1, truncated: false, extra: true }));
     try {
       const result = await fixture.client.callTool({ name: "godot_script_run", arguments: { source: "func __run(args):\n\treturn null", allowDangerous: true } });
-      expect(result).toMatchObject({ isError: true, structuredContent: { code: "godot_error", hint: expect.stringMatching(/compatible/i) } });
+      expect(result.isError).toBe(true); expect(errorPayload(result)).toMatchObject({ code: "godot_error", hint: expect.stringMatching(/compatible/i) });
     } finally { await fixture.close(); }
   });
 
@@ -77,7 +78,7 @@ describe("Phase 2 MCP tools", () => {
     const fixture = await harness(vi.fn(), "read_only");
     try {
       const blocked = await fixture.client.callTool({ name: "godot_script_run", arguments: { source: "func __run(args):\n\treturn 1", allowDangerous: true } });
-      expect(blocked).toMatchObject({ isError: true, structuredContent: { code: "blocked_by_policy", hint: expect.stringMatching(/full mode/i) } });
+      expect(blocked.isError).toBe(true); expect(errorPayload(blocked)).toMatchObject({ code: "blocked_by_policy", hint: expect.stringMatching(/full mode/i) });
       const invalid = await fixture.client.callTool({ name: "godot_api_list_classes", arguments: { offset: 0, limit: 10, extra: true } });
       expect(invalid).toMatchObject({ isError: true, content: [{ text: expect.stringMatching(/unrecognized key/i) }] });
       const overBytes = await fixture.client.callTool({ name: "godot_api_search", arguments: { query: "é".repeat(65) } });
@@ -90,7 +91,7 @@ describe("Phase 2 MCP tools", () => {
     const fixture = await harness();
     try {
       const blocked = await fixture.client.callTool({ name: "godot_script_run", arguments: { source: "func __run(args):\n\treturn 1" } });
-      expect(blocked).toMatchObject({ isError: true, structuredContent: { code: "blocked_by_policy", hint: expect.stringMatching(/allowDangerous true/i) } });
+      expect(blocked.isError).toBe(true); expect(errorPayload(blocked)).toMatchObject({ code: "blocked_by_policy", hint: expect.stringMatching(/allowDangerous true/i) });
       expect(fixture.call).not.toHaveBeenCalled();
     } finally { await fixture.close(); }
   });
@@ -131,10 +132,7 @@ describe("Phase 2 MCP tools", () => {
         { class: className, member: { kind: "method", name: "toString" } },
       ]) {
         const result = await fixture.client.callTool({ name: "godot_api_class_doc", arguments: arguments_ });
-        expect(result).toMatchObject({
-          isError: true,
-          structuredContent: { code: "invalid_args", message: `Unknown documented class '${className}'.` },
-        });
+        expect(result.isError).toBe(true); expect(errorPayload(result)).toMatchObject({ code: "invalid_args", message: `Unknown documented class '${className}'.` });
       }
     } finally { await fixture.close(); }
   });
@@ -148,7 +146,7 @@ describe("Phase 2 MCP tools", () => {
     const fixture = await harness(call, "full", loader);
     try {
       const result = await fixture.client.callTool({ name: "godot_api_class_doc", arguments: { class: "Node" } });
-      expect(result).toMatchObject({ isError: true, structuredContent: { code } });
+      expect(result.isError).toBe(true); expect(errorPayload(result)).toMatchObject({ code });
       expect(loader).not.toHaveBeenCalled();
     } finally { await fixture.close(); }
   });
@@ -157,13 +155,13 @@ describe("Phase 2 MCP tools", () => {
     const malformed = await harness(vi.fn().mockResolvedValue({ classes: "Node" }));
     try {
       const result = await malformed.client.callTool({ name: "godot_api_list_classes", arguments: {} });
-      expect(result).toMatchObject({ isError: true, structuredContent: { code: "godot_error", hint: expect.stringMatching(/compatible/i) } });
+      expect(result.isError).toBe(true); expect(errorPayload(result)).toMatchObject({ code: "godot_error", hint: expect.stringMatching(/compatible/i) });
     } finally { await malformed.close(); }
     const failure = new GodotMcpError("not_connected", "Godot editor is not connected.", "Open Godot and enable the plugin.");
     const offline = await harness(vi.fn().mockRejectedValue(failure));
     try {
       const result = await offline.client.callTool({ name: "godot_api_search", arguments: { query: "mesh" } });
-      expect(result).toMatchObject({ isError: true, structuredContent: { code: "not_connected", hint: expect.stringMatching(/open Godot/i) } });
+      expect(result.isError).toBe(true); expect(errorPayload(result)).toMatchObject({ code: "not_connected", hint: expect.stringMatching(/open Godot/i) });
     } finally { await offline.close(); }
   });
 });

@@ -2,6 +2,18 @@
 config/name="Godot Control MCP Smoke"
 run/main_scene="res://test_scene.tscn"
 
+[display]
+window/size/viewport_width=320
+window/size/viewport_height=180
+window/size/window_width_override=320
+window/size/window_height_override=180
+
+[input]
+phase5_jump={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"physical_keycode":32,"unicode":32)]
+}
+
 [editor_plugins]
 enabled=PackedStringArray("res://addons/godot_control_mcp/plugin.cfg")
 
