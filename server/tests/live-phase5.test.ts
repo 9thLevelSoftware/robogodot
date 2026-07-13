@@ -89,7 +89,7 @@ liveDescribe("Phase 5 public MCP runtime and attach-only DAP acceptance", () => 
     const h = await harness(); let sessionId: string | undefined, pid: number | undefined, primary: unknown;
     try {
       await call(h.client, "godot_scene_open", { path: "res://phase5/main.tscn", discardUnsaved: true });
-      const launch = await call<any>(h.client, "godot_debug_launch", { scene: "res://phase5/main.tscn", timeoutMs: 20_000 }); sessionId = launch.sessionId; pid = launch.pid; expect(launch.state).toBe("debug_ready");
+      const launch = await call<any>(h.client, "godot_debug_launch", { scene: "res://phase5/main.tscn", initialBreakpoints: [{ path: "phase5/runtime_fixture.gd", lines: [14] }], timeoutMs: 20_000 }); sessionId = launch.sessionId; pid = launch.pid; expect(launch.state).toBe("debug_ready");
       const set = await call<any>(h.client, "godot_debug_set_breakpoints", { sessionId, path: "phase5/runtime_fixture.gd", lines: [14] }); expect(set.breakpoints).toEqual([expect.objectContaining({ verified: true, line: 14 })]);
       await expect.poll(async () => JSON.stringify(await call(h.client, "godot_run_output", { sessionId, since: 0, limit: 500 })), { timeout: 10_000 }).toContain("PHASE5_READY");
       await call(h.client, "godot_runtime_input", { sessionId, kind: "action", action: "phase5_jump", mode: "press_release", holdMs: 100 });
