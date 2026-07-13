@@ -1,6 +1,7 @@
 extends SceneTree
 
 const Manifest = preload("bridge_manifest.gd")
+const RuntimeBridge = preload("runtime_bridge.gd")
 const CONFIG_FLAG := "--mcp-runtime-config"
 
 func _initialize() -> void:
@@ -23,9 +24,13 @@ func _launch() -> void:
 	root.add_child(scene)
 	_install_bridge_nodes(scene, config)
 
-func _install_bridge_nodes(_scene: Node, _config: Dictionary) -> void:
-	# Task 4 installs authenticated bridge nodes at this child-only seam.
-	pass
+func _install_bridge_nodes(scene: Node, config: Dictionary) -> void:
+	var bridge := RuntimeBridge.new()
+	bridge.name = "RuntimeBridge"
+	root.add_child(bridge)
+	var runtime_config := config.duplicate(true)
+	runtime_config.sessionRoot = ProjectSettings.globalize_path("user://.mcp").path_join(config.sessionId).simplify_path()
+	bridge.setup(runtime_config, scene)
 
 func _config_path(args: PackedStringArray) -> String:
 	if args.count(CONFIG_FLAG) != 1: return ""

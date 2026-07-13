@@ -41,6 +41,7 @@ try {
   if (await readFile(externalConfig, "utf8") !== '{"external":true}') throw new Error("runtime launcher touched an external config path");
   await rm(externalConfig, { force: true });
   await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/phase_5_bootstrap_smoke.gd")], { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" }, "PASS phase 5 authenticated bridge bootstrap", /(?:SCRIPT ERROR|Compile Error)/);
+  await run(["--headless", "--path", root, "--script", "tests/godot/phase_5_runtime_bridge_smoke.gd"], process.env, "PASS phase 5 locked runtime bridge", /(?:SCRIPT ERROR|Compile Error)/);
   await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/phase_3_edit_controller_smoke.gd")], { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" }, "PASS phase 3 edit controller foundation");
   await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/phase_3_node_smoke.gd")], { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" }, "PASS phase 3 undoable node tools");
   await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/phase_3_scene_smoke.gd")], { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" }, "PASS phase 3 scene lifecycle");
