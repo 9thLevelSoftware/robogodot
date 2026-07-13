@@ -45,6 +45,9 @@ describe("runtime bridge protocol", () => {
     expect(() => plainJson("x".repeat(8193))).toThrow(/string/i);
     expect(() => plainJson(Array.from({ length: 501 }))).toThrow(/array/i);
     expect(() => plainJson(Object.fromEntries(Array.from({ length: 501 }, (_, i) => [`k${i}`, i])))).toThrow(/keys/i);
+    let arrayReads = 0; const accessor = [1]; Object.defineProperty(accessor, "0", { enumerable: true, get() { arrayReads++; return 1; } });
+    expect(() => plainJson(accessor)).toThrow(/data property/i); expect(arrayReads).toBe(0);
+    expect(() => plainJson(new Proxy([], { getOwnPropertyDescriptor() { throw new Error("array trap"); } }))).toThrow(/bridge result/i);
   });
 });
 
@@ -80,6 +83,23 @@ describe("RuntimeBridgeClient", () => {
     expect([a, b]).toEqual(["socket", "socket"]); expect(bridge.connections).toBe(1); await client.close(); await bridge.close();
     const forged = await MockRuntimeBridge.socket({ sessionId: SESSION, token: TOKEN, forgedAck: true }); const bad = new RuntimeBridgeClient();
     expect(await bad.connect(await fixture(forged.port))).toBe("file"); await bad.close(); await forged.close();
+  });
+
+  it("keeps file fallback usable when the server proof arrives after the shared deadline", async () => {
+    const provisional = await fixture(1);
+    const bridge = await MockRuntimeBridge.socket({ sessionId: SESSION, token: TOKEN, sessionRoot: provisional.sessionRoot, ackDelayMs: 80 });
+    const config = { ...provisional, args: ["--script", "x", "--", "--mcp-runtime-config", provisional.args[4]!] } as const;
+    const stored = JSON.parse(await (await import("node:fs/promises")).readFile(config.args[4], "utf8")); stored.preferredPort = bridge.port; await writeFile(config.args[4], JSON.stringify(stored));
+    const client = new RuntimeBridgeClient({ handshakeTimeoutMs: 25 }); expect(await client.connect(config)).toBe("file");
+    await expect(client.request(SESSION, "runtime.scene_tree", {}, 1000)).resolves.toEqual({ ok: true });
+    expect(bridge.confirmations).toBe(0); expect(bridge.requests).toHaveLength(1); await client.close(); await bridge.close();
+  });
+
+  it("normalizes complete request params without invoking getters or toJSON before publication", async () => {
+    const bridge = await MockRuntimeBridge.socket({ sessionId: SESSION, token: TOKEN }); const client = new RuntimeBridgeClient(); await client.connect(await fixture(bridge.port));
+    let invoked = 0; const params = Object.defineProperties({}, { value: { enumerable: true, get() { invoked++; return 1; } }, toJSON: { enumerable: false, value() { invoked++; return {}; } } });
+    await expect(client.request(SESSION, "runtime.scene_tree", params, 1000)).rejects.toThrow(/data property/i);
+    expect(invoked).toBe(0); expect(bridge.requests).toHaveLength(0); expect((client as any).nextId).toBe(1); await client.close(); await bridge.close();
   });
 
   it("issues MAX_SAFE_INTEGER once and rejects before mutating exhausted state", async () => {

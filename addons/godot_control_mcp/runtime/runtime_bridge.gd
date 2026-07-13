@@ -16,6 +16,8 @@ var _socket_authenticated := false
 var _socket_expected := -1
 var _socket_body := PackedByteArray()
 var _transport := ""
+var _pending_client_nonce := ""
+var _pending_server_nonce := ""
 
 func setup(value: Dictionary, runtime_scene: Node) -> void:
 	config = value.duplicate(true); scene = runtime_scene
@@ -31,7 +33,7 @@ func _process(_delta: float) -> void:
 	if directory == null: return
 	var names := directory.get_files(); names.sort()
 	for name in names:
-		if name.begins_with("req-") and name.ends_with(".json"):
+		if _artifact_id(name, "req-", ".json") > 0:
 			_process_file(name); return # exactly one sequential main-thread request
 
 func _poll_socket() -> void:
@@ -56,12 +58,15 @@ func _poll_socket() -> void:
 func _process_socket_message(parsed: Variant) -> void:
 	if not parsed is Dictionary: _drop_peer(); return
 	if not _socket_authenticated:
-		var nonce: Variant = parsed.get("clientNonce"); var supplied: Variant = parsed.get("clientProof")
-		if parsed.get("type") != "hello" or parsed.get("version") != config.protocolVersion or parsed.get("sessionId") != config.sessionId or not nonce is String or not _valid_nonce(nonce) or not supplied is String or not _fixed_equal(supplied, _proof("robogodot-client-v1", [nonce])): _drop_peer(); return
-		_socket_authenticated = true
-		_transport = "socket"
-		var server_nonce := Crypto.new().generate_random_bytes(32).hex_encode()
-		_send_socket({"type":"hello_ack", "version":config.protocolVersion, "sessionId":config.sessionId, "clientNonce":nonce, "serverNonce":server_nonce, "serverProof":_proof("robogodot-server-v1", [nonce, server_nonce])})
+		if _pending_client_nonce.is_empty():
+			var nonce: Variant = parsed.get("clientNonce"); var supplied: Variant = parsed.get("clientProof")
+			if parsed.get("type") != "hello" or parsed.get("version") != config.protocolVersion or parsed.get("sessionId") != config.sessionId or not nonce is String or not _valid_nonce(nonce) or not supplied is String or not _fixed_equal(supplied, _proof("robogodot-client-v1", [nonce])): _drop_peer(); return
+			_pending_client_nonce = nonce; _pending_server_nonce = Crypto.new().generate_random_bytes(32).hex_encode()
+			_send_socket({"type":"hello_ack", "version":config.protocolVersion, "sessionId":config.sessionId, "clientNonce":nonce, "serverNonce":_pending_server_nonce, "serverProof":_proof("robogodot-server-v1", [nonce, _pending_server_nonce])})
+			return
+		var confirmation: Variant = parsed.get("confirmation")
+		if parsed.get("type") != "hello_confirm" or parsed.get("version") != config.protocolVersion or parsed.get("sessionId") != config.sessionId or parsed.get("clientNonce") != _pending_client_nonce or parsed.get("serverNonce") != _pending_server_nonce or not confirmation is String or not _fixed_equal(confirmation, _proof("robogodot-confirm-v1", [_pending_client_nonce, _pending_server_nonce])): _drop_peer(); return
+		_socket_authenticated = true; _transport = "socket"
 		return
 	if not _authenticated(parsed): return
 	var id: int = int(parsed.id)
@@ -78,16 +83,19 @@ func _send_socket(value: Dictionary) -> void:
 
 func _drop_peer() -> void:
 	if _peer != null: _peer.disconnect_from_host()
-	_peer = null; _socket_authenticated = false; _socket_expected = -1; _socket_body.clear()
+	_peer = null; _socket_authenticated = false; _pending_client_nonce = ""; _pending_server_nonce = ""; _socket_expected = -1; _socket_body.clear()
 
 func _process_file(name: String) -> void:
 	if _transport == "socket": return
+	var filename_id := _artifact_id(name, "req-", ".json")
+	if filename_id < 1: return
 	var path: String = config.sessionRoot.path_join(name)
 	var directory := DirAccess.open(config.sessionRoot)
 	if directory == null or directory.is_link(name): return
 	if FileAccess.get_size(path) <= 0 or FileAccess.get_size(path) > MAX_JSON: return
-	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path)); DirAccess.remove_absolute(path)
-	if not parsed is Dictionary or not _authenticated(parsed): return
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not parsed is Dictionary or not _authenticated(parsed) or int(parsed.id) != filename_id: return
+	DirAccess.remove_absolute(path)
 	if _transport.is_empty(): _transport = "file"; _server.stop(); _drop_peer()
 	var id: int = int(parsed.id)
 	if id <= _last_id: return
@@ -137,4 +145,31 @@ func cleanup() -> void:
 	if _input_bridge != null: _input_bridge.release_all()
 	_drop_peer(); _server.stop()
 	for name in DirAccess.get_files_at(config.sessionRoot):
-		if name.begins_with("req-") or name.begins_with("resp-") or name.begins_with(".req-") or name.begins_with(".resp-"): DirAccess.remove_absolute(config.sessionRoot.path_join(name))
+		if _owned_artifact(name): DirAccess.remove_absolute(config.sessionRoot.path_join(name))
+
+func _exit_tree() -> void:
+	cleanup()
+
+func _artifact_id(name: String, prefix: String, suffix: String) -> int:
+	if not name.begins_with(prefix) or not name.ends_with(suffix): return -1
+	var digits := name.substr(prefix.length(), name.length() - prefix.length() - suffix.length())
+	if digits.is_empty() or digits.length() > 16 or digits.begins_with("0"): return -1
+	for character in digits:
+		if character not in "0123456789": return -1
+	var value := digits.to_int()
+	return value if value > 0 and value <= 9007199254740991 else -1
+
+func _owned_artifact(name: String) -> bool:
+	if _artifact_id(name, "req-", ".json") > 0 or _artifact_id(name, "resp-", ".json") > 0: return true
+	for prefix in [".req-", ".resp-"]:
+		if name.begins_with(prefix) and name.ends_with(".tmp"):
+			var middle := name.substr(prefix.length(), name.length() - prefix.length() - 4); var split := middle.rfind("-")
+			if split < 1: continue
+			var nonce := middle.substr(split + 1); var id_name := "req-%s.json" % middle.substr(0, split)
+			if nonce.length() == 32 and _valid_nonce_half(nonce) and _artifact_id(id_name, "req-", ".json") > 0: return true
+	return false
+
+func _valid_nonce_half(value: String) -> bool:
+	for character in value:
+		if character not in "0123456789abcdef": return false
+	return true

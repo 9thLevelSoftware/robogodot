@@ -35,9 +35,15 @@ export function plainJson(value: unknown): unknown {
     if (typeof input !== "object") throw new Error("Invalid bridge result.");
     if (seen.has(input)) throw new Error("Runtime bridge result contains a cycle."); seen.add(input);
     try {
-      if (Array.isArray(input)) { if (input.length > 500) throw new Error("Runtime bridge array exceeds bound."); return input.map(item => visit(item, depth + 1)); }
       let descriptors: PropertyDescriptorMap;
       try { descriptors = Object.getOwnPropertyDescriptors(input); } catch { throw new Error("Invalid bridge result object."); }
+      if (Array.isArray(input)) {
+        const lengthDescriptor = descriptors.length; if (!lengthDescriptor || !("value" in lengthDescriptor) || !Number.isInteger(lengthDescriptor.value) || lengthDescriptor.value < 0 || lengthDescriptor.value > 500) throw new Error("Runtime bridge array exceeds bound.");
+        const length = lengthDescriptor.value as number; const allowed = new Set(["length", ...Array.from({ length }, (_, index) => String(index))]); if (Object.keys(descriptors).some(key => !allowed.has(key))) throw new Error("Runtime bridge array properties are invalid.");
+        const output = new Array<unknown>(length);
+        for (let index = 0; index < length; index++) { const descriptor = descriptors[String(index)]; if (!descriptor) { output[index] = null; continue; } if (!("value" in descriptor)) throw new Error("Runtime bridge accepts data property values only."); output[index] = visit(descriptor.value, depth + 1); }
+        return output;
+      }
       const keys = Object.keys(descriptors); if (keys.length > 500) throw new Error("Runtime bridge object keys exceed bound.");
       const output: Record<string, unknown> = Object.create(null);
       for (const key of keys) { const descriptor = descriptors[key]!; if (!("value" in descriptor)) throw new Error("Runtime bridge accepts data property values only."); if (descriptor.enumerable) output[key] = visit(descriptor.value, depth + 1); }

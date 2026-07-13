@@ -12,6 +12,7 @@ interface Pending { resolve(value: unknown): void; reject(error: Error): void; t
 export class RuntimeBridgeClient {
   private transport: Transport | undefined; private socket: Socket | undefined; private secret: SecretConfig | undefined; private config: BridgeLaunchConfig | undefined;
   private nextId = 1; private exhausted = false; private connectPromise: Promise<Transport> | undefined; private published = false; private closed = false; private filePending = 0; private readonly pending = new Map<number, Pending>(); private decoder = new FrameDecoder();
+  constructor(private readonly options: { handshakeTimeoutMs?: number } = {}) {}
 
   async connect(config: BridgeLaunchConfig): Promise<Transport> {
     if (this.transport) return this.transport; if (this.connectPromise) return this.connectPromise; if (this.closed) throw new Error("Runtime bridge is closed.");
@@ -33,9 +34,10 @@ export class RuntimeBridgeClient {
     if (!method.startsWith("runtime.") || Buffer.byteLength(method) > 128) throw new Error("Invalid runtime bridge method.");
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5000) throw new Error("Invalid runtime bridge deadline.");
     if (this.pending.size + this.filePending >= 32) throw new Error("Runtime bridge pending request limit reached.");
+    const normalizedParams = plainJson(params);
     if (this.exhausted || !Number.isSafeInteger(this.nextId)) throw new Error("Runtime bridge request ID exhausted.");
     const id = this.nextId; if (id === Number.MAX_SAFE_INTEGER) this.exhausted = true; else this.nextId++;
-    const request = { type: "request", version: this.secret.protocolVersion, sessionId, token: this.secret.token, id, method, params };
+    const request = plainJson({ type: "request", version: this.secret.protocolVersion, sessionId, token: this.secret.token, id, method, params: normalizedParams }) as Record<string, unknown>;
     const bytes = Buffer.from(JSON.stringify(request)); if (bytes.length > MAX_JSON_BYTES) throw new Error("Runtime bridge request exceeds bound.");
     this.published = true;
     if (this.transport === "file") { this.filePending++; try { return await this.fileRequest<T>(id, request, Date.now() + timeoutMs); } finally { this.filePending--; } }
@@ -52,12 +54,12 @@ export class RuntimeBridgeClient {
   }
 
   private async connectSocket(secret: SecretConfig): Promise<void> {
-    const socket = new Socket(); this.socket = socket; const deadline = Date.now() + 3000; const clientNonce = randomBytes(32).toString("hex");
+    const socket = new Socket(); this.socket = socket; const deadline = Date.now() + (this.options.handshakeTimeoutMs ?? 3000); const clientNonce = randomBytes(32).toString("hex");
     await new Promise<void>((resolve, reject) => {
       let settled = false; const finish = (error?: Error) => { if (settled) return; settled = true; clearTimeout(timer); socket.removeListener("error", fail); socket.removeListener("close", closed); socket.removeListener("data", data); error ? reject(error) : resolve(); };
       const fail = () => finish(new Error("Runtime bridge socket handshake failed.")); const closed = () => finish(new Error("Runtime bridge socket closed during handshake."));
       const timer = setTimeout(() => finish(new Error("Runtime bridge handshake deadline exceeded.")), Math.max(1, deadline - Date.now()));
-      const data = (chunk: Buffer) => { try { for (const raw of this.decoder.push(Buffer.from(chunk))) { const value = raw as Record<string, unknown>; const serverNonce = value.serverNonce; const serverProof = value.serverProof; if (value.type !== "hello_ack" || value.version !== secret.protocolVersion || value.sessionId !== secret.sessionId || value.clientNonce !== clientNonce || typeof serverNonce !== "string" || !/^[a-f0-9]{64}$/.test(serverNonce) || typeof serverProof !== "string" || !fixedProof(serverProof, proof(secret.token, "robogodot-server-v1", secret.sessionId, secret.protocolVersion, clientNonce, serverNonce))) throw new Error("Invalid runtime bridge mutual proof."); finish(); } } catch (e) { finish(e as Error); } };
+      const data = (chunk: Buffer) => { try { for (const raw of this.decoder.push(Buffer.from(chunk))) { const value = raw as Record<string, unknown>; const serverNonce = value.serverNonce; const serverProof = value.serverProof; if (value.type !== "hello_ack" || value.version !== secret.protocolVersion || value.sessionId !== secret.sessionId || value.clientNonce !== clientNonce || typeof serverNonce !== "string" || !/^[a-f0-9]{64}$/.test(serverNonce) || typeof serverProof !== "string" || !fixedProof(serverProof, proof(secret.token, "robogodot-server-v1", secret.sessionId, secret.protocolVersion, clientNonce, serverNonce))) throw new Error("Invalid runtime bridge mutual proof."); socket.write(encodeFrame({ type: "hello_confirm", version: secret.protocolVersion, sessionId: secret.sessionId, clientNonce, serverNonce, confirmation: proof(secret.token, "robogodot-confirm-v1", secret.sessionId, secret.protocolVersion, clientNonce, serverNonce) }), error => finish(error ? new Error("Runtime bridge confirmation failed.") : undefined)); } } catch (e) { finish(e as Error); } };
       socket.once("error", fail); socket.once("close", closed); socket.on("data", data); socket.connect(secret.preferredPort, "127.0.0.1", () => socket.write(encodeFrame({ type: "hello", version: secret.protocolVersion, sessionId: secret.sessionId, clientNonce, clientProof: proof(secret.token, "robogodot-client-v1", secret.sessionId, secret.protocolVersion, clientNonce) })));
     });
     socket.removeAllListeners(); socket.setTimeout(0); socket.on("data", data => this.onData(Buffer.from(data))); socket.on("error", () => void this.close());

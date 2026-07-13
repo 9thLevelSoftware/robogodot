@@ -64,3 +64,28 @@ Status: complete
 - The installed headless Godot uses the dummy renderer, so authenticated `runtime.screenshot` proves its bounded unavailable-readback response; the same smoke separately exercises the exact production PNG publication path with a real encoded 8x6 image. Live non-headless viewport readback remains environment-gated.
 - Automated tests do not yet inject every reviewed filesystem race (junction replacement during every poll, forced Godot rename/flush failures) or a delayed socket acknowledgement arriving after fallback. Repeated identity checks and transport locks are implemented, but these specific fault injections remain coverage gaps.
 - Key/mouse validation and delayed release share the generation-owned release implementation with the action path, but the real Godot smoke asserts actual Input state only for actions.
+
+## Re-review correction pass
+
+- Added a distinct authenticated `hello_confirm` message after server-proof verification. The runtime remains transport-undecided and continues file polling after sending its proof; it locks socket only after fixed-time verification of the confirmation. The client uses one shared three-second deadline and owns/destroys the provisional socket on delayed/lost proof before selecting file fallback.
+- Normalized the complete request before serialization, sizing, ID mutation, or publication. Array normalization now obtains guarded own descriptors, validates the own data `length`, accepts only bounded indexed data descriptors, represents holes as null, and never calls accessors, `toJSON`, array iteration methods, or proxy traps.
+- Made every action/key/mouse press generation-owned, including indefinite action presses and zero-duration key/mouse presses. Explicit release forgets the held record; timed release, explicit cleanup, `InputBridge._exit_tree`, and `RuntimeBridge._exit_tree` release each remaining record once. Cleanup remains idempotent.
+- Runtime file polling now accepts only canonical positive-safe-integer `req-<id>.json` names whose body ID matches. Cleanup recognizes only exact request/response names and exact 32-hex temporary-file grammar, preserving unrelated prefix-like files.
+
+### Re-review TDD evidence
+
+- RED: accessor arrays were read by `.map`, proxied arrays escaped bounded descriptor handling, hostile request params invoked a getter through `JSON.stringify`, and delayed server proof still selected socket. GREEN: focused tests prove zero invocations/publications, unchanged request ID after rejection, and delayed proof falling back to a usable file bridge with zero confirmations.
+- RED: synchronous bridge removal left an indefinite action pressed because only timed events were stored in `_held`. GREEN: every press is now stored with a stable signature/release value, and the real Godot smoke proves removal from the tree synchronously releases it.
+- The real smoke additionally publishes a body-ID-mismatched canonical request and verifies no response, then proves exact owned files are removed while three prefix-like foreign files survive two cleanup calls.
+
+### Fresh re-review verification
+
+- `cd server && npm test -- --run tests/runtime-bridge-client.test.ts`: PASS, 1 file / 10 tests.
+- `cd server && npm run typecheck`: PASS.
+- `cd server && npm run build`: PASS.
+- `cd server && npm test -- --run --hookTimeout=30000`: PASS, 34 files passed / 3 skipped; 374 tests passed / 4 skipped.
+- `$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; node tests/godot/run-smoke.mjs`: PASS, including `PASS phase 5 authenticated bridge bootstrap` and `PASS phase 5 locked runtime bridge`.
+
+### Re-review residual concern
+
+- TCP delivery acknowledgement cannot provide distributed common knowledge that the runtime processed the final confirmation. The client selects socket only after the OS accepts the authenticated confirmation write; if the provisional socket fails or the server proof misses the shared deadline, it is destroyed before file fallback and the runtime has not locked. No request is replayed after publication.
