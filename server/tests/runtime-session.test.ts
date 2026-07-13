@@ -78,6 +78,19 @@ describe("RuntimeSessionCoordinator", () => {
     vi.useRealTimers();
   });
 
+  it("keeps the process and bridge active when DAP attachment degrades", async () => {
+    let status: any = { state: "disconnected", stoppedGeneration: 0 }; const dapClose = vi.fn();
+    const dap = { get status() { return status; }, attach: vi.fn().mockImplementation(async () => { status = { state: "degraded", stoppedGeneration: 0, degradation: { mode: "process_plus_bridge", dapAvailable: false, reason: "capability unavailable" } }; throw new Error("capability unavailable"); }), setBreakpoints: vi.fn(), continue: vi.fn(), step: vi.fn(), stack: vi.fn(), inspect: vi.fn(), close: dapClose };
+    const managed = processView(); const runner = { start: vi.fn().mockResolvedValue(managed), stop: vi.fn().mockResolvedValue({ childId: "child", graceful: true, forced: false }), stopCurrent: vi.fn() };
+    const bridge = { request: vi.fn().mockResolvedValue({ nodes: [], truncated: false }), close: vi.fn() }; const prepared = { process: options, connect: vi.fn().mockResolvedValue({ attachment: bridge, root: "root", transport: "socket" }), close: vi.fn() };
+    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, dapFactory: () => dap as any, sessionId: () => "e".repeat(32) });
+    const failure = await coordinator.integratedLaunch("debug", async () => prepared, { host: "127.0.0.1", port: 6006, timeoutMs: 1000 }).catch(error => error);
+    expect(failure).toMatchObject({ code: "not_connected", data: { sessionId: "e".repeat(32), state: "running", bridgeTransport: "socket", degradation: { mode: "process_plus_bridge", dapAvailable: false } } });
+    expect(coordinator.state).toBe("running"); expect(runner.stop).not.toHaveBeenCalled(); expect(bridge.close).not.toHaveBeenCalled(); expect(dapClose).not.toHaveBeenCalled();
+    await expect(coordinator.sceneTree("e".repeat(32), 8)).resolves.toMatchObject({ sessionId: "e".repeat(32), nodes: [] }); await expect(coordinator.debugStack("e".repeat(32))).rejects.toMatchObject({ code: "not_connected", data: { mode: "process_plus_bridge" } });
+    await coordinator.stop("e".repeat(32)); expect(dapClose).toHaveBeenCalledOnce(); expect(bridge.close).toHaveBeenCalledOnce(); expect(runner.stop).toHaveBeenCalledWith("child");
+  });
+
   it("retains a bridge that connects after natural exit for explicit retryable cleanup", async () => {
     vi.useFakeTimers();
     try {

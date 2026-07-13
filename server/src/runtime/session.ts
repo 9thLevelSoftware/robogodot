@@ -237,8 +237,10 @@ export class RuntimeSessionCoordinator {
             if (this.owned !== owned || owned.state !== "running" || !owned.process?.running) { await Promise.resolve(dap.close()).catch(() => undefined); throw new Error("Runtime launch ended before DAP attachment completed."); }
             break;
           } catch (error) {
+            const remaining = deadline! - Date.now(); const retryable = /not_running|isn't one/i.test(error instanceof Error ? error.message : "") && remaining > 50;
+            if (!retryable && remaining > 0 && dap.status.state === "degraded" && owned.process?.running && owned.bridge) { owned.state = "running"; throw degradedDap(owned, dap.status); }
             try { await Promise.resolve(dap.close()); if (owned.dap === dap) owned.dap = undefined; } catch (closeError) { throw new AggregateError([error, closeError], error instanceof Error ? error.message : "DAP attachment failed."); }
-            if (!/not_running|isn't one/i.test(error instanceof Error ? error.message : "") || deadline! - Date.now() <= 50) throw error;
+            if (!retryable) throw error;
             await new Promise(resolve => setTimeout(resolve, Math.min(50, Math.max(1, deadline! - Date.now()))));
           }
         }
@@ -247,6 +249,7 @@ export class RuntimeSessionCoordinator {
       return snapshot(owned);
     } catch (error) {
       if (owned.lateCleanupPending) { owned.state = "failed"; throw error; }
+      if (owned.state === "running" && owned.process?.running && owned.bridge && owned.dap?.status.state === "degraded") throw error;
       if (this.owned === owned && owned.state !== "failed") { try { await this.stop(owned.id); } catch (cleanupError) { throw new AggregateError([error, cleanupError], error instanceof Error ? error.message : "Runtime launch failed."); } }
       throw error;
     }
@@ -294,7 +297,7 @@ export class RuntimeSessionCoordinator {
     return owned;
   }
 
-  private getDebug(id: string): OwnedSession { const owned = this.getOwned(id, ["debug_ready"]); if (!owned.process?.running) throw invalidSession(); if (!owned.dap || owned.dap.status.state === "degraded" || owned.dap.status.state === "exited" || owned.dap.status.state === "disconnected") throw new GodotMcpError("not_connected", "Godot debug adapter session is unavailable.", "Stop this runtime and launch a new managed debug session.", owned.dap?.status.degradation); return owned; }
+  private getDebug(id: string): OwnedSession { const owned = this.getOwned(id, ["running", "debug_ready"]); if (!owned.process?.running) throw invalidSession(); if (!owned.dap || owned.state !== "debug_ready" || owned.dap.status.state === "degraded" || owned.dap.status.state === "exited" || owned.dap.status.state === "disconnected") throw new GodotMcpError("not_connected", "Godot debug adapter session is unavailable.", "Use runtime bridge tools with this active session or stop it before launching another debug session.", owned.dap?.status.degradation); return owned; }
   private async prepareInitialBreakpoints(groups: RuntimeDebugAttach["initialBreakpoints"]): Promise<DapBreakpointGroup[] | undefined> { if (!groups) return undefined; return Promise.all(groups.map(async group => { const path = await this.containedSource(group.path); return { source: { path, name: basename(path), checksums: [] }, breakpoints: group.lines.map(line => ({ line })) }; })); }
   private async containedSource(path: string): Promise<string> {
     if (!this.projectPath || isAbsolute(path) || path.includes("\\") || path.split("/").some(part => part === "" || part === "." || part === "..")) throw new GodotMcpError("invalid_args", "Debug source path is outside the configured project.", "Pass a contained project-relative .gd path.");
@@ -319,6 +322,7 @@ function snapshot(owned: OwnedSession): RuntimeSessionSnapshot {
 }
 function invalidSession() { return new GodotMcpError("invalid_args", "Unknown, stale, or unavailable runtime session.", "Pass the active session ID and retry only while that session is running."); }
 function runtimeError(message: string, hint: string) { return new GodotMcpError("godot_error", message, hint); }
+function degradedDap(owned: OwnedSession, status: DapClientStatus) { return new GodotMcpError("not_connected", "Godot debug adapter attachment failed; the process and runtime bridge remain active.", "Use the returned sessionId with runtime bridge, output, or stop tools.", Object.freeze({ sessionId: owned.id, state: "running", pid: owned.process!.pid, ...(owned.bridgeTransport ? { bridgeTransport: owned.bridgeTransport } : {}), ...(status.degradation ? { degradation: status.degradation } : {}) })); }
 async function cleanup(value: RuntimeLifecycle | undefined, failures: unknown[]): Promise<boolean> { if (!value) return true; try { await value.close(); return true; } catch (error) { failures.push(error); return false; } }
 function optionalOwn(value: unknown, key: string): unknown { if (!value || typeof value !== "object") return undefined; let descriptor: PropertyDescriptor | undefined; try { descriptor = Object.getOwnPropertyDescriptor(value, key); } catch { throw invalidBridge(); } if (!descriptor) return undefined; if (!("value" in descriptor)) throw invalidBridge(); return descriptor.value; }
 function normalizeBreakpoint(value: unknown): Readonly<Record<string, unknown>> {
