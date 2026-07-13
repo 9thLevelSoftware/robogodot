@@ -14,6 +14,17 @@ export class RuntimeBridgeClient {
   private nextId = 1; private exhausted = false; private connectPromise: Promise<Transport> | undefined; private published = false; private closed = false; private filePending = 0; private readonly pending = new Map<number, Pending>(); private decoder = new FrameDecoder();
   constructor(private readonly options: { handshakeTimeoutMs?: number } = {}) {}
 
+  async prepare(config: BridgeLaunchConfig): Promise<void> {
+    if (this.closed) throw new Error("Runtime bridge is closed.");
+    if (this.secret) {
+      if (this.secret.sessionId !== config.sessionId || this.config?.args[4] !== config.args[4]) throw new Error("Runtime bridge config is already prepared for another session.");
+      return;
+    }
+    const path = config.args[4]; if (!path) throw new Error("Runtime bridge config path is missing.");
+    const raw = await readFile(path); if (raw.length > 32_768) throw new Error("Runtime bridge config exceeds bound.");
+    const value = JSON.parse(raw.toString("utf8")) as SecretConfig; validateSecret(value, config.sessionId); this.secret = value; this.config = config;
+  }
+
   async connect(config: BridgeLaunchConfig): Promise<Transport> {
     if (this.transport) return this.transport; if (this.connectPromise) return this.connectPromise; if (this.closed) throw new Error("Runtime bridge is closed.");
     const attempt = this.connectOnce(config); this.connectPromise = attempt;
@@ -21,9 +32,7 @@ export class RuntimeBridgeClient {
   }
 
   private async connectOnce(config: BridgeLaunchConfig): Promise<Transport> {
-    const path = config.args[4]; if (!path) throw new Error("Runtime bridge config path is missing.");
-    const raw = await readFile(path); if (raw.length > 32_768) throw new Error("Runtime bridge config exceeds bound.");
-    const value = JSON.parse(raw.toString("utf8")) as SecretConfig; validateSecret(value, config.sessionId); this.secret = value; this.config = config;
+    await this.prepare(config); const value = this.secret!;
     try { await this.connectSocket(value); this.transport = "socket"; }
     catch { this.socket?.destroy(); this.socket = undefined; this.decoder = new FrameDecoder(); if (this.published) throw new Error("Runtime bridge transport is locked."); this.transport = "file"; }
     return this.transport;
@@ -80,7 +89,10 @@ export class RuntimeBridgeClient {
     const root = await this.canonicalFileRoot(); const final = join(root, `req-${id}.json`); const temp = join(root, `.req-${id}-${randomBytes(16).toString("hex")}.tmp`); const response = join(root, `resp-${id}.json`);
     const body = JSON.stringify(request); let handle;
     try {
-      handle = await open(temp, "wx", 0o600); await handle.writeFile(body, "utf8"); await handle.sync(); await handle.close(); handle = undefined; await this.canonicalFileRoot(); await link(temp, final); await unlink(temp); const published = await lstat(final); if (!published.isFile() || published.isSymbolicLink() || published.nlink !== 1) throw new Error("Runtime bridge request publication identity failed.");
+      handle = await open(temp, "wx", 0o600); await handle.writeFile(body, "utf8"); await handle.sync(); await handle.close(); handle = undefined;
+      const source = await lstat(temp); if (!source.isFile() || source.isSymbolicLink() || source.nlink !== 1 || await realpath(temp) !== resolve(temp)) throw new Error("Runtime bridge request source identity failed.");
+      await this.canonicalFileRoot(); await link(temp, final); const linked = await lstat(temp); if (!linked.isFile() || linked.isSymbolicLink() || linked.dev !== source.dev || linked.ino !== source.ino || linked.nlink < 1 || linked.nlink > 2) throw new Error("Runtime bridge request source identity changed.");
+      await verifyPublishedRequest(final, linked); await unlink(temp);
       let delay = 5;
       while (Date.now() < deadline) { if (this.closed) throw new Error("Runtime bridge closed."); await this.canonicalFileRoot(); const value = await readStableResponse(response); if (value) { if (value.type !== "response" || value.id !== id || value.version !== this.secret!.protocolVersion || value.sessionId !== this.secret!.sessionId) { await unlink(response).catch(() => {}); continue; } await unlink(response); if (typeof value.error === "string") throw new Error(value.error); return plainJson(value.result) as T; } await new Promise(r => setTimeout(r, Math.min(delay, Math.max(1, deadline - Date.now())))); delay = Math.min(50, delay * 2); }
       throw new Error("Runtime bridge request deadline exceeded.");
@@ -92,6 +104,13 @@ export class RuntimeBridgeClient {
     for (const path of [config.userRoot, resolve(config.userRoot, ".mcp"), config.sessionRoot]) { const stat = await lstat(path); if (!stat.isDirectory() || stat.isSymbolicLink() || await realpath(path) !== resolve(path)) throw new Error("Runtime bridge file root identity changed."); }
     return expected;
   }
+}
+
+export async function verifyPublishedRequest(path: string, source: Awaited<ReturnType<typeof lstat>>): Promise<void> {
+  try {
+    const published = await lstat(path);
+    if (!published.isFile() || published.isSymbolicLink() || published.dev !== source.dev || published.ino !== source.ino || published.nlink < 1 || published.nlink > 2) throw new Error("Runtime bridge request publication identity failed.");
+  } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
 }
 
 function proof(token: string, label: string, session: string, version: number, ...fields: string[]) { return createHmac("sha256", token).update([label, session, String(version), ...fields].join("\n")).digest("hex"); }

@@ -71,7 +71,7 @@ export class DapClient {
       for (const group of options.initialBreakpoints ?? []) await this.setBreakpointsInternal(group.source, group.breakpoints, remaining(deadline));
       this.requireCapability("supportsConfigurationDoneRequest");
       await transport.request("configurationDone", {}, remaining(deadline));
-      this.currentState = "ready";
+      if (this.currentState === "attaching") this.currentState = "ready";
       return this.readyState();
     } catch (error) {
       initializedWait?.cancel(unavailable()); if (this.initializedWait === initializedWait) this.initializedWait = undefined;
@@ -81,8 +81,8 @@ export class DapClient {
     } finally { if (this.attachAbort === controller) this.attachAbort = undefined; }
   }
   async setBreakpoints(source: DapBreakpointGroup["source"], breakpoints: DapBreakpointGroup["breakpoints"]): Promise<unknown> { this.requireConfigured(); return this.setBreakpointsInternal(source, breakpoints); }
-  async continue(thread: number | DapReference): Promise<unknown> { this.requireStopped(); const threadId = this.referenceId(thread, "thread"); this.invalidateStop(); return this.transport!.request("continue", { threadId }); }
-  async step(kind: "over" | "into", thread: number | DapReference): Promise<unknown> { this.requireStopped(); const threadId = this.referenceId(thread, "thread"); this.invalidateStop(); return this.transport!.request(kind === "over" ? "next" : "stepIn", { threadId }); }
+  async continue(thread: number | DapReference): Promise<unknown> { return this.resume("continue", thread); }
+  async step(kind: "over" | "into", thread: number | DapReference): Promise<unknown> { return this.resume(kind === "over" ? "next" : "stepIn", thread); }
   async stack(thread?: number | DapReference, startFrame = 0): Promise<{ threads: readonly unknown[]; frames: readonly unknown[]; totalFrames?: number; truncated: boolean }> {
     const generation = this.captureStop(); const threadId = thread === undefined ? undefined : this.referenceId(thread, "thread"); validateOffset(startFrame);
     const threadsResponse = await this.transport!.request("threads", {}); this.assertStop(generation); const rawThreads = copyRecord(threadsResponse, "threads response"); const allThreads = array(rawThreads.threads, "threads");
@@ -90,7 +90,7 @@ export class DapClient {
     if (selected === undefined) return Object.freeze({ threads: Object.freeze(threads), frames: Object.freeze([]), truncated: allThreads.length > MAX_THREADS });
     validateId(selected, "thread"); const stackResponse = await this.transport!.request("stackTrace", { threadId: selected, startFrame, levels: MAX_FRAMES }); this.assertStop(generation); const rawStack = copyRecord(stackResponse, "stack response"); const allFrames = array(rawStack.stackFrames, "stackFrames");
     const frames = allFrames.slice(0, MAX_FRAMES).map((item) => this.normalizeFrame(item, generation)); const totalFrames = optionalNonnegative(rawStack.totalFrames);
-    return Object.freeze({ threads: Object.freeze(threads), frames: Object.freeze(frames), ...(totalFrames === undefined ? {} : { totalFrames }), truncated: allThreads.length > MAX_THREADS || allFrames.length > MAX_FRAMES || (totalFrames !== undefined && startFrame + frames.length < totalFrames) });
+    return Object.freeze({ threads: Object.freeze(threads), frames: Object.freeze(frames), ...(totalFrames === undefined ? {} : { totalFrames }), truncated: allThreads.length > MAX_THREADS || (totalFrames === undefined ? frames.length === MAX_FRAMES : startFrame + frames.length < totalFrames) });
   }
   async inspect(frame: DapReference, variables?: DapReference, start = 0): Promise<any> {
     this.validateReference(frame); const generation = this.captureStop(); validateOffset(start);
@@ -114,6 +114,7 @@ export class DapClient {
   async close(): Promise<void> { if (this.currentState === "ready" || this.currentState === "stopped") return this.disconnect(); const transport = this.transport; if (transport) await this.closeTransport(transport); }
 
   private async setBreakpointsInternal(source: DapBreakpointGroup["source"], breakpoints: DapBreakpointGroup["breakpoints"], timeoutMs?: number): Promise<unknown> { if (typeof source.path !== "string" || byteLength(source.path) > MAX_TEXT_BYTES || breakpoints.length > MAX_VARIABLES) throw new GodotMcpError("invalid_args", "Invalid DAP breakpoint request.", "Use one bounded source path and at most 500 source breakpoints."); return this.transport!.request("setBreakpoints", { source, breakpoints }, timeoutMs); }
+  private async resume(command: "continue" | "next" | "stepIn", thread: number | DapReference): Promise<unknown> { const generation = this.captureStop(); const threadId = this.referenceId(thread, "thread"); const result = await this.transport!.request(command, { threadId }); if (this.currentState === "stopped" && this.stoppedGeneration === generation) this.invalidateStop(); return result; }
   private readyState(): DapReadyState { return Object.freeze({ state: "ready", runtimeSessionId: this.options!.runtimeSessionId, process: this.options!.process, ...(this.options!.bridge ? { bridge: this.options!.bridge } : {}), capabilities: this.capabilities!, stoppedGeneration: this.stoppedGeneration }); }
   private readonly handleEvent = (event: DapEvent): void => { if (event.event === "stopped") { this.stoppedGeneration++; this.currentState = "stopped"; } else if (event.event === "continued") this.invalidateStop(); else if (event.event === "exited" || event.event === "terminated") { this.invalidateStop(); this.currentState = "exited"; } for (const listener of this.listeners) try { listener(event); } catch { /* isolate subscribers */ } };
   private handleClosed(error: Error): void { if (this.closing) return; this.transport = undefined; this.invalidateStop(); if (this.currentState !== "exited") this.markDegraded(error.message); }

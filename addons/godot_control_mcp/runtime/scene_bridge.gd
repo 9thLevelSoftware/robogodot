@@ -22,7 +22,11 @@ func _walk(base: Node, node: Node, depth: int, maximum: int, output: Array, visi
 func get_node(root: Node, params: Dictionary) -> Dictionary:
 	var path: Variant = params.get("path", "")
 	if not path is String or path.length() > 1024: return {"error":"invalid path"}
-	var node := root.get_node_or_null(NodePath(path))
+	var node_path := NodePath(path)
+	if node_path.is_absolute(): return {"error":"invalid path"}
+	for index in node_path.get_name_count():
+		if String(node_path.get_name(index)) == "..": return {"error":"invalid path"}
+	var node := root.get_node_or_null(node_path)
 	if node == null: return {"error":"node not found"}
 	var requested: Variant = params.get("properties", [])
 	if not requested is Array or requested.size() > MAX_PROPERTIES: return {"error":"invalid properties"}

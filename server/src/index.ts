@@ -103,6 +103,7 @@ export function createRuntimeService(config: ReturnType<typeof resolveConfig>, e
       const debugPort = Number(process.env.GODOT_REMOTE_DEBUG_PORT ?? 6007);
       const prepared = await bootstrap.prepare({ sessionId, token, protocolVersion: 1, preferredPort: runtimePort, ...(scene ? { scene } : {}) });
       const client = new RuntimeBridgeClient();
+      try { await client.prepare(prepared); } catch (error) { await bootstrap.cleanup(prepared); throw error; }
       let artifactsClosed = false;
       const closeArtifacts = async () => { if (artifactsClosed) return; await bootstrap.cleanup(prepared); artifactsClosed = true; };
       return {

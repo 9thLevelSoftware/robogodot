@@ -1,8 +1,8 @@
-import { link, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, mkdtemp, realpath, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readStableResponse, RuntimeBridgeClient } from "../src/runtime/bridge-client.js";
+import { readStableResponse, RuntimeBridgeClient, verifyPublishedRequest } from "../src/runtime/bridge-client.js";
 import { encodeFrame, FrameDecoder, plainJson } from "../src/runtime/bridge-protocol.js";
 import { MockRuntimeBridge } from "./mock-runtime-bridge.js";
 
@@ -57,6 +57,18 @@ describe("runtime bridge protocol", () => {
 });
 
 describe("RuntimeBridgeClient", () => {
+  it("uses the prepared one-shot config after the launcher consumes it", async () => {
+    const bridge = await MockRuntimeBridge.socket({ sessionId: SESSION, token: TOKEN }); const config = await fixture(bridge.port); const client = new RuntimeBridgeClient();
+    await client.prepare(config); await unlink(config.args[4]!); await expect(client.connect(config)).resolves.toBe("socket");
+    await client.close(); await bridge.close();
+  });
+
+  it("accepts a request publication consumed before post-link verification", async () => {
+    const root = await mkdtemp(join(tmpdir(), "robogodot-consumed-")); roots.push(root); const source = join(root, "source.tmp"); const published = join(root, "req-1.json");
+    await writeFile(source, "{}"); await link(source, published); const identity = await lstat(source); await unlink(published);
+    await expect(verifyPublishedRequest(published, identity)).resolves.toBeUndefined();
+  });
+
   it("authenticates a versioned socket and ignores stale, duplicate, and wrong-session replies", async () => {
     const bridge = await MockRuntimeBridge.socket({ sessionId: SESSION, token: TOKEN });
     const client = new RuntimeBridgeClient(); expect(await client.connect(await fixture(bridge.port))).toBe("socket");
