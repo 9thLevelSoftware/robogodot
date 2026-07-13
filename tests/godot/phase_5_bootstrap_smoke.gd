@@ -40,16 +40,30 @@ func _run() -> void:
 	var second_request := request.duplicate(true); second_request.id = 3; second_request.params.sessionId = SECOND_SESSION
 	var second_response := router.dispatch(second_request)
 	_check(second_response.has("result") and Runtime.owned_session_count() == 2, "every prepared session must be tracked")
+	var first_config: String = String(result.get("sessionRoot", "")).path_join("bridge-config-v1.json")
+	var secret_file := FileAccess.open(first_config, FileAccess.WRITE)
+	secret_file.store_string('{"token":"must-be-removed"}')
+	secret_file.close()
+	var second_root: String = canonical_user.path_join(".mcp").path_join(SECOND_SESSION)
+	var unexpected: String = second_root.path_join("foreign.txt")
+	var foreign_file := FileAccess.open(unexpected, FileAccess.WRITE); foreign_file.store_string("leave-me"); foreign_file.close()
+	var replacement: String = second_root.path_join("bridge-config-v1.json")
+	_check(DirAccess.make_dir_absolute(replacement) == OK, "replacement config directory fixture must be created")
 	for bad in [
 		{"sessionId":"../escape", "token":TOKEN, "protocolVersion":1, "preferredPort":19301, "scene":"res://test_scene.tscn"},
 		{"sessionId":"fedcba9876543210fedcba9876543210", "token":"short", "protocolVersion":1, "preferredPort":19301, "scene":"res://test_scene.tscn"},
 		{"sessionId":"fedcba9876543210fedcba9876543210", "token":TOKEN, "protocolVersion":1, "preferredPort":19301, "scene":"res://../escape.tscn"},
 	]:
 		_check(router.dispatch({"jsonrpc":"2.0", "id":2, "method":"runtime.prepare", "params":bad}).has("error"), "invalid traversal/token input must be rejected")
-	_check(Runtime.cleanup_owned_sessions() == OK, "authenticated-session cleanup must attempt every owned session")
-	_check(Runtime.owned_session_count() == 0, "authenticated-session cleanup must clear ownership")
+	_check(Runtime.cleanup_owned_sessions() != OK, "cleanup must fail closed while an owned session has foreign entries")
+	_check(Runtime.owned_session_count() == 1, "failed owned session must remain deduped for retry")
+	_check(not FileAccess.file_exists(first_config), "matching secret config must be removed")
+	_check(FileAccess.get_file_as_string(unexpected) == "leave-me" and DirAccess.dir_exists_absolute(replacement), "foreign file and replacement directory must remain untouched")
+	_check(DirAccess.remove_absolute(unexpected) == OK and DirAccess.remove_absolute(replacement) == OK, "foreign fixtures must be removable by their owner")
+	_check(Runtime.cleanup_owned_sessions() == OK, "later lifecycle cleanup must retry the failed owned session")
+	_check(Runtime.owned_session_count() == 0, "successful retry must clear ownership")
 	_check(Compat.cleanup_runtime_session(SESSION) == OK, "exact session cleanup must be idempotent")
 	_check(not DirAccess.dir_exists_absolute(result.get("sessionRoot", "")), "cleanup must remove only the exact session")
-	_check(not DirAccess.dir_exists_absolute(canonical_user.path_join(".mcp").path_join(SECOND_SESSION)), "cleanup must remove the second exact owned session")
+	_check(not DirAccess.dir_exists_absolute(second_root), "cleanup retry must remove the empty second exact owned session")
 	print("PASS phase 5 authenticated bridge bootstrap")
 	quit(0 if failures.is_empty() else 1)

@@ -37,10 +37,13 @@ static func owned_session_count() -> int:
 static func cleanup_owned_sessions() -> Error:
 	var first_error := OK
 	var owned := _owned_sessions.duplicate()
-	_owned_sessions.clear()
+	var retry: Array[String] = []
 	for session_id in owned:
 		var error := Compat.cleanup_runtime_session(session_id)
-		if error != OK and first_error == OK: first_error = error
+		if error != OK:
+			if first_error == OK: first_error = error
+			if session_id not in retry: retry.append(session_id)
+	_owned_sessions = retry
 	return first_error
 
 static func _valid_session_id(value: String) -> bool:

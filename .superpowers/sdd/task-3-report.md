@@ -53,3 +53,11 @@ Status: complete
 ### Portable residual risk
 
 Filesystem pathname validation and removal remain multi-step operations. Node identity revalidation substantially narrows swaps but cannot make the full recursive pathname walk atomic across all supported platforms. Godot exposes link and file metadata checks but not portable directory-handle-relative unlink or stable inode handles; its size/mtime identity check is weaker. Windows mode `0600` is not an ACL guarantee, so the secret remains protected primarily by the user-owned canonical session directory. A native handle-relative/ACL implementation should be considered in Phase 6/7; this report does not claim the portable race is eliminated.
+
+## Final cleanup-boundary correction
+
+- The Godot plugin no longer recursively traverses or deletes runtime session contents. It preflights an owned session as empty or containing only the exact `bridge-config-v1.json`, rejects links/replacement directories/unexpected entries, revalidates the config path plus size/mtime immediately before deleting that file, and removes only subsequently verified-empty session and `.mcp` directories.
+- Recursive artifact cleanup is exclusively the Node `RuntimeBootstrap` responsibility, where stable `dev`/`ino` checks are available. The plugin guarantee is intentionally narrower: best-effort secret-file cleanup and empty-directory cleanup only.
+- Owned session IDs are removed from lifecycle tracking only after cleanup succeeds or absence is confirmed. Failures remain deduplicated for retry; cleanup still attempts every owned ID and plugin warnings expose only numeric error codes.
+- RED evidence: the prior plugin cleanup removed a foreign file and replacement directory, returned success, and discarded failed ownership. GREEN evidence: the Phase 5 smoke proves a matching secret config is removed, foreign entries and an ordinary replacement directory remain untouched, the failed ID remains owned, and a later cleanup retry succeeds after the foreign owner removes those entries.
+- Verification: focused server bootstrap 14/14 PASS; full server 364 passed / 4 skipped using `--hookTimeout=30000` after the default 10-second `mcp-stdio` build hook timed out twice under load; typecheck/build PASS; full named Godot smoke PASS with the Phase 5 marker.

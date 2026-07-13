@@ -144,43 +144,36 @@ static func cleanup_runtime_session(session_id: String) -> Error:
 	if session_id.length() != 32 or "/" in session_id or "\\" in session_id or "." in session_id: return ERR_INVALID_PARAMETER
 	var session_root := canonical_user_root().path_join(".mcp").path_join(session_id).simplify_path()
 	if not DirAccess.dir_exists_absolute(session_root): return OK
-	var approved := DirAccess.open(session_root.get_base_dir())
-	if approved == null or approved.is_link(session_id): return ERR_INVALID_PARAMETER
-	var entries: Array[Dictionary] = []
-	var snapshot_error := _snapshot_runtime_tree(session_root, session_root.get_base_dir(), entries)
-	if snapshot_error != OK: return snapshot_error
-	for index in range(entries.size() - 1, -1, -1):
-		if not _runtime_root_chain_safe(session_id): return ERR_INVALID_DATA
-		var entry: Dictionary = entries[index]
-		var parent := DirAccess.open(String(entry.path).get_base_dir())
-		if parent == null or parent.is_link(String(entry.path).get_file()): return ERR_INVALID_DATA
-		if entry.directory:
-			if not DirAccess.dir_exists_absolute(entry.path): return ERR_INVALID_DATA
-		else:
-			if not FileAccess.file_exists(entry.path) or FileAccess.get_size(entry.path) != entry.size or FileAccess.get_modified_time(entry.path) != entry.modified: return ERR_INVALID_DATA
-		var error := DirAccess.remove_absolute(entry.path)
-		if error != OK: return error
-	return OK
-
-static func _snapshot_runtime_tree(path: String, approved_root: String, entries: Array[Dictionary]) -> Error:
-	if path.simplify_path() != path or not path.begins_with(approved_root + "/") and not path.begins_with(approved_root + "\\"): return ERR_INVALID_PARAMETER
-	var parent := DirAccess.open(path.get_base_dir())
-	if parent == null or parent.is_link(path.get_file()): return ERR_INVALID_DATA
-	var is_directory := DirAccess.dir_exists_absolute(path)
-	if not is_directory and not FileAccess.file_exists(path): return ERR_DOES_NOT_EXIST
-	entries.append({"path":path, "directory":is_directory, "size":FileAccess.get_size(path) if not is_directory else 0, "modified":FileAccess.get_modified_time(path)})
-	if not is_directory: return OK
-	var directory := DirAccess.open(path)
+	if not _runtime_root_chain_safe(session_id): return ERR_INVALID_DATA
+	var directory := DirAccess.open(session_root)
 	if directory == null: return DirAccess.get_open_error()
-	directory.list_dir_begin()
-	var name := directory.get_next()
-	while not name.is_empty():
-		if name != "." and name != "..":
-			if directory.is_link(name): directory.list_dir_end(); return ERR_INVALID_DATA
-			var error := _snapshot_runtime_tree(path.path_join(name), approved_root, entries)
-			if error != OK: directory.list_dir_end(); return error
-		name = directory.get_next()
-	directory.list_dir_end()
+	var entries := directory.get_files()
+	var directories := directory.get_directories()
+	var config_name := "bridge-config-v1.json"
+	if not directories.is_empty() or entries.size() > 1 or entries.size() == 1 and entries[0] != config_name: return ERR_INVALID_DATA
+	if entries.size() == 1:
+		if directory.is_link(config_name): return ERR_INVALID_DATA
+		var config_path := session_root.path_join(config_name)
+		var size := FileAccess.get_size(config_path)
+		var modified := FileAccess.get_modified_time(config_path)
+		if size <= 0 or size > 32768: return ERR_INVALID_DATA
+		if not _runtime_root_chain_safe(session_id): return ERR_INVALID_DATA
+		var current := DirAccess.open(session_root)
+		if current == null or current.is_link(config_name) or not FileAccess.file_exists(config_path) or DirAccess.dir_exists_absolute(config_path): return ERR_INVALID_DATA
+		if FileAccess.get_size(config_path) != size or FileAccess.get_modified_time(config_path) != modified: return ERR_INVALID_DATA
+		var config_error := DirAccess.remove_absolute(config_path)
+		if config_error != OK: return config_error
+	if not _runtime_root_chain_safe(session_id): return ERR_INVALID_DATA
+	directory = DirAccess.open(session_root)
+	if directory == null or not directory.get_files().is_empty() or not directory.get_directories().is_empty(): return ERR_INVALID_DATA
+	var session_error := DirAccess.remove_absolute(session_root)
+	if session_error != OK: return session_error
+	var approved_root := canonical_user_root().path_join(".mcp").simplify_path()
+	var approved := DirAccess.open(approved_root)
+	if approved != null and approved.get_files().is_empty() and approved.get_directories().is_empty():
+		var user := DirAccess.open(canonical_user_root())
+		if user == null or user.is_link(".mcp"): return ERR_INVALID_DATA
+		return DirAccess.remove_absolute(approved_root)
 	return OK
 
 static func _runtime_root_chain_safe(session_id: String) -> bool:
