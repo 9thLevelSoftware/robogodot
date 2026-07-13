@@ -8,6 +8,7 @@ const Core = preload("commands/core.gd")
 const Exec = preload("commands/exec.gd")
 const Introspection = preload("commands/introspection.gd")
 const Edit = preload("commands/edit.gd")
+const Runtime = preload("commands/runtime.gd")
 const ResourceHandles = preload("resource_handles.gd")
 var _server: Node
 
@@ -71,6 +72,7 @@ func _enter_tree() -> void:
 	router.register_command("edit.project_setting_get", Edit.project_setting_get)
 	router.register_command("edit.project_setting_set", Edit.project_setting_set)
 	router.register_command("edit.project_setting_list", Edit.project_setting_list)
+	router.register_command("runtime.prepare", Runtime.prepare)
 	_server = Server.new()
 	_server.session_ended.connect(_on_session_ended)
 	add_child(_server)

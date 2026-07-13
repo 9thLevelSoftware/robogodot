@@ -119,6 +119,55 @@ static func canonical_project_path(path: Variant) -> String:
 	var localized := ProjectSettings.localize_path(ProjectSettings.globalize_path(value))
 	return value if localized == value else ""
 
+static func canonical_user_root() -> String:
+	var value := ProjectSettings.globalize_path("user://").simplify_path()
+	return value.trim_suffix("/").trim_suffix("\\")
+
+static func create_runtime_session(session_id: String) -> Dictionary:
+	if session_id.length() != 32 or "/" in session_id or "\\" in session_id or "." in session_id: return {"ok":false, "hint":"Invalid runtime session ID."}
+	var user_root := canonical_user_root()
+	if user_root.is_empty(): return {"ok":false, "hint":"Could not canonicalize user://."}
+	var approved_root := user_root.path_join(".mcp").simplify_path()
+	var user_directory := DirAccess.open(user_root)
+	if user_directory != null and user_directory.is_link(".mcp"): return {"ok":false, "hint":"Runtime storage root may not be a symbolic link."}
+	if not DirAccess.dir_exists_absolute(approved_root):
+		var root_error := DirAccess.make_dir_recursive_absolute(approved_root)
+		if root_error != OK: return {"ok":false, "hint":"Could not create the runtime storage root."}
+	var session_root := approved_root.path_join(session_id).simplify_path()
+	if not session_root.begins_with(approved_root + "/") and not session_root.begins_with(approved_root + "\\"): return {"ok":false, "hint":"Runtime session escaped approved storage."}
+	if DirAccess.dir_exists_absolute(session_root) or FileAccess.file_exists(session_root): return {"ok":false, "hint":"Runtime session already exists."}
+	var error := DirAccess.make_dir_absolute(session_root)
+	if error != OK: return {"ok":false, "hint":"Could not create the runtime session."}
+	return {"ok":true, "user_root":user_root, "session_root":session_root}
+
+static func cleanup_runtime_session(session_id: String) -> Error:
+	if session_id.length() != 32 or "/" in session_id or "\\" in session_id or "." in session_id: return ERR_INVALID_PARAMETER
+	var session_root := canonical_user_root().path_join(".mcp").path_join(session_id).simplify_path()
+	if not DirAccess.dir_exists_absolute(session_root): return OK
+	var approved := DirAccess.open(session_root.get_base_dir())
+	if approved == null or approved.is_link(session_id): return ERR_INVALID_PARAMETER
+	return _remove_directory_exact(session_root)
+
+static func _remove_directory_exact(path: String) -> Error:
+	var directory := DirAccess.open(path)
+	if directory == null: return DirAccess.get_open_error()
+	directory.list_dir_begin()
+	var name := directory.get_next()
+	while not name.is_empty():
+		if name != "." and name != "..":
+			var child := path.path_join(name)
+			var error := _remove_directory_exact(child) if directory.current_is_dir() and not directory.is_link(name) else DirAccess.remove_absolute(child)
+			if error != OK: directory.list_dir_end(); return error
+		name = directory.get_next()
+	directory.list_dir_end()
+	return DirAccess.remove_absolute(path)
+
+static func verified_runtime_resources(launcher: String, bridge: String) -> Dictionary:
+	if launcher != "res://addons/godot_control_mcp/runtime/runtime_launcher.gd" or bridge != "res://addons/godot_control_mcp/runtime/bridge_manifest.gd": return {"ok":false, "hint":"Runtime resource names are not approved."}
+	if not ResourceLoader.exists(launcher, "Script") or not ResourceLoader.load(launcher, "Script", ResourceLoader.CACHE_MODE_IGNORE) is Script: return {"ok":false, "hint":"Runtime launcher resource is unavailable."}
+	if not ResourceLoader.exists(bridge, "Script") or not ResourceLoader.load(bridge, "Script", ResourceLoader.CACHE_MODE_IGNORE) is Script: return {"ok":false, "hint":"Runtime bridge manifest resource is unavailable."}
+	return {"ok":true, "launcher_path":ProjectSettings.globalize_path(launcher).simplify_path(), "bridge_path":ProjectSettings.globalize_path(bridge).simplify_path()}
+
 static func project_settings_save() -> Error:
 	return ProjectSettings.save()
 

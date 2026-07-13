@@ -33,6 +33,7 @@ try {
   await rm(resolve(root, "tests/fixtures/godot_project/addons"), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   await rm(resolve(root, "tests/fixtures/godot_project/.godot"), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   await cp(resolve(root, "addons/godot_control_mcp"), fixtureAddon, { recursive: true });
+  await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/phase_5_bootstrap_smoke.gd")], { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" }, "PASS phase 5 authenticated bridge bootstrap", /(?:SCRIPT ERROR|Compile Error)/);
   await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/phase_3_edit_controller_smoke.gd")], { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" }, "PASS phase 3 edit controller foundation");
   await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/phase_3_node_smoke.gd")], { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" }, "PASS phase 3 undoable node tools");
   await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/phase_3_scene_smoke.gd")], { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" }, "PASS phase 3 scene lifecycle");
