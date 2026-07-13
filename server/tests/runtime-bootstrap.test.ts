@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -82,7 +82,7 @@ describe("RuntimeBootstrap", () => {
 
   it("cleans a partial config write and cleanup is exact and idempotent", async () => {
     const f = await fixture(); const neighbor = join(f.approvedRoot, "fedcba9876543210fedcba9876543210"); await mkdir(neighbor);
-    const bootstrap = new RuntimeBootstrap(f.bridge, { writeConfig: async path => { await writeFile(path, "partial"); throw new Error("disk full"); } });
+    const bootstrap = new RuntimeBootstrap(f.bridge, { publishConfig: async path => { await writeFile(`${path}.tmp-injected`, "partial"); throw new Error("disk full"); } });
     await expect(bootstrap.prepare({ sessionId: SESSION, token: TOKEN, protocolVersion: 1, preferredPort: 9301, scene: SCENE })).rejects.toThrow("disk full");
     await expect(lstat(f.sessionRoot)).rejects.toMatchObject({ code: "ENOENT" });
     expect((await lstat(neighbor)).isDirectory()).toBe(true);
@@ -100,5 +100,24 @@ describe("RuntimeBootstrap", () => {
     await symlink(outside, f.sessionRoot, process.platform === "win32" ? "junction" : "dir");
     await expect(bootstrap.cleanup(config)).rejects.toThrow(/symbolic|canonical/);
     expect(await readFile(join(outside, "keep"), "utf8")).toBe("safe");
+  });
+
+  it("refuses nested links during exact cleanup without touching their targets", async () => {
+    const f = await fixture(); const bootstrap = new RuntimeBootstrap(f.bridge);
+    const config = await bootstrap.prepare({ sessionId: SESSION, token: TOKEN, protocolVersion: 1, preferredPort: 9301, scene: SCENE });
+    const outside = await mkdtemp(join(tmpdir(), "robogodot-nested-outside-")); roots.push(outside);
+    await writeFile(join(outside, "keep"), "safe");
+    await symlink(outside, join(f.sessionRoot, "nested"), process.platform === "win32" ? "junction" : "dir");
+    await expect(bootstrap.cleanup(config)).rejects.toThrow(/symbolic|canonical|link/);
+    expect(await readFile(join(outside, "keep"), "utf8")).toBe("safe");
+    expect((await lstat(f.sessionRoot)).isDirectory()).toBe(true);
+  });
+
+  it("never overwrites a colliding final config and leaves no publication temp", async () => {
+    const f = await fixture(); const final = join(f.sessionRoot, "bridge-config-v1.json");
+    await writeFile(final, "owned-by-someone-else");
+    await expect(new RuntimeBootstrap(f.bridge).prepare({ sessionId: SESSION, token: TOKEN, protocolVersion: 1, preferredPort: 9301, scene: SCENE })).rejects.toThrow();
+    expect(await readFile(final, "utf8")).toBe("owned-by-someone-else");
+    expect((await readdir(f.sessionRoot)).filter(name => name.includes(".tmp"))).toEqual([]);
   });
 });

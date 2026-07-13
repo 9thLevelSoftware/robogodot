@@ -1,4 +1,5 @@
-import { lstat, realpath, rm, writeFile } from "node:fs/promises";
+import { link, lstat, open, readdir, realpath, rmdir, unlink } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const MANIFEST_VERSION = 1;
@@ -25,13 +26,13 @@ export interface BridgeLaunchConfig {
 }
 
 interface PrepareResponse { userRoot: string; sessionRoot: string; manifestVersion: number; launcherPath: string; bridgePath: string }
-interface Dependencies { writeConfig(path: string, contents: string): Promise<void> }
+interface Dependencies { publishConfig(path: string, contents: string): Promise<void> }
 interface BootstrapBridge { call<T>(method: string, params?: unknown, options?: { timeoutMs?: number; maxRequestBytes?: number }): Promise<T> }
 
 export class RuntimeBootstrap {
-  private readonly writeConfig: Dependencies["writeConfig"];
+  private readonly publishConfig: Dependencies["publishConfig"];
   constructor(private readonly bridge: BootstrapBridge, dependencies: Partial<Dependencies> = {}) {
-    this.writeConfig = dependencies.writeConfig ?? ((path, contents) => writeFile(path, contents, { encoding: "utf8", flag: "wx", mode: 0o600 }));
+    this.publishConfig = dependencies.publishConfig ?? publishConfigAtomic;
   }
 
   async prepare(options: RuntimePrepareOptions): Promise<BridgeLaunchConfig> {
@@ -45,10 +46,10 @@ export class RuntimeBootstrap {
       const canonical = await canonicalSession(response, options.sessionId);
       const configPath = join(canonical.sessionRoot, `bridge-config-v${MANIFEST_VERSION}.json`);
       const contents = JSON.stringify({ version: MANIFEST_VERSION, sessionId: options.sessionId, token: options.token, protocolVersion: options.protocolVersion, preferredPort: options.preferredPort, scene: options.scene, launcherResource: LAUNCHER_RESOURCE, bridgeResource: BRIDGE_RESOURCE });
-      await this.writeConfig(configPath, contents);
+      await this.publishConfig(configPath, contents);
       return Object.freeze({ sessionId: options.sessionId, userRoot: canonical.userRoot, sessionRoot: canonical.sessionRoot, manifestVersion: MANIFEST_VERSION, launcherResource: LAUNCHER_RESOURCE, bridgeResource: BRIDGE_RESOURCE, args: Object.freeze(["--script", LAUNCHER_RESOURCE, "--", "--mcp-runtime-config", configPath]) });
     } catch (error) {
-      await cleanupReturnedSession(raw, options.sessionId);
+      if (!(error instanceof ConfigCollisionError)) await cleanupReturnedSession(raw, options.sessionId);
       throw error;
     }
   }
@@ -64,7 +65,7 @@ export class RuntimeBootstrap {
       throw error;
     }
     if (!stat.isDirectory() || stat.isSymbolicLink() || await realpath(exact) !== exact) throw new Error("Runtime cleanup denied a symbolic or non-canonical session directory.");
-    await rm(exact, { recursive: true, force: true });
+    await removeExactTree(approved, exact);
   }
 }
 
@@ -116,6 +117,51 @@ async function cleanupReturnedSession(value: unknown, sessionId: string): Promis
   if (typeof record.userRoot !== "string" || typeof record.sessionRoot !== "string") return;
   try {
     const canonical = await canonicalSession({ userRoot: record.userRoot, sessionRoot: record.sessionRoot, manifestVersion: 0, launcherPath: "", bridgePath: "" }, sessionId);
-    await rm(canonical.sessionRoot, { recursive: true, force: true });
+    await removeExactTree(join(canonical.userRoot, ".mcp"), canonical.sessionRoot);
   } catch { /* never broaden cleanup beyond a proven exact canonical session */ }
+}
+
+class ConfigCollisionError extends Error {}
+
+async function publishConfigAtomic(path: string, contents: string): Promise<void> {
+  if (Buffer.byteLength(contents, "utf8") > 32_768) throw new Error("Runtime config exceeds its publication bound.");
+  const temp = `${path}.tmp-${randomBytes(12).toString("hex")}`;
+  let handle;
+  try {
+    handle = await open(temp, "wx", 0o600);
+    await handle.writeFile(contents, "utf8");
+    await handle.sync();
+    try { await handle.chmod(0o600); } catch (error) { if (process.platform !== "win32") throw error; }
+    await handle.close(); handle = undefined;
+    try { await link(temp, path); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new ConfigCollisionError("Runtime config already exists."); throw error; }
+  } finally {
+    if (handle) await handle.close().catch(() => {});
+    await unlink(temp).catch(error => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; });
+  }
+}
+
+interface TreeEntry { path: string; directory: boolean; dev: number; ino: number; canonical: string }
+async function removeExactTree(approved: string, root: string): Promise<void> {
+  const entries: TreeEntry[] = [];
+  await snapshot(root);
+  for (const entry of entries.reverse()) {
+    await assertRootChain(approved, root);
+    const stat = await lstat(entry.path);
+    if (stat.isSymbolicLink() || stat.dev !== entry.dev || stat.ino !== entry.ino || await realpath(entry.path) !== entry.canonical) throw new Error("Runtime cleanup identity changed.");
+    if (entry.directory) await rmdir(entry.path); else await unlink(entry.path);
+  }
+  async function snapshot(path: string): Promise<void> {
+    const stat = await lstat(path); const canonical = await realpath(path);
+    if (stat.isSymbolicLink() || !contained(approved, canonical) || canonical !== resolve(path)) throw new Error("Runtime cleanup denied a symbolic link or canonical escape.");
+    entries.push({ path, directory: stat.isDirectory(), dev: stat.dev, ino: stat.ino, canonical });
+    if (stat.isDirectory()) for (const name of await readdir(path)) await snapshot(join(path, name));
+  }
+}
+
+async function assertRootChain(approved: string, root: string): Promise<void> {
+  for (const path of [approved, root]) {
+    const stat = await lstat(path);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || await realpath(path) !== resolve(path)) throw new Error("Runtime cleanup root identity changed.");
+  }
 }

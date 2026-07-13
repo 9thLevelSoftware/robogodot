@@ -33,3 +33,23 @@ Status: complete
 - Confirmed no OS-name/platform guessing.
 - Confirmed prior authenticated transport and session behavior remains covered by the full server and Godot suites.
 - Existing Godot smoke output still includes known Mono SDK/leak diagnostics; the runner exits 0 and the required Phase 5 marker is present.
+
+## Security hardening follow-up
+
+- Launcher argv paths are rejected before open/delete unless they are the exact canonical `user://.mcp/<32hex>/bridge-config-v1.json` shape with link-free root/session/config components. Invalid external files are left untouched.
+- Launcher config validation now binds the JSON session ID to its parent directory, rechecks file size/mtime and link status before consumption, and canonicalizes scenes through `globalize_path`/`localize_path` before requiring and loading a `PackedScene`.
+- Every successful `runtime.prepare` is tracked as owned by the current authenticated transport lifecycle. Disconnect and plugin exit attempt cleanup for every exact owned session and clear ownership without crossing sessions.
+- Server config publication now uses an exclusive bounded temporary file, same-handle write, fsync, mode tightening, close, and an atomic no-replace hard-link publication followed by temp unlink. Collision and failure paths do not overwrite an existing final config and remove temporary artifacts.
+- Server recursive cleanup now snapshots only link-free canonical entries, records filesystem identity, and revalidates root containment and entry identity immediately before each unlink/rmdir. Plugin cleanup similarly preflights links and repeats path/link plus available size/mtime checks before each removal.
+
+### Follow-up TDD and verification
+
+- RED: nested-session junction cleanup resolved; config collision removed a pre-existing final; injected partial publication was not routed through the new seam; external launcher invocation deleted its invalid file; owned-session lifecycle APIs were absent.
+- GREEN: focused bootstrap suite PASS, 14/14.
+- Fresh full server suite PASS: 33 files passed / 3 skipped; 364 tests passed / 4 skipped.
+- Fresh TypeScript typecheck and build PASS.
+- Fresh named Godot smoke PASS with `PASS phase 5 authenticated bridge bootstrap`; the external config invocation was rejected and the file remained byte-for-byte unchanged.
+
+### Portable residual risk
+
+Filesystem pathname validation and removal remain multi-step operations. Node identity revalidation substantially narrows swaps but cannot make the full recursive pathname walk atomic across all supported platforms. Godot exposes link and file metadata checks but not portable directory-handle-relative unlink or stable inode handles; its size/mtime identity check is weaker. Windows mode `0600` is not an ACL guarantee, so the secret remains protected primarily by the user-owned canonical session directory. A native handle-relative/ACL implementation should be considered in Phase 6/7; this report does not claim the portable race is eliminated.

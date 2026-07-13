@@ -93,7 +93,11 @@ func _exit_tree() -> void:
 			_server.session_ended.disconnect(_on_session_ended)
 		_server.queue_free()
 	_server = null
+	var cleanup_error := Runtime.cleanup_owned_sessions()
+	if cleanup_error != OK: push_warning("Godot Control MCP could not clean one or more exact runtime sessions (error %d)." % cleanup_error)
 	ResourceHandles.clear()
 
 func _on_session_ended() -> void:
+	var cleanup_error := Runtime.cleanup_owned_sessions()
+	if cleanup_error != OK: push_warning("Godot Control MCP could not clean one or more exact runtime sessions (error %d)." % cleanup_error)
 	ResourceHandles.clear()

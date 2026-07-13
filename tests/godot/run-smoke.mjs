@@ -1,4 +1,4 @@
-import { cp, rm } from "node:fs/promises";
+import { cp, readFile, rm, writeFile } from "node:fs/promises";
 import { once } from "node:events";
 import { createServer } from "node:net";
 import { dirname, resolve } from "node:path";
@@ -33,6 +33,13 @@ try {
   await rm(resolve(root, "tests/fixtures/godot_project/addons"), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   await rm(resolve(root, "tests/fixtures/godot_project/.godot"), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   await cp(resolve(root, "addons/godot_control_mcp"), fixtureAddon, { recursive: true });
+  const externalConfig = resolve(root, "tests/fixtures/godot_project/external-runtime-config.json");
+  await writeFile(externalConfig, '{"external":true}', "utf8");
+  try {
+    await run(["--headless", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", "res://addons/godot_control_mcp/runtime/runtime_launcher.gd", "--", "--mcp-runtime-config", externalConfig]);
+  } catch { /* invalid external config must make the launcher fail */ }
+  if (await readFile(externalConfig, "utf8") !== '{"external":true}') throw new Error("runtime launcher touched an external config path");
+  await rm(externalConfig, { force: true });
   await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/phase_5_bootstrap_smoke.gd")], { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" }, "PASS phase 5 authenticated bridge bootstrap", /(?:SCRIPT ERROR|Compile Error)/);
   await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/phase_3_edit_controller_smoke.gd")], { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" }, "PASS phase 3 edit controller foundation");
   await run(["--headless", "--editor", "--path", resolve(root, "tests/fixtures/godot_project"), "--script", resolve(root, "tests/godot/phase_3_node_smoke.gd")], { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" }, "PASS phase 3 undoable node tools");

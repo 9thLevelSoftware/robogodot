@@ -6,6 +6,7 @@ const Manifest = preload("../runtime/bridge_manifest.gd")
 const FIELDS := ["preferredPort", "protocolVersion", "scene", "sessionId", "token"]
 const MIN_TOKEN_BYTES := 32
 const MAX_TOKEN_BYTES := 256
+static var _owned_sessions: Array[String] = []
 
 static func prepare(params: Dictionary) -> Dictionary:
 	var keys := params.keys()
@@ -27,7 +28,20 @@ static func prepare(params: Dictionary) -> Dictionary:
 	if not resources.ok: return _failure(resources.hint)
 	var session := Compat.create_runtime_session(session_id)
 	if not session.ok: return _failure(session.hint)
+	_owned_sessions.append(session_id)
 	return {"ok":true, "result":{"userRoot":session.user_root, "sessionRoot":session.session_root, "manifestVersion":Manifest.MANIFEST_VERSION, "launcherPath":resources.launcher_path, "bridgePath":resources.bridge_path}}
+
+static func owned_session_count() -> int:
+	return _owned_sessions.size()
+
+static func cleanup_owned_sessions() -> Error:
+	var first_error := OK
+	var owned := _owned_sessions.duplicate()
+	_owned_sessions.clear()
+	for session_id in owned:
+		var error := Compat.cleanup_runtime_session(session_id)
+		if error != OK and first_error == OK: first_error = error
+	return first_error
 
 static func _valid_session_id(value: String) -> bool:
 	if value.length() != 32 or value.to_utf8_buffer().size() != 32: return false

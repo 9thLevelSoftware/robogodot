@@ -146,21 +146,48 @@ static func cleanup_runtime_session(session_id: String) -> Error:
 	if not DirAccess.dir_exists_absolute(session_root): return OK
 	var approved := DirAccess.open(session_root.get_base_dir())
 	if approved == null or approved.is_link(session_id): return ERR_INVALID_PARAMETER
-	return _remove_directory_exact(session_root)
+	var entries: Array[Dictionary] = []
+	var snapshot_error := _snapshot_runtime_tree(session_root, session_root.get_base_dir(), entries)
+	if snapshot_error != OK: return snapshot_error
+	for index in range(entries.size() - 1, -1, -1):
+		if not _runtime_root_chain_safe(session_id): return ERR_INVALID_DATA
+		var entry: Dictionary = entries[index]
+		var parent := DirAccess.open(String(entry.path).get_base_dir())
+		if parent == null or parent.is_link(String(entry.path).get_file()): return ERR_INVALID_DATA
+		if entry.directory:
+			if not DirAccess.dir_exists_absolute(entry.path): return ERR_INVALID_DATA
+		else:
+			if not FileAccess.file_exists(entry.path) or FileAccess.get_size(entry.path) != entry.size or FileAccess.get_modified_time(entry.path) != entry.modified: return ERR_INVALID_DATA
+		var error := DirAccess.remove_absolute(entry.path)
+		if error != OK: return error
+	return OK
 
-static func _remove_directory_exact(path: String) -> Error:
+static func _snapshot_runtime_tree(path: String, approved_root: String, entries: Array[Dictionary]) -> Error:
+	if path.simplify_path() != path or not path.begins_with(approved_root + "/") and not path.begins_with(approved_root + "\\"): return ERR_INVALID_PARAMETER
+	var parent := DirAccess.open(path.get_base_dir())
+	if parent == null or parent.is_link(path.get_file()): return ERR_INVALID_DATA
+	var is_directory := DirAccess.dir_exists_absolute(path)
+	if not is_directory and not FileAccess.file_exists(path): return ERR_DOES_NOT_EXIST
+	entries.append({"path":path, "directory":is_directory, "size":FileAccess.get_size(path) if not is_directory else 0, "modified":FileAccess.get_modified_time(path)})
+	if not is_directory: return OK
 	var directory := DirAccess.open(path)
 	if directory == null: return DirAccess.get_open_error()
 	directory.list_dir_begin()
 	var name := directory.get_next()
 	while not name.is_empty():
 		if name != "." and name != "..":
-			var child := path.path_join(name)
-			var error := _remove_directory_exact(child) if directory.current_is_dir() and not directory.is_link(name) else DirAccess.remove_absolute(child)
+			if directory.is_link(name): directory.list_dir_end(); return ERR_INVALID_DATA
+			var error := _snapshot_runtime_tree(path.path_join(name), approved_root, entries)
 			if error != OK: directory.list_dir_end(); return error
 		name = directory.get_next()
 	directory.list_dir_end()
-	return DirAccess.remove_absolute(path)
+	return OK
+
+static func _runtime_root_chain_safe(session_id: String) -> bool:
+	var user_root := canonical_user_root()
+	var user := DirAccess.open(user_root)
+	var approved := DirAccess.open(user_root.path_join(".mcp"))
+	return user != null and approved != null and not user.is_link(".mcp") and not approved.is_link(session_id)
 
 static func verified_runtime_resources(launcher: String, bridge: String) -> Dictionary:
 	if launcher != "res://addons/godot_control_mcp/runtime/runtime_launcher.gd" or bridge != "res://addons/godot_control_mcp/runtime/bridge_manifest.gd": return {"ok":false, "hint":"Runtime resource names are not approved."}

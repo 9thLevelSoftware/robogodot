@@ -5,6 +5,7 @@ const Runtime = preload("../../addons/godot_control_mcp/commands/runtime.gd")
 const Compat = preload("../../addons/godot_control_mcp/godot_compat.gd")
 const TOKEN := "runtime-token-0123456789abcdef-runtime-token-0123456789abcdef"
 const SESSION := "0123456789abcdef0123456789abcdef"
+const SECOND_SESSION := "fedcba9876543210fedcba9876543210"
 var failures: Array[String] = []
 
 func _initialize() -> void:
@@ -32,17 +33,23 @@ func _run() -> void:
 	_check(result.get("bridgePath", "").ends_with("bridge_manifest.gd"), "bridge manifest resource must be verified")
 	_check(not JSON.stringify(response).contains(TOKEN), "RPC result must not return the token")
 	_check(DirAccess.dir_exists_absolute(result.get("sessionRoot", "")), "exact session directory must exist")
+	_check(Runtime.owned_session_count() == 1, "prepared session must be owned by the authenticated lifecycle")
 	_check(not ProjectSettings.has_setting("autoload/GodotControlMcpRuntime"), "bootstrap must not persist an autoload")
 	var duplicate := router.dispatch(request)
 	_check(duplicate.has("error"), "duplicate session must be rejected")
+	var second_request := request.duplicate(true); second_request.id = 3; second_request.params.sessionId = SECOND_SESSION
+	var second_response := router.dispatch(second_request)
+	_check(second_response.has("result") and Runtime.owned_session_count() == 2, "every prepared session must be tracked")
 	for bad in [
 		{"sessionId":"../escape", "token":TOKEN, "protocolVersion":1, "preferredPort":19301, "scene":"res://test_scene.tscn"},
 		{"sessionId":"fedcba9876543210fedcba9876543210", "token":"short", "protocolVersion":1, "preferredPort":19301, "scene":"res://test_scene.tscn"},
 		{"sessionId":"fedcba9876543210fedcba9876543210", "token":TOKEN, "protocolVersion":1, "preferredPort":19301, "scene":"res://../escape.tscn"},
 	]:
 		_check(router.dispatch({"jsonrpc":"2.0", "id":2, "method":"runtime.prepare", "params":bad}).has("error"), "invalid traversal/token input must be rejected")
-	_check(Compat.cleanup_runtime_session(SESSION) == OK, "exact session cleanup must succeed")
+	_check(Runtime.cleanup_owned_sessions() == OK, "authenticated-session cleanup must attempt every owned session")
+	_check(Runtime.owned_session_count() == 0, "authenticated-session cleanup must clear ownership")
 	_check(Compat.cleanup_runtime_session(SESSION) == OK, "exact session cleanup must be idempotent")
 	_check(not DirAccess.dir_exists_absolute(result.get("sessionRoot", "")), "cleanup must remove only the exact session")
+	_check(not DirAccess.dir_exists_absolute(canonical_user.path_join(".mcp").path_join(SECOND_SESSION)), "cleanup must remove the second exact owned session")
 	print("PASS phase 5 authenticated bridge bootstrap")
 	quit(0 if failures.is_empty() else 1)
