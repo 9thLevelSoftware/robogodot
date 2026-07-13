@@ -17,7 +17,7 @@ Phase 5 is complete when one public MCP flow can start the sample game, read kno
 - One `RuntimeSessionCoordinator` controlling one active normal or debug session.
 - A shell-free `ProcessRunner` with exact child ownership, bounded output rings, incremental cursors, exit detection, and graceful/forced stop.
 - A bounded DAP client that attaches to the coordinator-owned debug process.
-- An injected GDScript runtime bridge with authenticated loopback transport and a negotiated sequenced-file fallback.
+- An injected GDScript runtime launcher/bridge with authenticated loopback transport and a negotiated sequenced-file fallback.
 - Live scene-tree, node-property, input, and screenshot operations.
 - Exactly 13 public tools:
   - `godot_run_project`
@@ -95,7 +95,7 @@ Frame IDs, scope IDs, and variable references belong to one stopped event and on
 
 ### RuntimeBridgeBootstrap
 
-Uses the authenticated editor/plugin boundary to obtain the canonical `user://` root and ensure the narrow bridge autoloads are available for the launched project. It passes session credentials and endpoint/fallback configuration to the child without logging or returning the secret. Bootstrap artifacts are versioned, session-scoped, and cleaned during stop.
+Uses the authenticated editor/plugin boundary to obtain the canonical `user://` root and verify the narrow bridge resources. It writes a secret-bearing versioned config only inside the canonical session directory, then starts the child with a fixed `SceneTree` launcher resource and the config path. The launcher loads the validated requested scene and installs bridge nodes only in that child process. It does not edit `project.godot`, register persistent autoloads, or place the token in command-line arguments or public results. Bootstrap artifacts are session-scoped and cleaned during stop.
 
 ### RuntimeBridgeClient
 
@@ -120,7 +120,7 @@ It verifies protocol version, session ID, token, method, parameters, request bou
 
 1. Validate project, optional scene, arguments, mode, editor/bootstrap availability, and safety policy.
 2. Allocate session ID/token and resolve the canonical bridge root through the plugin.
-3. Prepare versioned autoload/bootstrap configuration.
+3. Prepare the versioned launcher/bootstrap configuration.
 4. Start the `ProcessRunner`-owned Godot child.
 5. Negotiate and lock the runtime bridge transport.
 6. For debug mode, connect DAP to the coordinator-owned process and complete attach/configuration.
@@ -270,7 +270,7 @@ The suite skips only when the configured Godot executable is absent. When presen
 
 ## 13. Deliverables
 
-- `RuntimeSessionCoordinator`, `ProcessRunner`, `DapClient`, bridge bootstrap/client, and injected runtime autoloads.
+- `RuntimeSessionCoordinator`, `ProcessRunner`, `DapClient`, bridge bootstrap/client, and the injected runtime launcher/bridge scripts.
 - Exactly 13 bounded public runtime/debug tools.
 - Recorded process, DAP, and bridge fixtures with comprehensive tests.
 - Real Godot sample-game acceptance for run/read/inspect/input/screenshot/debug/stop.
