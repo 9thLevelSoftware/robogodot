@@ -51,13 +51,26 @@ describe("RuntimeSessionCoordinator", () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it("releases failed-session launch blocking when late preparation rejects without artifacts", async () => {
+    vi.useFakeTimers(); try {
+      let rejectLate!: (error: Error) => void; const delayed = new Promise<any>((_, reject) => { rejectLate = reject; });
+      const runner = { start: vi.fn().mockResolvedValue(processView()), stop: vi.fn(), stopCurrent: vi.fn().mockResolvedValue(undefined) };
+      const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, sessionId: () => "d".repeat(32) });
+      const launch = coordinator.integratedLaunch("debug", () => delayed, { host: "127.0.0.1", port: 6006, timeoutMs: 100 });
+      const failure = expect(launch).rejects.toMatchObject({ code: "timeout" }); await vi.advanceTimersByTimeAsync(100); await failure;
+      await expect(coordinator.launch("normal", options)).rejects.toMatchObject({ code: "godot_error" });
+      rejectLate(new Error("prepare rejected late")); await Promise.resolve(); await Promise.resolve();
+      expect(coordinator.state).toBe("idle"); const next = await coordinator.launch("normal", options); await coordinator.stop(next.id);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("enforces the shared deadline during a DAP attach and closes its late resolution", async () => {
     vi.useFakeTimers(); let release!: () => void;
     const attaching = new Promise<void>(resolve => { release = resolve; });
     const dap = { status: { state: "disconnected" }, attach: vi.fn().mockReturnValue(attaching), setBreakpoints: vi.fn(), continue: vi.fn(), step: vi.fn(), stack: vi.fn(), inspect: vi.fn(), close: vi.fn() };
     const runner = { start: vi.fn().mockResolvedValue(processView()), stop: vi.fn().mockResolvedValue({ childId: "child", graceful: true, forced: false }), stopCurrent: vi.fn() };
     const prepared = { process: options, connect: vi.fn().mockResolvedValue({ attachment: { close: vi.fn() }, root: "root", transport: "socket" }), close: vi.fn() };
-    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, dapFactory: () => dap as any } as any);
+    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, dapFactory: () => dap as any, projectPath: resolve("../tests/fixtures/godot_project") } as any);
     const launch = coordinator.integratedLaunch("debug", async () => prepared as any, { host: "127.0.0.1", port: 6006, timeoutMs: 100 });
     const failure = expect(launch).rejects.toMatchObject({ code: "timeout" });
     await vi.advanceTimersByTimeAsync(100); await failure; release(); await Promise.resolve();
@@ -90,6 +103,14 @@ describe("RuntimeSessionCoordinator", () => {
     const result = await coordinator.debugLaunch(options, { host: "127.0.0.1", port: 6006, timeoutMs: 1000 });
     expect(order).toEqual(["process", "dap"]); expect(result.state).toBe("debug_ready"); expect(dap.attach.mock.calls[0][0].timeoutMs).toBeLessThanOrEqual(1000);
     await coordinator.stop(result.id);
+  });
+
+  it("direct debug launch forwards initial breakpoints into attach configuration", async () => {
+    const dap = { status: { state: "ready", stoppedGeneration: 0, capabilities: { supportsConfigurationDoneRequest: true } }, attach: vi.fn().mockResolvedValue({ state: "ready" }), setBreakpoints: vi.fn(), continue: vi.fn(), step: vi.fn(), stack: vi.fn(), inspect: vi.fn(), close: vi.fn() };
+    const runner = { start: vi.fn().mockResolvedValue(processView()), stop: vi.fn().mockResolvedValue({ childId: "child", graceful: true, forced: false }), stopCurrent: vi.fn() };
+    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, dapFactory: () => dap as any, projectPath: resolve("../tests/fixtures/godot_project") } as any);
+    const result = await coordinator.debugLaunch(options, { host: "127.0.0.1", port: 6006, timeoutMs: 1000, initialBreakpoints: [{ path: "phase5/runtime_fixture.gd", lines: [14] }] });
+    expect(dap.attach).toHaveBeenCalledWith(expect.objectContaining({ initialBreakpoints: [{ source: { path: resolve("../tests/fixtures/godot_project/phase5/runtime_fixture.gd"), name: "runtime_fixture.gd" }, breakpoints: [{ line: 14 }] }] })); await coordinator.stop(result.id);
   });
 
   it("bounds the attach stage of the direct debug launch and closes a late adapter", async () => {
@@ -236,5 +257,14 @@ describe("RuntimeSessionCoordinator", () => {
     const runner = { start: vi.fn().mockResolvedValue(processView()), stop: vi.fn().mockRejectedValueOnce(new Error("close denied")).mockResolvedValueOnce({ childId: "child", alreadyStopped: false, graceful: true, forced: false }), stopCurrent: vi.fn() };
     const coordinator = new RuntimeSessionCoordinator({ runner: runner as any }); const session = await coordinator.launch("normal", options);
     await expect(coordinator.close()).rejects.toThrow("close denied"); expect(coordinator.state).toBe("failed"); await expect(coordinator.stop(session.id)).resolves.toMatchObject({ graceful: true });
+  });
+
+  it("rejects every debug operation immediately after exact process exit before monitor polling", async () => {
+    const managed = processView(); const dap = { status: { state: "stopped", stoppedGeneration: 1, capabilities: { supportsConfigurationDoneRequest: true } }, attach: vi.fn().mockResolvedValue({}), setBreakpoints: vi.fn(), continue: vi.fn(), step: vi.fn(), stack: vi.fn(), inspect: vi.fn(), close: vi.fn() };
+    const runner = { start: vi.fn().mockResolvedValue(managed), stop: vi.fn().mockResolvedValue({ childId: "child", alreadyStopped: true, graceful: false, forced: false }), stopCurrent: vi.fn() };
+    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, dapFactory: () => dap as any, projectPath: resolve("../tests/fixtures/godot_project"), monitorMs: 10_000 } as any); const session = await coordinator.debugLaunch(options, { host: "127.0.0.1", port: 6006, timeoutMs: 1000 });
+    Reflect.defineProperty(managed, "running", { value: false }); const ref = { runtimeSessionId: session.id, stoppedGeneration: 1, id: 1 };
+    for (const make of [() => coordinator.debugSetBreakpoints(session.id, "phase5/runtime_fixture.gd", [14]), () => coordinator.debugContinue(session.id, ref), () => coordinator.debugStep(session.id, ref, "over"), () => coordinator.debugStack(session.id), () => coordinator.debugInspect(session.id, ref)]) await expect(make()).rejects.toMatchObject({ code: "invalid_args" });
+    expect(dap.setBreakpoints).not.toHaveBeenCalled(); expect(dap.continue).not.toHaveBeenCalled(); expect(dap.step).not.toHaveBeenCalled(); expect(dap.stack).not.toHaveBeenCalled(); expect(dap.inspect).not.toHaveBeenCalled(); await coordinator.stop(session.id);
   });
 });

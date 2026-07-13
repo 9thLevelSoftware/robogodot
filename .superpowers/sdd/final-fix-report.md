@@ -134,3 +134,21 @@ Date: 2026-07-13
 
 - Godot's GDScript API cannot prove hard-link count. The implemented and documented fallback is authenticated, monotonic, bounded, one-handle consumption with pathname removal before dispatch; Node performs exact link-count checks.
 - The configured Mono binary continues to print the known missing .NET SDK 8.0.28 and teardown leak warnings. Required markers and all smoke/live processes exit 0.
+
+## Narrow re-review correction (2026-07-13)
+
+Four re-review findings were corrected without changing the accepted contracts:
+
+- Every debug operation now checks the exact managed process is still running in `getDebug`, closing the pre-monitor-poll mutation window.
+- Timed-out preparation tracks both late fulfillment and late rejection. Late fulfillment retains/retries failed artifact cleanup; late rejection clears the pending marker and releases an ownership-free failed session without unhandled rejection.
+- Debug-launch normalization requires a capabilities object containing exactly three own data-property booleans. Missing, extra, accessor, proxy, or wrong-typed capability structures fail closed.
+- Direct `RuntimeSessionCoordinator.debugLaunch` canonicalizes and forwards initial breakpoint groups into DAP attach, preserving the existing initialize → attach → initialized → breakpoints → configurationDone ordering.
+
+RED: `npm test -- --run tests/runtime-session.test.ts tests/debug-tools.test.ts tests/dap-client.test.ts` exited 1 with five expected failures: late reject remained blocked, direct launch omitted breakpoints, pre-monitor debug reached DAP, and missing/extra capabilities were accepted. The initial regression also exposed eager promise construction in the test as two unhandled rejections; the test now invokes each operation sequentially.
+
+GREEN:
+
+- Focused runtime/debug/DAP: 3 files, 51/51 passed.
+- Late fulfillment/rejection race subset: 2/2 passed in three consecutive runs.
+- Typecheck/build/full server: exit 0; 38 files passed, 4 skipped; 446 tests passed, 6 skipped.
+- Exact configured Phase 5 live: exit 0; 2/2 passed.

@@ -59,10 +59,11 @@ export function registerDebugTools(server: McpServer, service: DebugToolService)
 function rw(readOnlyHint: boolean, idempotentHint: boolean) { return { readOnlyHint, destructiveHint: false, idempotentHint, openWorldHint: true }; }
 function normalize(value: unknown): Record<string, unknown> { return copy(value, new Set(), 0) as Record<string, unknown>; }
 function normalizeLaunch(value: unknown): Record<string, unknown> {
-  const sessionId = data(value, "sessionId") ?? data(value, "id"); const capabilities = data(value, "capabilities");
-  const output: Record<string, unknown> = { sessionId, mode: data(value, "mode"), state: data(value, "state"), pid: data(value, "pid"), startedAt: data(value, "startedAt"), capabilities: { supportsConfigurationDoneRequest: data(capabilities, "supportsConfigurationDoneRequest") === true, supportsTerminateRequest: data(capabilities, "supportsTerminateRequest") === true, supportsVariablePaging: data(capabilities, "supportsVariablePaging") === true } };
+  const sessionId = data(value, "sessionId") ?? data(value, "id"); const capabilities = normalizedCapabilities(data(value, "capabilities"));
+  const output: Record<string, unknown> = { sessionId, mode: data(value, "mode"), state: data(value, "state"), pid: data(value, "pid"), startedAt: data(value, "startedAt"), capabilities };
   const bridgeTransport = data(value, "bridgeTransport"); if (bridgeTransport !== undefined) output.bridgeTransport = bridgeTransport; return output;
 }
+function normalizedCapabilities(value: unknown): Record<string, boolean> { if (!value || typeof value !== "object" || Array.isArray(value)) throw malformed(); let descriptors: PropertyDescriptorMap; try { descriptors = Object.getOwnPropertyDescriptors(value); } catch { throw malformed(); } const keys = ["supportsConfigurationDoneRequest", "supportsTerminateRequest", "supportsVariablePaging"] as const; if (Object.keys(descriptors).length !== keys.length || keys.some(key => { const descriptor = descriptors[key]; return !descriptor || !("value" in descriptor) || typeof descriptor.value !== "boolean"; })) throw malformed(); return Object.fromEntries(keys.map(key => [key, (descriptors[key] as PropertyDescriptor & { value: boolean }).value])); }
 function data(value: unknown, key: string): unknown { if (!value || typeof value !== "object") return undefined; let descriptor: PropertyDescriptor | undefined; try { descriptor = Object.getOwnPropertyDescriptor(value, key); } catch { throw malformed(); } if (!descriptor) return undefined; if (!("value" in descriptor)) throw malformed(); return descriptor.value; }
 function copy(value: unknown, seen: Set<object>, depth: number): unknown {
   if (depth > 16) throw malformed();

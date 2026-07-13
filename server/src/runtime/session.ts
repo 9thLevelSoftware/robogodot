@@ -4,7 +4,7 @@ import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import { GodotMcpError } from "../errors.js";
 import type { ManagedProcess, ProcessStartOptions, ProcessRunner, StopResult } from "./process.js";
 import type { OutputPage } from "./output-ring.js";
-import { DapClient, type DapAttachOptions, type DapClientStatus, type DapReference } from "./dap-client.js";
+import { DapClient, type DapAttachOptions, type DapBreakpointGroup, type DapClientStatus, type DapReference } from "./dap-client.js";
 
 export type RuntimeMode = "normal" | "debug";
 export type RuntimeSessionState = "idle" | "starting" | "running" | "debug_ready" | "stopping" | "failed";
@@ -57,7 +57,8 @@ export class RuntimeSessionCoordinator {
     const owned = this.getOwned(session.id, ["running"]); const dap = this.dapFactory(); owned.dap = dap;
     try {
       const remaining = deadline - Date.now(); if (remaining <= 0) throw new GodotMcpError("timeout", "Debug launch deadline expired before DAP attachment.", "Increase timeoutMs or verify that the managed Godot process starts promptly.");
-      await beforeDeadline(Promise.resolve(dap.attach({ host: attach.host, port: attach.port, runtimeSessionId: owned.id, process: { pid: owned.process!.pid, startedAt: owned.process!.startedAt }, ...(attach.bridge ? { bridge: attach.bridge } : {}), timeoutMs: remaining })), deadline, () => dap.close());
+      const initialBreakpoints = await this.prepareInitialBreakpoints(attach.initialBreakpoints);
+      await beforeDeadline(Promise.resolve(dap.attach({ host: attach.host, port: attach.port, runtimeSessionId: owned.id, process: { pid: owned.process!.pid, startedAt: owned.process!.startedAt }, ...(attach.bridge ? { bridge: attach.bridge } : {}), ...(initialBreakpoints ? { initialBreakpoints } : {}), timeoutMs: remaining })), deadline, () => dap.close());
       owned.state = "debug_ready"; return snapshot(owned);
     } catch (error) { try { await this.stop(owned.id); } catch (cleanupError) { throw new AggregateError([error, cleanupError], error instanceof Error ? error.message : "Debug launch failed."); } throw error; }
   }
@@ -211,6 +212,7 @@ export class RuntimeSessionCoordinator {
     let prepared: RuntimePreparedLaunch | undefined;
     try {
       const preparing = Promise.resolve(prepare(owned.id, owned.secret)); owned.lateCleanupPending = deadline !== undefined;
+      if (deadline !== undefined) void preparing.catch(() => { owned.lateCleanupPending = false; if (owned.state === "failed" && !owned.process && !owned.bridge && !owned.dap && !owned.prepared) this.clear(owned); });
       prepared = deadline === undefined ? await preparing : await beforeDeadline(preparing, deadline, async value => {
         owned.prepared = value; owned.lateCleanupPending = false; if (this.owned !== owned) this.owned = owned; owned.state = "failed";
         try { await value.close(); owned.prepared = undefined; if (!owned.process?.running && !owned.bridge && !owned.dap) this.clear(owned); } catch { /* retained for exact-session retry */ }
@@ -230,7 +232,7 @@ export class RuntimeSessionCoordinator {
           const dap = this.dapFactory(); owned.dap = dap; const remaining = deadline! - Date.now();
           if (remaining <= 0) throw new GodotMcpError("timeout", "Debug launch deadline expired before DAP attachment.", "Increase timeoutMs or verify Godot runtime and bridge startup.");
           try {
-            const initialBreakpoints = debugAttach.initialBreakpoints ? await Promise.all(debugAttach.initialBreakpoints.map(async group => { const path = await this.containedSource(group.path); return { source: { path, name: basename(path) }, breakpoints: group.lines.map(line => ({ line })) }; })) : undefined;
+            const initialBreakpoints = await this.prepareInitialBreakpoints(debugAttach.initialBreakpoints);
             await beforeDeadline(Promise.resolve(dap.attach({ host: debugAttach.host, port: debugAttach.port, runtimeSessionId: owned.id, process: { pid: owned.process!.pid, startedAt: owned.process!.startedAt }, bridge: { transport: connected.transport }, ...(initialBreakpoints ? { initialBreakpoints } : {}), timeoutMs: remaining })), deadline!, () => dap.close());
             if (this.owned !== owned || owned.state !== "running" || !owned.process?.running) { await Promise.resolve(dap.close()).catch(() => undefined); throw new Error("Runtime launch ended before DAP attachment completed."); }
             break;
@@ -292,7 +294,8 @@ export class RuntimeSessionCoordinator {
     return owned;
   }
 
-  private getDebug(id: string): OwnedSession { const owned = this.getOwned(id, ["debug_ready"]); if (!owned.dap || owned.dap.status.state === "degraded" || owned.dap.status.state === "exited" || owned.dap.status.state === "disconnected") throw new GodotMcpError("not_connected", "Godot debug adapter session is unavailable.", "Stop this runtime and launch a new managed debug session.", owned.dap?.status.degradation); return owned; }
+  private getDebug(id: string): OwnedSession { const owned = this.getOwned(id, ["debug_ready"]); if (!owned.process?.running) throw invalidSession(); if (!owned.dap || owned.dap.status.state === "degraded" || owned.dap.status.state === "exited" || owned.dap.status.state === "disconnected") throw new GodotMcpError("not_connected", "Godot debug adapter session is unavailable.", "Stop this runtime and launch a new managed debug session.", owned.dap?.status.degradation); return owned; }
+  private async prepareInitialBreakpoints(groups: RuntimeDebugAttach["initialBreakpoints"]): Promise<DapBreakpointGroup[] | undefined> { if (!groups) return undefined; return Promise.all(groups.map(async group => { const path = await this.containedSource(group.path); return { source: { path, name: basename(path) }, breakpoints: group.lines.map(line => ({ line })) }; })); }
   private async containedSource(path: string): Promise<string> {
     if (!this.projectPath || isAbsolute(path) || path.includes("\\") || path.split("/").some(part => part === "" || part === "." || part === "..")) throw new GodotMcpError("invalid_args", "Debug source path is outside the configured project.", "Pass a contained project-relative .gd path.");
     try { const root = await realpath(this.projectPath); const candidate = await realpath(resolve(root, ...path.split("/"))); const contained = relative(root, candidate); const stat = await lstat(candidate); if (!contained || contained === ".." || contained.startsWith(`..${sep}`) || isAbsolute(contained) || !stat.isFile() || stat.isSymbolicLink() || !candidate.endsWith(".gd")) throw new Error("denied"); return candidate; }

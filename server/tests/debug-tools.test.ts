@@ -49,7 +49,7 @@ describe("public debug tools", () => {
   it("maps all operations and emits only own normalized data", async () => {
     const ref = { runtimeSessionId: SESSION, stoppedGeneration: 2, id: 7 };
     const debug = {
-      debugLaunch: vi.fn().mockResolvedValue({ id: SESSION, mode: "debug", state: "debug_ready", pid: 3, startedAt: 4, capabilities: { supportsConfigurationDoneRequest: true, supportsTerminateRequest: false, supportsVariablePaging: true, secretCapability: "drop" } }),
+      debugLaunch: vi.fn().mockResolvedValue({ id: SESSION, mode: "debug", state: "debug_ready", pid: 3, startedAt: 4, capabilities: { supportsConfigurationDoneRequest: true, supportsTerminateRequest: false, supportsVariablePaging: true } }),
       debugSetBreakpoints: vi.fn().mockResolvedValue({ sessionId: SESSION, path: "phase5/runtime_fixture.gd", breakpoints: [{ line: 12, verified: true }] }),
       debugContinue: vi.fn().mockResolvedValue({ sessionId: SESSION, resumed: true }),
       debugStep: vi.fn().mockResolvedValue({ sessionId: SESSION, kind: "over", resumed: true }),
@@ -90,5 +90,14 @@ describe("public debug tools", () => {
       const result = await h.client.callTool({ name: "godot_debug_continue", arguments: { sessionId: SESSION, thread: { runtimeSessionId: SESSION, stoppedGeneration: 1, id: 1 } } });
       expect(result.isError).toBe(true); expect(result.structuredContent).toBeUndefined(); expect(JSON.stringify(result.content)).not.toContain("leak");
     } finally { await h.close(); }
+  });
+
+  it.each(["missing", "accessor", "proxy", "extra"] as const)("fails closed for %s launch capabilities", async mode => {
+    let capabilities: any = undefined;
+    if (mode === "accessor") capabilities = Object.defineProperty({}, "supportsConfigurationDoneRequest", { get() { return true; } });
+    if (mode === "proxy") { const revoked = Proxy.revocable({}, {}); revoked.revoke(); capabilities = revoked.proxy; }
+    if (mode === "extra") capabilities = { supportsConfigurationDoneRequest: true, supportsTerminateRequest: false, supportsVariablePaging: true, extra: false };
+    const debug = { debugLaunch: vi.fn().mockResolvedValue({ id: SESSION, mode: "debug", state: "debug_ready", pid: 3, startedAt: 4, ...(mode === "missing" ? {} : { capabilities }) }), debugSetBreakpoints: vi.fn(), debugContinue: vi.fn(), debugStep: vi.fn(), debugStack: vi.fn(), debugInspect: vi.fn() };
+    const h = await harness(debug); try { const result = await h.client.callTool({ name: "godot_debug_launch", arguments: {} }); expect(result.isError).toBe(true); expect(result.structuredContent).toBeUndefined(); } finally { await h.close(); }
   });
 });
