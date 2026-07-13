@@ -4,7 +4,7 @@ import { constants } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { OutputRing, type OutputPage } from "./output-ring.js";
-import { PROCESS_FORCE_STOP_MS, PROCESS_GRACEFUL_STOP_MS, PROCESS_START_TIMEOUT_MS } from "./limits.js";
+import { PROCESS_FORCE_STOP_MS, PROCESS_GRACEFUL_STOP_MS, PROCESS_OUTPUT_DRAIN_MS, PROCESS_START_TIMEOUT_MS } from "./limits.js";
 
 type RuntimeChild = Pick<ChildProcess, "pid" | "stdout" | "stderr" | "on" | "once" | "off" | "kill" | "exitCode" | "signalCode">;
 type SpawnOptions = { cwd: string; env: NodeJS.ProcessEnv; shell: false; windowsHide: true; stdio: ["ignore", "pipe", "pipe"] };
@@ -37,13 +37,15 @@ export interface ProcessRunnerDependencies {
 }
 
 interface Owned {
-  childId: string; child: RuntimeChild; pid: number; startedAt: number; ring: OutputRing;
-  running: boolean; exit?: ProcessExit; detach: () => void; exited: Promise<void>; resolveExited: () => void;
-  stopping?: Promise<StopResult>;
+  childId: string; child: RuntimeChild; pid: number | undefined; startedAt: number; ring: OutputRing;
+  running: boolean; exit?: ProcessExit; detachAll: () => void; beginDrain: () => void; exited: Promise<void>; resolveExited: () => void;
+  drained: Promise<void>; resolveDrained: () => void;
+  stopping: Promise<StopResult> | undefined;
 }
 
 export class ProcessRunner {
   private current: Owned | undefined;
+  private readonly owned = new Map<string, Owned>();
   private starting = false;
   private readonly deps: Required<ProcessRunnerDependencies>;
 
@@ -73,9 +75,13 @@ export class ProcessRunner {
           windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
         });
       } catch (error) { throw error; }
-      if (child.pid === undefined) throw new Error("Spawned process did not provide a PID.");
       const owned = this.install(child, this.deps.childId(), child.pid, this.deps.now());
       this.current = owned;
+      this.owned.set(owned.childId, owned);
+      if (child.pid === undefined) {
+        await this.cleanupInvalidChild(owned);
+        throw new Error("Spawned process did not provide a PID.");
+      }
       try { await this.waitForSpawn(owned); }
       catch (error) {
         if (owned.running) try { await this.cleanupFailedStart(owned); } catch { /* preserve startup failure */ }
@@ -86,38 +92,63 @@ export class ProcessRunner {
   }
 
   stop(childId: string): Promise<StopResult> {
-    const owned = this.current;
-    if (!owned || owned.childId !== childId || !owned.running) {
-      return Promise.resolve({ childId, alreadyStopped: true, graceful: false, forced: false, ...(owned?.childId === childId && owned.exit ? { exit: owned.exit } : {}) });
+    const owned = this.owned.get(childId);
+    if (!owned || !owned.running) {
+      return owned ? owned.drained.then(() => ({ childId, alreadyStopped: true, graceful: false, forced: false, ...(owned.exit ? { exit: owned.exit } : {}) })) : Promise.resolve({ childId, alreadyStopped: true, graceful: false, forced: false });
     }
-    owned.stopping ??= this.performStop(owned);
+    if (!owned.stopping) {
+      const stopping = this.performStop(owned);
+      owned.stopping = stopping;
+      void stopping.then(() => { if (owned.stopping === stopping) owned.stopping = undefined; }, () => { if (owned.stopping === stopping) owned.stopping = undefined; });
+    }
     return owned.stopping;
   }
 
-  private install(child: RuntimeChild, childId: string, pid: number, startedAt: number): Owned {
+  private install(child: RuntimeChild, childId: string, pid: number | undefined, startedAt: number): Owned {
     const ring = new OutputRing();
-    let resolveExited!: () => void;
+    let resolveExited!: () => void; let resolveDrained!: () => void;
     const exited = new Promise<void>((resolve) => { resolveExited = resolve; });
-    const owned: Owned = { childId, child, pid, startedAt, ring, running: true, detach: () => {}, exited, resolveExited };
+    const drained = new Promise<void>((resolve) => { resolveDrained = resolve; });
+    const owned: Owned = { childId, child, pid, startedAt, ring, running: true, detachAll: () => {}, beginDrain: () => {}, exited, resolveExited, drained, resolveDrained, stopping: undefined };
+    const finalized: Record<"stdout" | "stderr", boolean> = { stdout: child.stdout === null, stderr: child.stderr === null };
+    let drainTimer: ReturnType<typeof setTimeout> | undefined; let drainedDone = false;
     const onStdout = (chunk: unknown) => ring.append("stdout", toBytes(chunk), this.deps.now());
     const onStderr = (chunk: unknown) => ring.append("stderr", toBytes(chunk), this.deps.now());
     const onError = (error: Error) => {
       ring.append("stderr", Buffer.from(error.message), this.deps.now());
       if (!owned.exit) owned.exit = { code: null, signal: null, at: this.deps.now(), error: error.message };
     };
+    const finishStream = (stream: "stdout" | "stderr") => {
+      if (finalized[stream]) return; finalized[stream] = true; ring.finish(stream, this.deps.now());
+      const source = child[stream]; source?.off("data", stream === "stdout" ? onStdout : onStderr); source?.off("error", stream === "stdout" ? onStdoutError : onStderrError); source?.off("end", stream === "stdout" ? onStdoutEnd : onStderrEnd); source?.off("close", stream === "stdout" ? onStdoutClose : onStderrClose);
+      settleDrain();
+    };
+    const onStdoutError = () => finishStream("stdout"); const onStderrError = () => finishStream("stderr");
+    const onStdoutEnd = () => finishStream("stdout"); const onStderrEnd = () => finishStream("stderr");
+    const onStdoutClose = () => finishStream("stdout"); const onStderrClose = () => finishStream("stderr");
+    const settleDrain = () => {
+      if (drainedDone || owned.running || !finalized.stdout || !finalized.stderr) return;
+      drainedDone = true; if (drainTimer) this.deps.clearTimer(drainTimer); detachChild(); owned.resolveDrained(); this.owned.delete(childId);
+    };
+    const detachChild = () => { child.off("error", onError); child.off("exit", onExit); };
     const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
       if (!owned.running) return;
       owned.running = false; owned.exit = { code, signal, at: this.deps.now(), ...(owned.exit?.error ? { error: owned.exit.error } : {}) };
-      ring.finishAll(this.deps.now());
       if (this.current === owned) this.current = undefined;
-      owned.detach(); owned.resolveExited();
+      owned.resolveExited(); owned.beginDrain();
     };
-    owned.detach = () => {
-      child.off("error", onError); child.off("exit", onExit);
-      child.stdout?.off("data", onStdout); child.stderr?.off("data", onStderr);
+    owned.beginDrain = () => {
+      settleDrain();
+      if (!drainedDone && !drainTimer) drainTimer = this.deps.setTimer(() => { finishStream("stdout"); finishStream("stderr"); }, PROCESS_OUTPUT_DRAIN_MS);
     };
-    child.stdout?.on("data", onStdout); child.stderr?.on("data", onStderr);
+    owned.detachAll = () => {
+      if (drainTimer) this.deps.clearTimer(drainTimer); detachChild();
+      child.stdout?.off("data", onStdout); child.stdout?.off("error", onStdoutError); child.stdout?.off("end", onStdoutEnd); child.stdout?.off("close", onStdoutClose);
+      child.stderr?.off("data", onStderr); child.stderr?.off("error", onStderrError); child.stderr?.off("end", onStderrEnd); child.stderr?.off("close", onStderrClose);
+    };
     child.on("error", onError); child.once("exit", onExit);
+    child.stdout?.on("data", onStdout); child.stdout?.on("error", onStdoutError); child.stdout?.once("end", onStdoutEnd); child.stdout?.once("close", onStdoutClose);
+    child.stderr?.on("data", onStderr); child.stderr?.on("error", onStderrError); child.stderr?.once("end", onStderrEnd); child.stderr?.once("close", onStderrClose);
     return owned;
   }
 
@@ -138,38 +169,37 @@ export class ProcessRunner {
   }
 
   private async performStop(owned: Owned): Promise<StopResult> {
-    if (!owned.running || this.current !== owned) return { childId: owned.childId, alreadyStopped: true, graceful: false, forced: false, ...(owned.exit ? { exit: owned.exit } : {}) };
+    if (!owned.running) { await owned.drained; return { childId: owned.childId, alreadyStopped: true, graceful: false, forced: false, ...(owned.exit ? { exit: owned.exit } : {}) }; }
     let forced = false;
     try {
       owned.child.kill("SIGTERM");
-      if (await this.waitExit(owned, PROCESS_GRACEFUL_STOP_MS)) return { childId: owned.childId, alreadyStopped: false, graceful: true, forced: false, ...(owned.exit ? { exit: owned.exit } : {}) };
-      if (!owned.running || this.current !== owned) return { childId: owned.childId, alreadyStopped: false, graceful: true, forced: false, ...(owned.exit ? { exit: owned.exit } : {}) };
+      if (await this.waitExit(owned, PROCESS_GRACEFUL_STOP_MS)) { await owned.drained; return { childId: owned.childId, alreadyStopped: false, graceful: true, forced: false, ...(owned.exit ? { exit: owned.exit } : {}) }; }
+      if (!owned.running) { await owned.drained; return { childId: owned.childId, alreadyStopped: false, graceful: true, forced: false, ...(owned.exit ? { exit: owned.exit } : {}) }; }
       forced = true;
       await this.withDeadline(this.deps.terminateTree(owned.child, PROCESS_FORCE_STOP_MS), PROCESS_FORCE_STOP_MS, "Force termination timed out after 7 seconds.");
-      await this.waitExit(owned, PROCESS_FORCE_STOP_MS);
+      if (!await this.waitExit(owned, PROCESS_FORCE_STOP_MS)) throw new Error("Force termination completed but exact-child exit was not confirmed within 7 seconds.");
+      await owned.drained;
       return { childId: owned.childId, alreadyStopped: false, graceful: false, forced, ...(owned.exit ? { exit: owned.exit } : {}) };
-    } finally {
-      if (owned.running) {
-        owned.running = false; owned.exit ??= { code: owned.child.exitCode, signal: owned.child.signalCode, at: this.deps.now() };
-        owned.ring.finishAll(this.deps.now()); if (this.current === owned) this.current = undefined; owned.resolveExited();
-      }
-      owned.detach();
-    }
+    } finally { /* exit and drain listeners remain until confirmed completion */ }
   }
 
   private async cleanupFailedStart(owned: Owned): Promise<void> {
     try {
       owned.child.kill("SIGTERM");
-      if (owned.running && this.current === owned) {
+      if (owned.running && this.current === owned && owned.pid !== undefined) {
         await this.withDeadline(this.deps.terminateTree(owned.child, PROCESS_FORCE_STOP_MS), PROCESS_FORCE_STOP_MS, "Startup cleanup timed out.");
       }
     } finally {
       if (owned.running) {
         owned.running = false; owned.exit ??= { code: owned.child.exitCode, signal: owned.child.signalCode, at: this.deps.now() };
-        owned.ring.finishAll(this.deps.now()); if (this.current === owned) this.current = undefined; owned.resolveExited();
+        if (this.current === owned) this.current = undefined; owned.resolveExited(); owned.beginDrain(); await owned.drained;
       }
-      owned.detach();
     }
+  }
+
+  private async cleanupInvalidChild(owned: Owned): Promise<void> {
+    try { owned.child.kill("SIGTERM"); } catch { /* best effort for malformed spawn result */ }
+    owned.running = false; if (this.current === owned) this.current = undefined; owned.resolveExited(); owned.beginDrain(); await owned.drained;
   }
 
   private waitExit(owned: Owned, milliseconds: number): Promise<boolean> {
@@ -186,7 +216,7 @@ export class ProcessRunner {
 
   private publicView(owned: Owned): ManagedProcess {
     return Object.freeze({
-      childId: owned.childId, pid: owned.pid, startedAt: owned.startedAt,
+      childId: owned.childId, pid: owned.pid!, startedAt: owned.startedAt,
       get running() { return owned.running; }, get exit() { return owned.exit ? { ...owned.exit } : undefined; },
       output: (since: number, limit: number) => owned.ring.read(since, limit),
     });

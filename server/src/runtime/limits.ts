@@ -6,4 +6,4 @@ export const MAX_OUTPUT_PAGE_RECORDS = 500;
 export const PROCESS_START_TIMEOUT_MS = 15_000;
 export const PROCESS_GRACEFUL_STOP_MS = 5_000;
 export const PROCESS_FORCE_STOP_MS = 7_000;
-
+export const PROCESS_OUTPUT_DRAIN_MS = 1_000;
