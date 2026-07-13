@@ -34,3 +34,33 @@ Status: complete
 - Requests are never replayed across transports after publication.
 - Known environment noise remains the existing Mono SDK/leak diagnostics in editor smokes; the bounded runner exited 0 and found no forbidden script/compile diagnostics for the new smoke.
 - Portable file publication uses same-directory rename. As elsewhere in the phase, filesystem pathname operations are not handle-relative and cannot eliminate every cross-platform replacement race.
+
+## Major review-fix pass
+
+- Replaced the raw-token socket greeting with mutual HMAC-SHA256 authentication using independent 32-byte client/server nonces and distinct domain labels. Client proof comparison is fixed-time; concurrent `connect()` calls share one owned attempt and all failed-attempt listeners, timers, and sockets are destroyed before file fallback.
+- Locked both peers to one transport: authenticated socket selection disables file polling; authenticated file selection stops the listener and drops the socket. Published requests are never replayed.
+- Replaced recursive output copying with descriptor-only bounded normalization: no accessors/prototypes, proxy traps caught, finite JSON values only, cycle rejection, depth 32, nodes 1,000, arrays/objects 500, and strings 8,192 bytes. Malformed/zero/oversized/invalid-UTF8/receive-overflow frames are rejected.
+- Hardened file requests with canonical link-free root revalidation, random exclusive temporary files, flush/close, atomic no-replace hard-link publication, stable regular response identity reads, shared deadlines, and exact request/temp/response cleanup.
+- Added safe JSON-number integer handling and generation-owned held input. Action press/release/press-release uses actual Input state; delayed releases occur once and cleanup invalidates timers and releases held state.
+- Scene property reads now use an explicit built-in allowlist, exclude script variables/custom getters, call `get` once, reject non-finite values, and defensively track visited nodes.
+- Screenshot capture rejects headless/unavailable viewport readback before texture access, validates dimensions/PNG size, publishes through a random flushed temporary file with no-overwrite checks, and verifies the final artifact before returning metadata.
+
+### Review-fix RED/GREEN evidence
+
+- RED: normalization invoked getters and accepted hostile/deep/cyclic values; concurrent connect was not coalesced; forged acknowledgements were accepted; MAX_SAFE request IDs mutated to an unsafe integer. GREEN: focused Vitest passes all new cases.
+- RED: the expanded authenticated Godot smoke initially exposed JSON float IDs, JSON float input bounds, missing `StringName` serialization, a GDScript type-inference compile failure, and action events not updating actual Input state. GREEN: the smoke now calls all four methods sequentially, proves depth bounds/custom getter non-invocation/action release/token redaction/artifact cleanup, checks bounded headless readback failure, and verifies a real 8x6 PNG publication.
+- Systematic-debugging evidence: the apparent headless hang reproduced with the direct smoke command. Verbose redirected output localized it to `runtime_bridge.gd:103` type inference; the dependent script then attempted `.new()` on an uncompiled resource and its async error path never quit. The smoke now uses safe assertions/final failure exit, so subsequent failures exited immediately with their real payloads.
+
+### Fresh review-fix verification
+
+- `cd server && npm test -- --run tests/runtime-bridge-client.test.ts`: PASS, 1 file / 8 tests.
+- `cd server && npm test -- --run --hookTimeout=30000`: PASS, 34 files passed / 3 skipped; 372 tests passed / 4 skipped.
+- `cd server && npm run typecheck`: PASS.
+- `cd server && npm run build`: PASS.
+- `$env:GODOT_PATH='C:\Users\dasbl\Downloads\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64\Godot_v4.6.2-stable_mono_win64_console.exe'; node tests/godot/run-smoke.mjs`: PASS, including both Phase 5 markers.
+
+### Remaining concerns
+
+- The installed headless Godot uses the dummy renderer, so authenticated `runtime.screenshot` proves its bounded unavailable-readback response; the same smoke separately exercises the exact production PNG publication path with a real encoded 8x6 image. Live non-headless viewport readback remains environment-gated.
+- Automated tests do not yet inject every reviewed filesystem race (junction replacement during every poll, forced Godot rename/flush failures) or a delayed socket acknowledgement arriving after fallback. Repeated identity checks and transport locks are implemented, but these specific fault injections remain coverage gaps.
+- Key/mouse validation and delayed release share the generation-owned release implementation with the action path, but the real Godot smoke asserts actual Input state only for actions.
