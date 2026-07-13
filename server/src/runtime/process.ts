@@ -84,7 +84,12 @@ export class ProcessRunner {
       }
       try { await this.waitForSpawn(owned); }
       catch (error) {
-        if (owned.running) try { await this.cleanupFailedStart(owned); } catch { /* preserve startup failure */ }
+        if (owned.running) {
+          try { await this.cleanupFailedStart(owned); }
+          catch (cleanupError) {
+            throw new AggregateError([error, cleanupError], `${errorMessage(error)} Cleanup failed: ${errorMessage(cleanupError)}`);
+          }
+        }
         throw error;
       }
       return this.publicView(owned);
@@ -104,6 +109,10 @@ export class ProcessRunner {
     return owned.stopping;
   }
 
+  stopCurrent(): Promise<StopResult | undefined> {
+    return this.current ? this.stop(this.current.childId) : Promise.resolve(undefined);
+  }
+
   private install(child: RuntimeChild, childId: string, pid: number | undefined, startedAt: number): Owned {
     const ring = new OutputRing();
     let resolveExited!: () => void; let resolveDrained!: () => void;
@@ -111,6 +120,7 @@ export class ProcessRunner {
     const drained = new Promise<void>((resolve) => { resolveDrained = resolve; });
     const owned: Owned = { childId, child, pid, startedAt, ring, running: true, detachAll: () => {}, beginDrain: () => {}, exited, resolveExited, drained, resolveDrained, stopping: undefined };
     const finalized: Record<"stdout" | "stderr", boolean> = { stdout: child.stdout === null, stderr: child.stderr === null };
+    const closed: Record<"stdout" | "stderr", boolean> = { stdout: child.stdout === null, stderr: child.stderr === null };
     let drainTimer: ReturnType<typeof setTimeout> | undefined; let drainedDone = false;
     const onStdout = (chunk: unknown) => ring.append("stdout", toBytes(chunk), this.deps.now());
     const onStderr = (chunk: unknown) => ring.append("stderr", toBytes(chunk), this.deps.now());
@@ -120,14 +130,18 @@ export class ProcessRunner {
     };
     const finishStream = (stream: "stdout" | "stderr") => {
       if (finalized[stream]) return; finalized[stream] = true; ring.finish(stream, this.deps.now());
-      const source = child[stream]; source?.off("data", stream === "stdout" ? onStdout : onStderr); source?.off("error", stream === "stdout" ? onStdoutError : onStderrError); source?.off("end", stream === "stdout" ? onStdoutEnd : onStderrEnd); source?.off("close", stream === "stdout" ? onStdoutClose : onStderrClose);
+      const source = child[stream]; source?.off("data", stream === "stdout" ? onStdout : onStderr); source?.off("end", stream === "stdout" ? onStdoutEnd : onStderrEnd);
+    };
+    const closeStream = (stream: "stdout" | "stderr") => {
+      if (closed[stream]) return; finishStream(stream); closed[stream] = true;
+      const source = child[stream]; source?.off("error", stream === "stdout" ? onStdoutError : onStderrError); source?.off("close", stream === "stdout" ? onStdoutClose : onStderrClose);
       settleDrain();
     };
     const onStdoutError = () => finishStream("stdout"); const onStderrError = () => finishStream("stderr");
     const onStdoutEnd = () => finishStream("stdout"); const onStderrEnd = () => finishStream("stderr");
-    const onStdoutClose = () => finishStream("stdout"); const onStderrClose = () => finishStream("stderr");
+    const onStdoutClose = () => closeStream("stdout"); const onStderrClose = () => closeStream("stderr");
     const settleDrain = () => {
-      if (drainedDone || owned.running || !finalized.stdout || !finalized.stderr) return;
+      if (drainedDone || owned.running || !closed.stdout || !closed.stderr) return;
       drainedDone = true; if (drainTimer) this.deps.clearTimer(drainTimer); detachChild(); owned.resolveDrained(); this.owned.delete(childId);
     };
     const detachChild = () => { child.off("error", onError); child.off("exit", onExit); };
@@ -139,7 +153,7 @@ export class ProcessRunner {
     };
     owned.beginDrain = () => {
       settleDrain();
-      if (!drainedDone && !drainTimer) drainTimer = this.deps.setTimer(() => { finishStream("stdout"); finishStream("stderr"); }, PROCESS_OUTPUT_DRAIN_MS);
+      if (!drainedDone && !drainTimer) drainTimer = this.deps.setTimer(() => { closeStream("stdout"); closeStream("stderr"); }, PROCESS_OUTPUT_DRAIN_MS);
     };
     owned.detachAll = () => {
       if (drainTimer) this.deps.clearTimer(drainTimer); detachChild();
@@ -184,17 +198,12 @@ export class ProcessRunner {
   }
 
   private async cleanupFailedStart(owned: Owned): Promise<void> {
-    try {
-      owned.child.kill("SIGTERM");
-      if (owned.running && this.current === owned && owned.pid !== undefined) {
-        await this.withDeadline(this.deps.terminateTree(owned.child, PROCESS_FORCE_STOP_MS), PROCESS_FORCE_STOP_MS, "Startup cleanup timed out.");
-      }
-    } finally {
-      if (owned.running) {
-        owned.running = false; owned.exit ??= { code: owned.child.exitCode, signal: owned.child.signalCode, at: this.deps.now() };
-        if (this.current === owned) this.current = undefined; owned.resolveExited(); owned.beginDrain(); await owned.drained;
-      }
-    }
+    owned.child.kill("SIGTERM");
+    if (!owned.running) { await owned.drained; return; }
+    if (owned.pid === undefined) throw new Error("Startup cleanup cannot force a child without a PID.");
+    await this.withDeadline(this.deps.terminateTree(owned.child, PROCESS_FORCE_STOP_MS), PROCESS_FORCE_STOP_MS, "Startup cleanup timed out after 7 seconds.");
+    if (!await this.waitExit(owned, PROCESS_FORCE_STOP_MS)) throw new Error("Startup cleanup completed but exact-child exit was not confirmed within 7 seconds.");
+    await owned.drained;
   }
 
   private async cleanupInvalidChild(owned: Owned): Promise<void> {
@@ -251,3 +260,4 @@ async function terminateTree(child: RuntimeChild, timeoutMs: number): Promise<vo
 }
 
 function toBytes(chunk: unknown): Uint8Array { return chunk instanceof Uint8Array ? chunk : Buffer.from(String(chunk)); }
+function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }

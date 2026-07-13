@@ -37,10 +37,10 @@ describe("ProcessRunner", () => {
   it("handles spawn throws, asynchronous errors, exits, and startup timeout", async () => {
     const thrown = fixture({ spawn: vi.fn(() => { throw new Error("boom"); }) });
     await expect(thrown.runner.start({ godotPath: "g", projectPath: "p" })).rejects.toThrow("boom");
-    const errored = fixture(); const p1 = errored.runner.start({ godotPath: "g", projectPath: "p" }); await vi.waitFor(() => expect(errored.spawn).toHaveBeenCalled()); errored.owned.emit("error", new Error("ENOENT")); await expect(p1).rejects.toThrow("ENOENT");
+    const errored = fixture({ terminateTree: vi.fn().mockImplementation(async (exact) => { exact.emit("exit", null, null); exact.stdout.emit("close"); exact.stderr.emit("close"); }) }); const p1 = errored.runner.start({ godotPath: "g", projectPath: "p" }); await vi.waitFor(() => expect(errored.spawn).toHaveBeenCalled()); errored.owned.emit("error", new Error("ENOENT")); await expect(p1).rejects.toThrow("ENOENT");
     const exited = fixture(); const p2 = exited.runner.start({ godotPath: "g", projectPath: "p" }); await vi.waitFor(() => expect(exited.spawn).toHaveBeenCalled()); exited.owned.emit("exit", 2, null); await expect(p2).rejects.toThrow(/exited.*2/i);
-    vi.useFakeTimers(); const stalled = fixture(); const p3 = stalled.runner.start({ godotPath: "g", projectPath: "p" }); const rejected = expect(p3).rejects.toThrow(/15 seconds/);
-    await vi.advanceTimersByTimeAsync(15_000); await vi.advanceTimersByTimeAsync(1_000); await rejected; vi.useRealTimers();
+    vi.useFakeTimers(); const stalled = fixture({ terminateTree: vi.fn().mockImplementation(async (exact) => { exact.emit("exit", null, null); exact.stdout.emit("close"); exact.stderr.emit("close"); }) }); const p3 = stalled.runner.start({ godotPath: "g", projectPath: "p" }); const rejected = expect(p3).rejects.toThrow(/15 seconds/);
+    await vi.advanceTimersByTimeAsync(15_000); await rejected; vi.useRealTimers();
   });
 
   it("captures output and final partial lines on natural exit, then clears identity", async () => {
@@ -48,7 +48,7 @@ describe("ProcessRunner", () => {
     owned.stdout.emit("data", Buffer.from("hello\npartial")); owned.stderr.emit("data", Buffer.from("oops"));
     owned.exitCode = 0; owned.emit("exit", 0, null);
     expect(managed).toMatchObject({ running: false, exit: { code: 0, signal: null, at: 100 } });
-    owned.stdout.emit("end"); owned.stderr.emit("end");
+    owned.stdout.emit("close"); owned.stderr.emit("close");
     expect(managed.output(0, 10).records.map((r) => r.text)).toEqual(["hello", "partial", "oops"]);
     await expect(runner.stop(managed.childId)).resolves.toMatchObject({ alreadyStopped: true, forced: false });
     expect(owned.kill).not.toHaveBeenCalled(); expect(terminateTree).not.toHaveBeenCalled();
@@ -56,7 +56,7 @@ describe("ProcessRunner", () => {
 
   it("stops gracefully and is idempotent", async () => {
     const { runner, owned, managed, terminateTree } = await started();
-    owned.kill.mockImplementation(() => { owned.exitCode = 0; queueMicrotask(() => { owned.emit("exit", 0, "SIGTERM"); owned.stdout.emit("end"); owned.stderr.emit("end"); }); return true; });
+    owned.kill.mockImplementation(() => { owned.exitCode = 0; queueMicrotask(() => { owned.emit("exit", 0, "SIGTERM"); owned.stdout.emit("close"); owned.stderr.emit("close"); }); return true; });
     await expect(runner.stop(managed.childId)).resolves.toMatchObject({ alreadyStopped: false, graceful: true, forced: false });
     await expect(runner.stop(managed.childId)).resolves.toMatchObject({ alreadyStopped: true });
     expect(owned.kill).toHaveBeenCalledOnce(); expect(owned.kill).toHaveBeenCalledWith("SIGTERM"); expect(terminateTree).not.toHaveBeenCalled();
@@ -65,12 +65,12 @@ describe("ProcessRunner", () => {
   it("forces only the exact child after the graceful deadline", async () => {
     vi.useFakeTimers(); const value = await started(); const stopping = value.runner.stop(value.managed.childId);
     await vi.advanceTimersByTimeAsync(5_000); expect(value.terminateTree).toHaveBeenCalledWith(value.owned, 7_000);
-    value.owned.exitCode = 137; value.owned.emit("exit", null, "SIGKILL"); value.owned.stdout.emit("end"); value.owned.stderr.emit("end");
+    value.owned.exitCode = 137; value.owned.emit("exit", null, "SIGKILL"); value.owned.stdout.emit("close"); value.owned.stderr.emit("close");
     await expect(stopping).resolves.toMatchObject({ graceful: false, forced: true }); vi.useRealTimers();
   });
 
   it("does not signal a reused PID after natural exit", async () => {
-    const first = await started(); first.owned.exitCode = 0; first.owned.emit("exit", 0, null); first.owned.stdout.emit("end"); first.owned.stderr.emit("end");
+    const first = await started(); first.owned.exitCode = 0; first.owned.emit("exit", 0, null); first.owned.stdout.emit("close"); first.owned.stderr.emit("close");
     const replacement = child(1234); (first.spawn as any).mockReturnValue(replacement);
     const pending = first.runner.start({ godotPath: "g", projectPath: "p" }); await vi.waitFor(() => expect(first.spawn).toHaveBeenCalledTimes(2)); replacement.emit("spawn"); const second = await pending;
     await first.runner.stop(first.managed.childId);
@@ -131,12 +131,32 @@ describe("ProcessRunner", () => {
   });
 
   it("preserves ownership after failed force termination and permits an exact-child retry", async () => {
-    vi.useFakeTimers(); const terminateTree = vi.fn().mockRejectedValueOnce(new Error("taskkill denied")).mockImplementationOnce(async (exact) => { exact.emit("exit", null, "SIGKILL"); exact.stdout.emit("end"); exact.stderr.emit("end"); });
+    vi.useFakeTimers(); const terminateTree = vi.fn().mockRejectedValueOnce(new Error("taskkill denied")).mockImplementationOnce(async (exact) => { exact.emit("exit", null, "SIGKILL"); exact.stdout.emit("close"); exact.stderr.emit("close"); });
     const value = await started(fixture({ terminateTree }));
     const firstStop = value.runner.stop(value.managed.childId); const firstRejection = expect(firstStop).rejects.toThrow("taskkill denied"); await vi.advanceTimersByTimeAsync(5_000); await firstRejection;
     expect(value.managed.running).toBe(true);
     await expect(value.runner.start({ godotPath: "g", projectPath: "p" })).rejects.toThrow(/already/);
     const retry = value.runner.stop(value.managed.childId); await vi.advanceTimersByTimeAsync(5_000); await expect(retry).resolves.toMatchObject({ forced: true });
     expect(terminateTree).toHaveBeenCalledTimes(2); expect(terminateTree.mock.calls[0]![0]).toBe(value.owned); expect(terminateTree.mock.calls[1]![0]).toBe(value.owned); vi.useRealTimers();
+  });
+
+  it("retains failed-start ownership when force cleanup fails and retries the same child", async () => {
+    vi.useFakeTimers(); const owned = child();
+    const terminateTree = vi.fn().mockRejectedValueOnce(new Error("startup taskkill denied")).mockImplementationOnce(async (exact) => { exact.emit("exit", null, "SIGKILL"); exact.stdout.emit("close"); exact.stderr.emit("close"); });
+    const spawn = vi.fn().mockReturnValue(owned); const runner = new ProcessRunner({ spawn, terminateTree, validate: vi.fn().mockResolvedValue(undefined) } as any);
+    const starting = runner.start({ godotPath: "g", projectPath: "p" }); await vi.waitFor(() => expect(spawn).toHaveBeenCalled()); owned.emit("error", new Error("spawn failed"));
+    await expect(starting).rejects.toThrow(/spawn failed/);
+    await expect(runner.start({ godotPath: "g", projectPath: "p" })).rejects.toThrow(/already/);
+    const retry = runner.stopCurrent(); await vi.advanceTimersByTimeAsync(5_000); await expect(retry).resolves.toMatchObject({ forced: true });
+    expect(terminateTree).toHaveBeenCalledTimes(2); expect(terminateTree.mock.calls[0]![0]).toBe(owned); expect(terminateTree.mock.calls[1]![0]).toBe(owned); vi.useRealTimers();
+  });
+
+  it("keeps no-throw stream error and close listeners after end without double flush", async () => {
+    const { owned, managed } = await started();
+    owned.stdout.emit("data", Buffer.from("tail")); owned.emit("exit", 0, null); owned.stdout.emit("end");
+    expect(owned.stdout.listenerCount("error")).toBe(1); expect(owned.stdout.listenerCount("close")).toBe(1);
+    expect(() => owned.stdout.emit("error", new Error("late read error"))).not.toThrow(); owned.stdout.emit("close"); owned.stderr.emit("close");
+    expect(managed.output(0, 10).records.map((record) => record.text)).toEqual(["tail"]);
+    expect(owned.stdout.listenerCount("error")).toBe(0); expect(owned.stdout.listenerCount("close")).toBe(0);
   });
 });
