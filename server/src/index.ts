@@ -103,11 +103,14 @@ export function createRuntimeService(config: ReturnType<typeof resolveConfig>, e
       const debugPort = Number(process.env.GODOT_REMOTE_DEBUG_PORT ?? 6007);
       const prepared = await bootstrap.prepare({ sessionId, token, protocolVersion: 1, preferredPort: runtimePort, scene });
       const client = new RuntimeBridgeClient();
+      let closed = false;
+      const close = async () => { if (closed) return; closed = true; let first: unknown; try { await client.close(); } catch (error) { first = error; } try { await bootstrap.cleanup(prepared); } catch (error) { first ??= error; } if (first) throw first; };
       return {
         process: { ...paths, args: [...(mode === "debug" ? ["--remote-debug", `tcp://127.0.0.1:${debugPort}`] : []), ...prepared.args, ...(options.args ?? [])] },
+        close,
         connect: async () => {
           const transport = await client.connect(prepared);
-          return { attachment: { request: client.request.bind(client), close: async () => { let first: unknown; try { await client.close(); } catch (error) { first = error; } try { await bootstrap.cleanup(prepared); } catch (error) { first ??= error; } if (first) throw first; } }, root: prepared.sessionRoot, transport };
+          return { attachment: { request: client.request.bind(client), close }, root: prepared.sessionRoot, transport };
         },
       };
     }, mode === "debug" ? { host: "127.0.0.1", port: config.dapPort, timeoutMs: options.timeoutMs ?? 15_000 } : undefined);

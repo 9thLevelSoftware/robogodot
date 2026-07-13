@@ -17,7 +17,7 @@ type Runner = Pick<ProcessRunner, "start" | "stop" | "stopCurrent">;
 export interface RuntimeSessionDependencies { runner: Runner; sessionId?: () => string; secret?: () => string; monitorMs?: number; screenshotOpen?: typeof open; screenshotLstat?: typeof lstat }
 interface DapAttachment extends RuntimeLifecycle { readonly status: DapClientStatus; attach(options: DapAttachOptions): Promise<unknown>; setBreakpoints(source: { path: string; name?: string }, breakpoints: readonly { line: number }[]): Promise<unknown>; continue(thread: DapReference): Promise<unknown>; step(kind: "over" | "into", thread: DapReference): Promise<unknown>; stack(thread?: DapReference, startFrame?: number): Promise<unknown>; inspect(frame: DapReference, variables?: DapReference, start?: number): Promise<unknown> }
 export interface RuntimeDebugAttach { host: string; port: number; timeoutMs: number; bridge?: { transport: "socket" | "file" } }
-export interface RuntimePreparedLaunch { process: ProcessStartOptions; connect(): Promise<{ attachment: RuntimeBridgeAttachment; root: string; transport: "socket" | "file" }> }
+export interface RuntimePreparedLaunch extends RuntimeLifecycle { process: ProcessStartOptions; connect(): Promise<{ attachment: RuntimeBridgeAttachment; root: string; transport: "socket" | "file" }> }
 
 interface OwnedSession { id: string; secret: string; mode: RuntimeMode; state: Exclude<RuntimeSessionState, "idle">; process: ManagedProcess | undefined; bridge: RuntimeBridgeAttachment | undefined; bridgeRoot: string | undefined; bridgeTransport: "socket" | "file" | undefined; dap: DapAttachment | undefined }
 
@@ -53,11 +53,11 @@ export class RuntimeSessionCoordinator {
 
   async debugLaunch(options: ProcessStartOptions, attach: RuntimeDebugAttach): Promise<RuntimeSessionSnapshot> {
     const deadline = Date.now() + Math.max(1, Math.min(60_000, attach.timeoutMs));
-    const session = await this.launch("debug", options);
+    const session = await this.launch("debug", options, deadline);
     const owned = this.getOwned(session.id, ["running"]); const dap = this.dapFactory(); owned.dap = dap;
     try {
       const remaining = deadline - Date.now(); if (remaining <= 0) throw new GodotMcpError("timeout", "Debug launch deadline expired before DAP attachment.", "Increase timeoutMs or verify that the managed Godot process starts promptly.");
-      await dap.attach({ host: attach.host, port: attach.port, runtimeSessionId: owned.id, process: { pid: owned.process!.pid, startedAt: owned.process!.startedAt }, ...(attach.bridge ? { bridge: attach.bridge } : {}), timeoutMs: remaining });
+      await beforeDeadline(Promise.resolve(dap.attach({ host: attach.host, port: attach.port, runtimeSessionId: owned.id, process: { pid: owned.process!.pid, startedAt: owned.process!.startedAt }, ...(attach.bridge ? { bridge: attach.bridge } : {}), timeoutMs: remaining })), deadline, () => dap.close());
       owned.state = "debug_ready"; return snapshot(owned);
     } catch (error) { try { await this.stop(owned.id); } catch (cleanupError) { throw new AggregateError([error, cleanupError], error instanceof Error ? error.message : "Debug launch failed."); } throw error; }
   }
@@ -85,13 +85,13 @@ export class RuntimeSessionCoordinator {
   async debugStack(sessionId: string, thread?: DapReference, startFrame = 0): Promise<unknown> { const owned = this.getDebug(sessionId); const value = cloneJson(await owned.dap!.stack(thread, startFrame)) as Record<string, unknown>; return Object.freeze({ sessionId, stoppedGeneration: owned.dap!.status.stoppedGeneration, ...value }); }
   async debugInspect(sessionId: string, frame: DapReference, variables?: DapReference, start = 0): Promise<unknown> { const owned = this.getDebug(sessionId); const value = cloneJson(await owned.dap!.inspect(frame, variables, start)) as Record<string, unknown>; return Object.freeze({ sessionId, stoppedGeneration: owned.dap!.status.stoppedGeneration, ...value }); }
 
-  launch(mode: RuntimeMode, options: ProcessStartOptions): Promise<RuntimeSessionSnapshot> {
+  launch(mode: RuntimeMode, options: ProcessStartOptions, deadline?: number): Promise<RuntimeSessionSnapshot> {
     if (this.closing) return Promise.reject(runtimeError("Runtime coordinator is closing.", "Wait for shutdown to finish."));
     if (this.owned || this.launchWork) return Promise.reject(runtimeError("A runtime session is already starting or active.", "Stop the current runtime session before launching another."));
     this.lastStopped = undefined;
     const owned: OwnedSession = { id: this.sessionId(), secret: this.secret(), mode, state: "starting", process: undefined, bridge: undefined, bridgeRoot: undefined, bridgeTransport: undefined, dap: undefined };
     this.owned = owned;
-    const work = this.performLaunch(owned, options);
+    const work = this.performLaunch(owned, options, deadline);
     this.launchWork = work;
     void work.finally(() => { if (this.launchWork === work) this.launchWork = undefined; }).catch(() => {});
     return work;
@@ -182,9 +182,10 @@ export class RuntimeSessionCoordinator {
     } finally { if (!this.owned) this.stopMonitor(); this.closing = false; }
   }
 
-  private async performLaunch(owned: OwnedSession, options: ProcessStartOptions): Promise<RuntimeSessionSnapshot> {
+  private async performLaunch(owned: OwnedSession, options: ProcessStartOptions, deadline?: number): Promise<RuntimeSessionSnapshot> {
     try {
-      owned.process = await this.runner.start({ ...options, env: { ...options.env, GODOT_RUNTIME_TOKEN: owned.secret } });
+      const starting = Promise.resolve(this.runner.start({ ...options, env: { ...options.env, GODOT_RUNTIME_TOKEN: owned.secret } }));
+      owned.process = deadline === undefined ? await starting : await beforeDeadline(starting, deadline, async process => { await this.runner.stop(process.childId); });
       if (this.owned !== owned || owned.state === "stopping") throw new Error("Runtime launch was cancelled during shutdown.");
       owned.state = owned.mode === "debug" && owned.dap ? "debug_ready" : "running";
       this.startMonitor(owned);
@@ -204,21 +205,32 @@ export class RuntimeSessionCoordinator {
 
   private async performIntegratedLaunch(owned: OwnedSession, prepare: (sessionId: string, token: string) => Promise<RuntimePreparedLaunch>, debugAttach?: RuntimeDebugAttach): Promise<RuntimeSessionSnapshot> {
     const deadline = debugAttach ? Date.now() + Math.max(1, Math.min(60_000, debugAttach.timeoutMs)) : undefined;
+    let prepared: RuntimePreparedLaunch | undefined; let bridgeAdopted = false;
     try {
-      const prepared = await prepare(owned.id, owned.secret);
-      await this.performLaunch(owned, prepared.process);
-      const connected = await prepared.connect(); owned.bridge = connected.attachment; owned.bridgeRoot = connected.root; owned.bridgeTransport = connected.transport;
+      const preparing = Promise.resolve(prepare(owned.id, owned.secret));
+      prepared = deadline === undefined ? await preparing : await beforeDeadline(preparing, deadline, value => value.close());
+      await this.performLaunch(owned, prepared.process, deadline);
+      const connecting = Promise.resolve(prepared.connect());
+      const connected = deadline === undefined ? await connecting : await beforeDeadline(connecting, deadline, value => value.attachment.close());
+      owned.bridge = connected.attachment; owned.bridgeRoot = connected.root; owned.bridgeTransport = connected.transport; bridgeAdopted = true;
       if (debugAttach) {
         while (true) {
           const dap = this.dapFactory(); owned.dap = dap; const remaining = deadline! - Date.now();
           if (remaining <= 0) throw new GodotMcpError("timeout", "Debug launch deadline expired before DAP attachment.", "Increase timeoutMs or verify Godot runtime and bridge startup.");
-          try { await dap.attach({ host: debugAttach.host, port: debugAttach.port, runtimeSessionId: owned.id, process: { pid: owned.process!.pid, startedAt: owned.process!.startedAt }, bridge: { transport: connected.transport }, timeoutMs: remaining }); break; }
-          catch (error) { await Promise.resolve(dap.close()).catch(() => undefined); if (!/not_running|isn't one/i.test(error instanceof Error ? error.message : "") || deadline! - Date.now() <= 50) throw error; await new Promise(resolve => setTimeout(resolve, 50)); }
+          try {
+            await beforeDeadline(Promise.resolve(dap.attach({ host: debugAttach.host, port: debugAttach.port, runtimeSessionId: owned.id, process: { pid: owned.process!.pid, startedAt: owned.process!.startedAt }, bridge: { transport: connected.transport }, timeoutMs: remaining })), deadline!, () => dap.close());
+            break;
+          } catch (error) {
+            await Promise.resolve(dap.close()).catch(() => undefined); if (owned.dap === dap) owned.dap = undefined;
+            if (!/not_running|isn't one/i.test(error instanceof Error ? error.message : "") || deadline! - Date.now() <= 50) throw error;
+            await new Promise(resolve => setTimeout(resolve, Math.min(50, Math.max(1, deadline! - Date.now()))));
+          }
         }
         owned.state = "debug_ready";
       }
       return snapshot(owned);
     } catch (error) {
+      if (prepared && !bridgeAdopted) await Promise.resolve(prepared.close()).catch(() => undefined);
       if (this.owned === owned && owned.state !== "failed") { try { await this.stop(owned.id); } catch (cleanupError) { throw new AggregateError([error, cleanupError], error instanceof Error ? error.message : "Runtime launch failed."); } }
       throw error;
     }
@@ -299,3 +311,13 @@ function ownRecord(value: unknown, key: string): object { const result = ownValu
 function cloneJson(value: unknown, seen = new Set<object>(), depth = 0): unknown { if (depth > 16) throw invalidBridge(); if (value === null || typeof value === "boolean" || typeof value === "string") return value; if (typeof value === "number" && Number.isFinite(value)) return value; if (!value || typeof value !== "object" || seen.has(value)) throw invalidBridge(); seen.add(value); try { let array: boolean; try { array = Array.isArray(value); } catch { throw invalidBridge(); } if (array) return Object.freeze(ownArray({ value }, "value").map(item => cloneJson(item, seen, depth + 1))); let descriptors: PropertyDescriptorMap; try { descriptors = Object.getOwnPropertyDescriptors(value); } catch { throw invalidBridge(); } const output: Record<string, unknown> = Object.create(null); for (const [key, descriptor] of Object.entries(descriptors)) if (descriptor.enumerable) { if (!("value" in descriptor)) throw invalidBridge(); output[key] = cloneJson(descriptor.value, seen, depth + 1); } return Object.freeze(output); } finally { seen.delete(value); } }
 function invalidBridge() { return new GodotMcpError("godot_error", "Runtime bridge returned an invalid response.", "Launch a new runtime session with compatible bridge resources."); }
 function screenshotError() { return new GodotMcpError("godot_error", "Runtime screenshot verification failed.", "Capture again in a healthy session and ensure the session artifact directory is unchanged."); }
+function deadlineError() { return new GodotMcpError("timeout", "Debug launch deadline expired before launch completed.", "Increase timeoutMs or verify Godot runtime, bridge, and DAP startup."); }
+async function beforeDeadline<T>(work: Promise<T>, deadline: number, cleanupLate: (value: T) => void | Promise<void>): Promise<T> {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) { void work.then(value => cleanupLate(value), () => undefined).catch(() => undefined); throw deadlineError(); }
+  let timeout: ReturnType<typeof setTimeout> | undefined; let timedOut = false;
+  const expiry = new Promise<never>((_, reject) => { timeout = setTimeout(() => { timedOut = true; reject(deadlineError()); }, remaining); });
+  try { return await Promise.race([work, expiry]); }
+  catch (error) { if (timedOut) void work.then(value => cleanupLate(value), () => undefined).catch(() => undefined); throw error; }
+  finally { if (timeout) clearTimeout(timeout); }
+}

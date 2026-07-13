@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { cp, mkdir, rm, stat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { cp, mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -10,7 +11,7 @@ import { createRuntimeService } from "../src/index.js";
 import { createLogger } from "../src/logger.js";
 import { createServer } from "../src/server.js";
 import { terminateWindowsProcessTree } from "../src/lsp/host.js";
-import { allocateLoopbackPort, captureBoundedOutput, createIsolatedGodotProject, runCleanupSteps, waitForPidExit, waitForProcessExit } from "./live-support.js";
+import { acquireWithCleanup, allocateLoopbackPort, captureBoundedOutput, createIsolatedGodotProject, runCleanupSteps, waitForPidExit, waitForProcessExit } from "./live-support.js";
 
 const godotPath = process.env.GODOT_PATH;
 const sourceProject = resolve(process.env.GODOT_PROJECT_PATH ?? "../tests/fixtures/godot_project");
@@ -38,16 +39,37 @@ liveDescribe("Phase 5 public MCP runtime and attach-only DAP acceptance", () => 
   });
 
   async function harness() {
-    const oldRuntime = process.env.GODOT_RUNTIME_PORT, oldDebug = process.env.GODOT_REMOTE_DEBUG_PORT;
-    process.env.GODOT_RUNTIME_PORT = String(runtimePort); process.env.GODOT_REMOTE_DEBUG_PORT = String(remoteDebugPort);
-    const bridge = new JsonRpcClient({ url: `ws://127.0.0.1:${editorPort}`, token, logger: createLogger("error"), reconnectBaseMs: 20, reconnectMaxMs: 100 }); bridge.start();
-    await expect.poll(() => bridge.getStatus().state, { timeout: 20_000, interval: 50 }).toBe("connected");
-    const config = resolveConfig({ ...process.env, GODOT_MCP_TOKEN: token, GODOT_PATH: godotPath, GODOT_PROJECT_PATH: projectPath, GODOT_MCP_PORT: String(editorPort), GODOT_DAP_PORT: String(dapPort) }, projectPath, process.platform);
-    const runtime = createRuntimeService(config, bridge); const server = createServer({ bridge, runtime, debug: runtime }); const client = new Client({ name: "phase5-live", version: "1" }); const [ct, st] = InMemoryTransport.createLinkedPair(); await Promise.all([server.connect(st), client.connect(ct)]);
-    return { client, close: async () => { let first: unknown; for (const step of [() => client.close(), () => server.close(), () => runtime.close(), async () => bridge.stop()]) try { await step(); } catch (error) { first ??= error; } oldRuntime === undefined ? delete process.env.GODOT_RUNTIME_PORT : process.env.GODOT_RUNTIME_PORT = oldRuntime; oldDebug === undefined ? delete process.env.GODOT_REMOTE_DEBUG_PORT : process.env.GODOT_REMOTE_DEBUG_PORT = oldDebug; if (first) throw first; } };
+    return acquireWithCleanup(async owner => {
+      const hadRuntime = Object.hasOwn(process.env, "GODOT_RUNTIME_PORT"), oldRuntime = process.env.GODOT_RUNTIME_PORT;
+      const hadDebug = Object.hasOwn(process.env, "GODOT_REMOTE_DEBUG_PORT"), oldDebug = process.env.GODOT_REMOTE_DEBUG_PORT;
+      owner.defer(async () => { hadDebug ? process.env.GODOT_REMOTE_DEBUG_PORT = oldDebug! : delete process.env.GODOT_REMOTE_DEBUG_PORT; hadRuntime ? process.env.GODOT_RUNTIME_PORT = oldRuntime! : delete process.env.GODOT_RUNTIME_PORT; });
+      process.env.GODOT_RUNTIME_PORT = String(runtimePort); process.env.GODOT_REMOTE_DEBUG_PORT = String(remoteDebugPort);
+      const bridge = new JsonRpcClient({ url: `ws://127.0.0.1:${editorPort}`, token, logger: createLogger("error"), reconnectBaseMs: 20, reconnectMaxMs: 100 });
+      owner.defer(async () => { await bridge.stop(); }); bridge.start();
+      await expect.poll(() => bridge.getStatus().state, { timeout: 20_000, interval: 50 }).toBe("connected");
+      const config = resolveConfig({ ...process.env, GODOT_MCP_TOKEN: token, GODOT_PATH: godotPath, GODOT_PROJECT_PATH: projectPath, GODOT_MCP_PORT: String(editorPort), GODOT_DAP_PORT: String(dapPort) }, projectPath, process.platform);
+      const runtime = createRuntimeService(config, bridge); owner.defer(() => runtime.close());
+      const server = createServer({ bridge, runtime, debug: runtime }); owner.defer(() => server.close());
+      const client = new Client({ name: "phase5-live", version: "1" }); owner.defer(() => client.close());
+      const [ct, st] = InMemoryTransport.createLinkedPair(); await Promise.all([server.connect(st), client.connect(ct)]);
+      return { client, close: () => owner.close() };
+    });
   }
   async function call<T = any>(client: Client, name: string, args: Record<string, unknown>): Promise<T> { const result = await client.callTool({ name, arguments: args }); if (result.isError) throw new Error((result.content[0] as any).text); return result.structuredContent as T; }
   async function waitCall<T = any>(client: Client, name: string, args: Record<string, unknown>, timeout = 10_000): Promise<T> { const deadline = Date.now() + timeout; let last: unknown; while (Date.now() < deadline) { try { return await call<T>(client, name, args); } catch (error) { last = error; await new Promise(resolve => setTimeout(resolve, 50)); } } throw last; }
+  async function verifyScreenshotArtifact(shot: any, sessionId: string): Promise<string> {
+    expect(typeof shot.path).toBe("string"); expect(isAbsolute(shot.path)).toBe(false); expect(isAbsolute(shot.absolutePath)).toBe(true);
+    const segments = shot.path.split("/"); expect(segments.every((part: string) => part && part !== "." && part !== "..")).toBe(true);
+    const expectedRoot = resolve(shot.absolutePath, ...segments.map(() => ".."));
+    const root = await realpath(expectedRoot); const absolute = await realpath(shot.absolutePath); const relativeCandidate = await realpath(resolve(root, ...segments));
+    expect(basename(root)).toBe(sessionId); expect(basename(dirname(root))).toBe(".mcp"); expect(relativeCandidate).toBe(absolute);
+    const contained = relative(root, absolute); expect(contained && contained !== ".." && !contained.startsWith(`..${sep}`) && !isAbsolute(contained)).toBe(true);
+    expect(contained.split(sep).join("/")).toBe(shot.path);
+    const bytes = await readFile(absolute); expect(bytes.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])); expect(bytes.toString("ascii", 12, 16)).toBe("IHDR");
+    expect(bytes.readUInt32BE(16)).toBe(shot.width); expect(bytes.readUInt32BE(20)).toBe(shot.height); expect(bytes.length).toBe(shot.bytes);
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(shot.sha256);
+    return root;
+  }
 
   test("normal run proves output, tree, property, input, screenshot, and exact cleanup", async () => {
     const h = await harness(); let sessionId: string | undefined, pid: number | undefined, artifactRoot: string | undefined, primary: unknown;
@@ -58,7 +80,7 @@ liveDescribe("Phase 5 public MCP runtime and attach-only DAP acceptance", () => 
       expect(await call<any>(h.client, "godot_runtime_get_node", { sessionId, path: ".", properties: ["position"] })).toMatchObject({ properties: { position: { type: "Vector2", x: 0, y: 0 } } });
       await call(h.client, "godot_runtime_input", { sessionId, kind: "action", action: "phase5_jump", mode: "press_release", holdMs: 100 });
       await expect.poll(async () => JSON.stringify(await call(h.client, "godot_run_output", { sessionId, since: 0, limit: 500 })), { timeout: 5000 }).toContain("PHASE5_JUMP:1:42");
-      const shot = await call<any>(h.client, "godot_runtime_screenshot", { sessionId, name: "phase5.png" }); expect(shot).toMatchObject({ width: 320, height: 180, format: "png" }); expect(shot.sha256).toMatch(/^[a-f0-9]{64}$/); artifactRoot = dirname(shot.absolutePath);
+      const shot = await call<any>(h.client, "godot_runtime_screenshot", { sessionId, name: "phase5.png" }); expect(shot).toMatchObject({ width: 320, height: 180, format: "png" }); artifactRoot = await verifyScreenshotArtifact(shot, sessionId);
       await call(h.client, "godot_stop_project", { sessionId }); sessionId = undefined; await waitForPidExit(pid!, 7000); await expect(stat(artifactRoot)).rejects.toMatchObject({ code: "ENOENT" });
     } catch (error) { primary = error; if (error instanceof Error) error.message += `\n${capture?.diagnostics()}`; throw error; } finally { await runCleanupSteps(primary, [async () => { if (sessionId) await call(h.client, "godot_stop_project", { sessionId }); }, () => h.close(), async () => { if (pid) await waitForPidExit(pid, 7000); }]); }
   }, 45_000);

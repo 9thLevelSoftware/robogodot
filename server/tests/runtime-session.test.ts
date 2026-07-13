@@ -5,6 +5,51 @@ const processView = (running = true) => ({ childId: "child", pid: 42, startedAt:
 const options = { godotPath: "godot", projectPath: "game" };
 
 describe("RuntimeSessionCoordinator", () => {
+  it.each(["prepare", "start", "connect"] as const)("enforces the shared debug deadline during %s and cleans a late resolution", async (stage) => {
+    vi.useFakeTimers();
+    let release!: (value: any) => void;
+    const delayed = new Promise<any>(resolve => { release = resolve; });
+    const latePreparedClose = vi.fn(); const lateBridgeClose = vi.fn();
+    const managed = processView();
+    const runner = {
+      start: vi.fn().mockImplementation(() => stage === "start" ? delayed : Promise.resolve(managed)),
+      stop: vi.fn().mockResolvedValue({ childId: "child", graceful: true, forced: false }),
+      stopCurrent: vi.fn().mockResolvedValue(undefined),
+    };
+    const prepared = {
+      process: options,
+      connect: vi.fn().mockImplementation(() => stage === "connect" ? delayed : Promise.resolve({ attachment: { close: lateBridgeClose }, root: "root", transport: "socket" })),
+      close: latePreparedClose,
+    };
+    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any });
+    const launch = coordinator.integratedLaunch("debug", () => stage === "prepare" ? delayed : Promise.resolve(prepared), { host: "127.0.0.1", port: 6006, timeoutMs: 100 });
+    const failure = expect(launch).rejects.toMatchObject({ code: "timeout" });
+    await vi.advanceTimersByTimeAsync(100); await failure;
+    if (stage === "prepare") release(prepared);
+    else if (stage === "start") release(managed);
+    else release({ attachment: { close: lateBridgeClose }, root: "root", transport: "socket" });
+    await vi.runAllTimersAsync(); await Promise.resolve();
+    if (stage === "prepare") expect(latePreparedClose).toHaveBeenCalledOnce();
+    if (stage === "start") expect(runner.stop).toHaveBeenCalledWith("child");
+    if (stage === "connect") expect(lateBridgeClose).toHaveBeenCalledOnce();
+    expect(coordinator.state).toBe("idle");
+    vi.useRealTimers();
+  });
+
+  it("enforces the shared deadline during a DAP attach and closes its late resolution", async () => {
+    vi.useFakeTimers(); let release!: () => void;
+    const attaching = new Promise<void>(resolve => { release = resolve; });
+    const dap = { status: { state: "disconnected" }, attach: vi.fn().mockReturnValue(attaching), setBreakpoints: vi.fn(), continue: vi.fn(), step: vi.fn(), stack: vi.fn(), inspect: vi.fn(), close: vi.fn() };
+    const runner = { start: vi.fn().mockResolvedValue(processView()), stop: vi.fn().mockResolvedValue({ childId: "child", graceful: true, forced: false }), stopCurrent: vi.fn() };
+    const prepared = { process: options, connect: vi.fn().mockResolvedValue({ attachment: { close: vi.fn() }, root: "root", transport: "socket" }), close: vi.fn() };
+    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, dapFactory: () => dap as any } as any);
+    const launch = coordinator.integratedLaunch("debug", async () => prepared as any, { host: "127.0.0.1", port: 6006, timeoutMs: 100 });
+    const failure = expect(launch).rejects.toMatchObject({ code: "timeout" });
+    await vi.advanceTimersByTimeAsync(100); await failure; release(); await Promise.resolve();
+    expect(dap.close).toHaveBeenCalled(); expect(runner.stop).toHaveBeenCalledWith("child"); expect(coordinator.state).toBe("idle");
+    vi.useRealTimers();
+  });
+
   it("launches the coordinator-owned process before attach and returns only at debug_ready", async () => {
     const order: string[] = []; const dap = { status: { state: "disconnected" }, attach: vi.fn().mockImplementation(async (value) => { order.push("dap"); expect(value.process.pid).toBe(42); return { state: "ready" }; }), setBreakpoints: vi.fn(), continue: vi.fn(), step: vi.fn(), stack: vi.fn(), inspect: vi.fn(), close: vi.fn() };
     const runner = { start: vi.fn().mockImplementation(async () => { order.push("process"); return processView(); }), stop: vi.fn().mockResolvedValue({ childId: "child", graceful: true, forced: false }), stopCurrent: vi.fn() };
@@ -12,6 +57,18 @@ describe("RuntimeSessionCoordinator", () => {
     const result = await coordinator.debugLaunch(options, { host: "127.0.0.1", port: 6006, timeoutMs: 1000 });
     expect(order).toEqual(["process", "dap"]); expect(result.state).toBe("debug_ready"); expect(dap.attach.mock.calls[0][0].timeoutMs).toBeLessThanOrEqual(1000);
     await coordinator.stop(result.id);
+  });
+
+  it("bounds the attach stage of the direct debug launch and closes a late adapter", async () => {
+    vi.useFakeTimers(); let release!: () => void;
+    const attaching = new Promise<void>(resolve => { release = resolve; });
+    const dap = { status: { state: "disconnected" }, attach: vi.fn().mockReturnValue(attaching), setBreakpoints: vi.fn(), continue: vi.fn(), step: vi.fn(), stack: vi.fn(), inspect: vi.fn(), close: vi.fn() };
+    const runner = { start: vi.fn().mockResolvedValue(processView()), stop: vi.fn().mockResolvedValue({ childId: "child", graceful: true, forced: false }), stopCurrent: vi.fn() };
+    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, dapFactory: () => dap as any } as any);
+    const launch = coordinator.debugLaunch(options, { host: "127.0.0.1", port: 6006, timeoutMs: 100 });
+    const failure = expect(launch).rejects.toMatchObject({ code: "timeout" }); await vi.advanceTimersByTimeAsync(100); await failure;
+    release(); await Promise.resolve(); expect(dap.close).toHaveBeenCalled(); expect(runner.stop).toHaveBeenCalledWith("child");
+    vi.useRealTimers();
   });
 
   it("contains breakpoint files and delegates stopped operations to the active DAP client", async () => {

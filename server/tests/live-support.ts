@@ -24,6 +24,18 @@ export async function runCleanupSteps(primaryFailure: unknown, steps: Array<() =
 
 export async function closeAllInOrder(steps: Array<() => Promise<void>>): Promise<void> { return runCleanupSteps(undefined, steps); }
 
+export interface CleanupOwner { defer(step: () => void | Promise<void>): void; close(): Promise<void> }
+
+export async function acquireWithCleanup<T>(setup: (owner: CleanupOwner) => Promise<T>): Promise<T> {
+  const steps: Array<() => Promise<void>> = []; let closed = false;
+  const owner: CleanupOwner = {
+    defer(step) { if (closed) throw new Error("Cleanup ownership is already closed."); steps.unshift(async () => { await step(); }); },
+    async close() { if (closed) return; closed = true; await runCleanupSteps(undefined, steps); },
+  };
+  try { return await setup(owner); }
+  catch (error) { await runCleanupSteps(error, steps); closed = true; throw error; }
+}
+
 export async function createIsolatedGodotProject(sourceRoot: string): Promise<string> {
   const destination = await mkdtemp(`${tmpdir()}${sep}robogodot-phase4-`);
   try {
