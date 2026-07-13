@@ -102,7 +102,9 @@ liveDescribe("Phase 4 live Godot 4.6 LSP acceptance (set GODOT_PATH to enable)",
       await writeFile(diagnosticPath, diagnosticSource, "utf8");
 
       const source = await readFile(resolve(projectPath, "phase4/intelligence_fixture.gd"), "utf8");
-      const diagnostics = await call<{ diagnostics: Array<{ message: string }> }>(harness.client, "godot_lsp_diagnostics", { uri: diagnosticUri, waitMs: 15_000 });
+      let diagnostics: { diagnostics: Array<{ message: string }> } | undefined; let diagnosticError: unknown;
+      for (let attempt = 0; attempt < 2 && !diagnostics; attempt++) { try { diagnostics = await call(harness.client, "godot_lsp_diagnostics", { uri: diagnosticUri, waitMs: 15_000 }); } catch (error) { diagnosticError = error; } }
+      if (!diagnostics) throw diagnosticError;
       expect(diagnostics.diagnostics.some((d) => d.message.includes("phase4_missing_identifier"))).toBe(true);
       const completion = await call<{ items: Array<{ label: string }> }>(harness.client, "godot_lsp_completion", { uri: intelligenceUri, position: positionAt(source, "phase4_sprite.queue_free", "phase4_sprite.".length), limit: 500 });
       expect(completion.items.some((item) => item.label === "queue_free"), JSON.stringify(completion)).toBe(true);
