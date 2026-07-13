@@ -110,7 +110,7 @@ describe("RuntimeSessionCoordinator", () => {
     const runner = { start: vi.fn().mockResolvedValue(processView()), stop: vi.fn().mockResolvedValue({ childId: "child", graceful: true, forced: false }), stopCurrent: vi.fn() };
     const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, dapFactory: () => dap as any, projectPath: resolve("../tests/fixtures/godot_project") } as any);
     const result = await coordinator.debugLaunch(options, { host: "127.0.0.1", port: 6006, timeoutMs: 1000, initialBreakpoints: [{ path: "phase5/runtime_fixture.gd", lines: [14] }] });
-    expect(dap.attach).toHaveBeenCalledWith(expect.objectContaining({ initialBreakpoints: [{ source: { path: resolve("../tests/fixtures/godot_project/phase5/runtime_fixture.gd"), name: "runtime_fixture.gd" }, breakpoints: [{ line: 14 }] }] })); await coordinator.stop(result.id);
+    expect(dap.attach).toHaveBeenCalledWith(expect.objectContaining({ initialBreakpoints: [{ source: { path: resolve("../tests/fixtures/godot_project/phase5/runtime_fixture.gd"), name: "runtime_fixture.gd", checksums: [] }, breakpoints: [{ line: 14 }] }] })); await coordinator.stop(result.id);
   });
 
   it("bounds the attach stage of the direct debug launch and closes a late adapter", async () => {
