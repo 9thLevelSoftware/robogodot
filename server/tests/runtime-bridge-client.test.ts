@@ -69,7 +69,19 @@ describe("RuntimeBridgeClient", () => {
     const config = await fixture(65534); const bridge = await MockRuntimeBridge.file({ sessionId: SESSION, token: TOKEN, sessionRoot: config.sessionRoot });
     const client = new RuntimeBridgeClient(); expect(await client.connect(config)).toBe("file");
     await expect(client.request(SESSION, "runtime.get_node", {}, 1000)).resolves.toEqual({ ok: true });
-    expect(bridge.requests).toHaveLength(1); await client.close(); await bridge.close();
+    expect(bridge.requests).toHaveLength(1);
+    expect(bridge.requests[0]).not.toHaveProperty("token");
+    expect(bridge.requests[0]).toMatchObject({ requestNonce: expect.stringMatching(/^[a-f0-9]{64}$/), requestProof: expect.stringMatching(/^[a-f0-9]{64}$/), paramsJson: "{}" });
+    await client.close(); await bridge.close();
+  });
+
+  it("allows a new connection attempt after an unpublished attempt rejects", async () => {
+    const client = new RuntimeBridgeClient();
+    const invalid = await fixture(1); await writeFile(invalid.args[4]!, "not json");
+    await expect(client.connect(invalid)).rejects.toThrow();
+    const bridge = await MockRuntimeBridge.socket({ sessionId: SESSION, token: TOKEN });
+    await expect(client.connect(await fixture(bridge.port))).resolves.toBe("socket");
+    await client.close(); await bridge.close();
   });
 
   it("bounds pending requests, uses monotonic IDs, normalizes output, and cancels on close", async () => {
@@ -92,19 +104,19 @@ describe("RuntimeBridgeClient", () => {
 
   it("keeps file fallback usable when the server proof arrives after the shared deadline", async () => {
     const provisional = await fixture(1);
-    const bridge = await MockRuntimeBridge.socket({ sessionId: SESSION, token: TOKEN, sessionRoot: provisional.sessionRoot, ackDelayMs: 80 });
+    const bridge = await MockRuntimeBridge.socket({ sessionId: SESSION, token: TOKEN, sessionRoot: provisional.sessionRoot, ackDelayMs: 400 });
     const config = { ...provisional, args: ["--script", "x", "--", "--mcp-runtime-config", provisional.args[4]!] } as const;
     const stored = JSON.parse(await (await import("node:fs/promises")).readFile(config.args[4], "utf8")); stored.preferredPort = bridge.port; await writeFile(config.args[4], JSON.stringify(stored));
-    const client = new RuntimeBridgeClient({ handshakeTimeoutMs: 25 }); expect(await client.connect(config)).toBe("file");
+    const client = new RuntimeBridgeClient({ handshakeTimeoutMs: 250 }); expect(await client.connect(config)).toBe("file");
     await expect(client.request(SESSION, "runtime.scene_tree", {}, 1000)).resolves.toEqual({ ok: true });
     expect(bridge.confirmations).toBe(0); expect(bridge.requests).toHaveLength(1); await client.close(); await bridge.close();
   });
 
   it("waits for authenticated peer readiness before publishing socket transport", async () => {
     const provisional = await fixture(1);
-    const bridge = await MockRuntimeBridge.socket({ sessionId: SESSION, token: TOKEN, sessionRoot: provisional.sessionRoot, readyDelayMs: 80 });
+    const bridge = await MockRuntimeBridge.socket({ sessionId: SESSION, token: TOKEN, sessionRoot: provisional.sessionRoot, readyDelayMs: 400 });
     const stored = JSON.parse(await (await import("node:fs/promises")).readFile(provisional.args[4]!, "utf8")); stored.preferredPort = bridge.port; await writeFile(provisional.args[4]!, JSON.stringify(stored));
-    const client = new RuntimeBridgeClient({ handshakeTimeoutMs: 25 }); expect(await client.connect(provisional)).toBe("file");
+    const client = new RuntimeBridgeClient({ handshakeTimeoutMs: 250 }); expect(await client.connect(provisional)).toBe("file");
     await expect(client.request(SESSION, "runtime.scene_tree", {}, 1000)).resolves.toEqual({ ok: true });
     expect(bridge.requests).toHaveLength(1); await client.close(); await bridge.close();
   });
@@ -112,7 +124,7 @@ describe("RuntimeBridgeClient", () => {
   it("keeps file fallback immutable when peer readiness is lost", async () => {
     const provisional = await fixture(1); const bridge = await MockRuntimeBridge.socket({ sessionId: SESSION, token: TOKEN, sessionRoot: provisional.sessionRoot, omitReady: true });
     const stored = JSON.parse(await (await import("node:fs/promises")).readFile(provisional.args[4]!, "utf8")); stored.preferredPort = bridge.port; await writeFile(provisional.args[4]!, JSON.stringify(stored));
-    const client = new RuntimeBridgeClient({ handshakeTimeoutMs: 25 }); expect(await client.connect(provisional)).toBe("file");
+    const client = new RuntimeBridgeClient({ handshakeTimeoutMs: 250 }); expect(await client.connect(provisional)).toBe("file");
     await expect(client.request(SESSION, "runtime.scene_tree", {}, 1000)).resolves.toEqual({ ok: true }); expect(bridge.requests).toHaveLength(1);
     await client.close(); await bridge.close();
   });

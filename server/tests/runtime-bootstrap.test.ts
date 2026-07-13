@@ -16,7 +16,7 @@ async function fixture() {
   await mkdir(sessionRoot, { recursive: true });
   const launcherPath = resolve("../addons/godot_control_mcp/runtime/runtime_launcher.gd");
   const bridgePath = resolve("../addons/godot_control_mcp/runtime/bridge_manifest.gd");
-  const result = { userRoot, sessionRoot, manifestVersion: 1, launcherPath, bridgePath };
+  const result = { userRoot, sessionRoot, manifestVersion: 1, launcherPath, bridgePath, scene: SCENE };
   const bridge = { call: vi.fn().mockResolvedValue(result) };
   return { userRoot, approvedRoot, sessionRoot, result, bridge };
 }
@@ -34,6 +34,13 @@ describe("RuntimeBootstrap", () => {
     expect(config.args.join(" ")).not.toContain(TOKEN);
     const stored = JSON.parse(await readFile(config.args[4]!, "utf8"));
     expect(stored).toEqual({ version: 1, sessionId: SESSION, token: TOKEN, protocolVersion: 1, preferredPort: 9301, scene: SCENE, launcherResource: config.launcherResource, bridgeResource: config.bridgeResource });
+  });
+
+  it("uses the project's configured main scene when launch omits a scene", async () => {
+    const f = await fixture(); const bootstrap = new RuntimeBootstrap(f.bridge);
+    const config = await bootstrap.prepare({ sessionId: SESSION, token: TOKEN, protocolVersion: 1, preferredPort: 9301 });
+    expect(f.bridge.call).toHaveBeenCalledWith("runtime.prepare", { sessionId: SESSION, token: TOKEN, protocolVersion: 1, preferredPort: 9301 }, { timeoutMs: 15_000, maxRequestBytes: 32_768 });
+    expect(JSON.parse(await readFile(config.args[4]!, "utf8"))).toMatchObject({ scene: SCENE });
   });
 
   it.each([

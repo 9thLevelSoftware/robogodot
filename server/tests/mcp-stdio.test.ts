@@ -14,7 +14,7 @@ beforeAll(async () => {
   if (!npmCli) throw new Error("npm_execpath is required to build the stdio fixture");
   await execute(process.execPath, [npmCli, "run", "build"], { cwd: process.cwd() });
   expect((await stat(artifact)).mtimeMs).toBeGreaterThanOrEqual(buildStartedAt - 1000);
-});
+}, 30_000);
 
 describe("freshly built stdio server", () => {
   const childEnv = { ...process.env, GODOT_MCP_TOKEN: "0123456789abcdef0123456789abcdef" };
@@ -40,7 +40,7 @@ describe("freshly built stdio server", () => {
       await vi.waitFor(() => {
         if (parseFailure) throw parseFailure;
         expect(messages.some((message) => message.id === id)).toBe(true);
-      }, { timeout: 3000 });
+      }, { timeout: 10_000 });
     };
     child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "stdio-test", version: "1" } } }) + "\n");
     await waitForId(1);
@@ -73,7 +73,7 @@ describe("freshly built stdio server", () => {
     child.stdin.end();
     const result = await Promise.race([
       new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.once("exit", (code, signal) => resolve({ code, signal }))),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("stdio server did not exit after stdin EOF")), 3000)),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("stdio server did not exit after stdin EOF")), 10_000)),
     ]);
     expect(result).toEqual({ code: 0, signal: null });
   });

@@ -69,9 +69,9 @@ func _read_config(path: String, expected_session: String) -> Dictionary:
 	var keys: Array = parsed.keys(); keys.sort()
 	var expected: Array = ["bridgeResource", "launcherResource", "preferredPort", "protocolVersion", "scene", "sessionId", "token", "version"]
 	if keys != expected or parsed.version != Manifest.MANIFEST_VERSION or parsed.protocolVersion != Manifest.PROTOCOL_VERSION: return {}
-	if not parsed.token is String or parsed.token.to_utf8_buffer().size() < 32 or parsed.token.to_utf8_buffer().size() > 256: return {}
+	if not parsed.token is String or parsed.token.to_utf8_buffer().size() < Manifest.MIN_TOKEN_BYTES or parsed.token.to_utf8_buffer().size() > Manifest.MAX_TOKEN_BYTES: return {}
 	if not parsed.sessionId is String or parsed.sessionId != expected_session or not _valid_session_id(parsed.sessionId): return {}
-	if not (parsed.preferredPort is int or parsed.preferredPort is float) or not is_finite(float(parsed.preferredPort)) or floorf(float(parsed.preferredPort)) != float(parsed.preferredPort) or parsed.preferredPort < 1 or parsed.preferredPort > 65535: return {}
+	if not _integer_variant(parsed.preferredPort) or parsed.preferredPort < 1 or parsed.preferredPort > 65535: return {}
 	if parsed.launcherResource != Manifest.LAUNCHER_RESOURCE or parsed.bridgeResource != Manifest.BRIDGE_RESOURCE: return {}
 	if _canonical_scene(parsed.scene).is_empty(): return {}
 	return parsed
@@ -81,6 +81,9 @@ func _valid_session_id(value: String) -> bool:
 	for character in value:
 		if character not in "0123456789abcdef": return false
 	return true
+
+func _integer_variant(value: Variant) -> bool:
+	return (value is int or value is float) and is_finite(float(value)) and floorf(float(value)) == float(value)
 
 func _canonical_scene(value: Variant) -> String:
 	if not value is String or value.is_empty() or value.to_utf8_buffer().size() > 1024 or not value.begins_with("res://") or "\\" in value or "%" in value: return ""

@@ -31,10 +31,11 @@ func _process(_delta: float) -> void:
 	if _transport == "socket": return
 	var directory := DirAccess.open(config.sessionRoot)
 	if directory == null: return
-	var names := directory.get_files(); names.sort()
-	for name in names:
-		if _artifact_id(name, "req-", ".json") > 0:
-			_process_file(name); return # exactly one sequential main-thread request
+	var selected := ""; var selected_id := 9223372036854775807
+	for name in directory.get_files():
+		var id := _artifact_id(name, "req-", ".json")
+		if id > 0 and id < selected_id: selected = name; selected_id = id
+	if not selected.is_empty(): _process_file(selected) # exactly one sequential main-thread request
 
 func _poll_socket() -> void:
 	if _peer == null and _server.is_connection_available():
@@ -72,12 +73,13 @@ func _process_socket_message(parsed: Variant) -> void:
 		# can therefore disconnect and use file fallback without splitting the lock.
 		_socket_authenticated = true
 		return
-	if not _authenticated(parsed): return
+	var validated := _validated_request(parsed)
+	if not validated.ok: return
 	if _transport.is_empty(): _transport = "socket"; _server.stop()
 	var id: int = int(parsed.id)
 	if id <= _last_id: return
 	_last_id = id
-	var response := {"type":"response", "version":config.protocolVersion, "sessionId":config.sessionId, "id":id, "result":_dispatch(parsed.method, parsed.get("params", {}))}
+	var response := {"type":"response", "version":config.protocolVersion, "sessionId":config.sessionId, "id":id, "result":_dispatch(parsed.method, validated.params)}
 	if JSON.stringify(response).to_utf8_buffer().size() > MAX_JSON: response = {"type":"response", "version":config.protocolVersion, "sessionId":config.sessionId, "id":id, "error":"response exceeds bound"}
 	_send_socket(response)
 
@@ -105,13 +107,15 @@ func _process_file(name: String) -> void:
 	var bytes := file.get_buffer(length); var read_error := file.get_error(); var final_length := file.get_length(); file.close()
 	if read_error != OK or bytes.size() != length or final_length != length: return
 	var parsed: Variant = JSON.parse_string(bytes.get_string_from_utf8())
-	if not parsed is Dictionary or not _authenticated(parsed) or int(parsed.id) != filename_id: return
-	DirAccess.remove_absolute(path)
+	if not parsed is Dictionary: return
+	var validated := _validated_request(parsed)
+	if not validated.ok or int(parsed.id) != filename_id: return
+	directory.remove(name)
 	if _transport.is_empty(): _transport = "file"; _server.stop(); _drop_peer()
 	var id: int = int(parsed.id)
 	if id <= _last_id: return
 	_last_id = id
-	var result := _dispatch(parsed.method, parsed.get("params", {}))
+	var result := _dispatch(parsed.method, validated.params)
 	var response := {"type":"response", "version":config.protocolVersion, "sessionId":config.sessionId, "id":id, "result":result}
 	var text := JSON.stringify(response)
 	if text.to_utf8_buffer().size() > MAX_JSON: response = {"type":"response", "version":config.protocolVersion, "sessionId":config.sessionId, "id":id, "error":"response exceeds bound"}; text = JSON.stringify(response)
@@ -121,10 +125,15 @@ func _process_file(name: String) -> void:
 	response_file.store_string(text); response_file.flush(); var write_error := response_file.get_error(); response_file.close()
 	if write_error != OK or FileAccess.get_size(temp) != text.to_utf8_buffer().size() or FileAccess.file_exists(final) or DirAccess.rename_absolute(temp, final) != OK: DirAccess.remove_absolute(temp)
 
-func _authenticated(request: Dictionary) -> bool:
+func _validated_request(request: Dictionary) -> Dictionary:
 	var id: Variant = request.get("id")
 	var valid_id: bool = (id is int or id is float) and is_finite(float(id)) and float(id) == floor(float(id)) and id > 0 and id <= 9007199254740991.0
-	return request.get("type") == "request" and request.get("version") == config.protocolVersion and request.get("sessionId") == config.sessionId and request.get("token") == config.token and valid_id and request.get("method") is String and request.method in ["runtime.scene_tree", "runtime.get_node", "runtime.input", "runtime.screenshot"] and request.get("params", {}) is Dictionary
+	var method: Variant = request.get("method"); var nonce: Variant = request.get("requestNonce"); var params_json: Variant = request.get("paramsJson"); var supplied: Variant = request.get("requestProof")
+	if request.get("type") != "request" or request.get("version") != config.protocolVersion or request.get("sessionId") != config.sessionId or not valid_id or not method is String or method not in ["runtime.scene_tree", "runtime.get_node", "runtime.input", "runtime.screenshot"] or not nonce is String or not _valid_nonce(nonce) or not params_json is String or params_json.to_utf8_buffer().size() > MAX_JSON or not supplied is String: return {"ok":false}
+	var expected := _proof("robogodot-request-v1", [str(int(id)), method, nonce, params_json])
+	if not _fixed_equal(supplied, expected): return {"ok":false}
+	var params: Variant = JSON.parse_string(params_json)
+	return {"ok":true, "params":params} if params is Dictionary else {"ok":false}
 
 func _dispatch(method: String, params: Dictionary) -> Dictionary:
 	match method:
@@ -135,8 +144,8 @@ func _dispatch(method: String, params: Dictionary) -> Dictionary:
 	return {"error":"method not found"}
 
 func _proof(label: String, nonces: Array) -> String:
-	var parts: Array = [label, config.sessionId, str(config.protocolVersion)]; parts.append_array(nonces)
-	var context := HMACContext.new(); context.start(HashingContext.HASH_SHA256, config.token.to_utf8_buffer()); context.update(String.chr(0).join(parts).to_utf8_buffer())
+	var parts: Array = [label, config.sessionId, str(int(config.protocolVersion))]; parts.append_array(nonces)
+	var context := HMACContext.new(); context.start(HashingContext.HASH_SHA256, config.token.to_utf8_buffer()); context.update("\n".join(parts).to_utf8_buffer())
 	return context.finish().hex_encode()
 
 func _valid_nonce(value: String) -> bool:
@@ -155,8 +164,10 @@ func cleanup() -> void:
 	if config.is_empty(): return
 	if _input_bridge != null: _input_bridge.release_all()
 	_drop_peer(); _server.stop()
-	for name in DirAccess.get_files_at(config.sessionRoot):
-		if _owned_artifact(name): DirAccess.remove_absolute(config.sessionRoot.path_join(name))
+	var directory := DirAccess.open(config.sessionRoot)
+	if directory != null:
+		for name in directory.get_files():
+			if _owned_artifact(name): directory.remove(name)
 
 func _exit_tree() -> void:
 	cleanup()

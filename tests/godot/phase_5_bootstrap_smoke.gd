@@ -37,9 +37,9 @@ func _run() -> void:
 	_check(not ProjectSettings.has_setting("autoload/GodotControlMcpRuntime"), "bootstrap must not persist an autoload")
 	var duplicate := router.dispatch(request)
 	_check(duplicate.has("error"), "duplicate session must be rejected")
-	var second_request := request.duplicate(true); second_request.id = 3; second_request.params.sessionId = SECOND_SESSION
+	var second_request := request.duplicate(true); second_request.id = 3; second_request.params.sessionId = SECOND_SESSION; second_request.params.erase("scene")
 	var second_response := router.dispatch(second_request)
-	_check(second_response.has("result") and Runtime.owned_session_count() == 2, "every prepared session must be tracked")
+	_check(second_response.get("result", {}).get("scene") == "res://test_scene.tscn" and Runtime.owned_session_count() == 2, "omitted scene must resolve to the configured canonical main scene")
 	var first_config: String = String(result.get("sessionRoot", "")).path_join("bridge-config-v1.json")
 	var secret_file := FileAccess.open(first_config, FileAccess.WRITE)
 	secret_file.store_string('{"token":"must-be-removed"}')

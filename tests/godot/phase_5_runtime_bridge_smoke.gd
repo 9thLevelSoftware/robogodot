@@ -27,21 +27,29 @@ func _run() -> void:
 	for i in range(40): var child := Node.new(); child.name = "N%d" % i; cursor.add_child(child); cursor = child
 	InputMap.add_action("runtime_smoke_action")
 	bridge = RuntimeBridge.new(); root.add_child(bridge)
-	bridge.setup({"sessionId":SESSION, "token":TOKEN, "protocolVersion":1, "preferredPort":49179, "sessionRoot":session_root}, runtime_root)
-	_write_json("req-99.json", {"type":"request", "version":1, "sessionId":SESSION, "token":TOKEN, "id":98, "method":"runtime.scene_tree", "params":{}})
-	var tree := await _request(1, "runtime.scene_tree", {"maxDepth":99})
+	# JSON.parse may represent integral protocol numbers as floats; proof bytes must
+	# still match Node's canonical integer representation.
+	bridge.setup({"sessionId":SESSION, "token":TOKEN, "protocolVersion":1.0, "preferredPort":49179, "sessionRoot":session_root}, runtime_root)
+	_assert(_request_proof(1, "runtime.scene_tree", "0".repeat(64), "{}") == "dbde05a919c24c1edf37408391151532d3a720df9296e0b177b1809ab95a9c40", "Node and Godot request proof parity")
+	_write_request(10, "runtime.scene_tree", {})
+	_write_request(2, "runtime.scene_tree", {})
+	var ordered_two := await _await_response(2)
+	var ordered_ten := await _await_response(10)
+	_assert(ordered_two.has("result") and ordered_ten.has("result"), "numeric request ordering")
+	_write_json("req-99.json", _request_envelope(98, "runtime.scene_tree", {}))
+	var tree := await _request(11, "runtime.scene_tree", {"maxDepth":99})
 	var tree_nodes: Array = tree.get("result", {}).get("nodes", [])
 	_assert(tree_nodes.size() == 34 and tree_nodes.all(func(item): return item.depth <= 32), "tree depth bound")
-	var node := await _request(2, "runtime.get_node", {"path":".", "properties":["name"]})
+	var node := await _request(12, "runtime.get_node", {"path":".", "properties":["name"]})
 	_assert(node.get("result", {}).get("properties", {}).get("name") == "RuntimeRoot", "allowlisted property")
-	var guarded := await _request(3, "runtime.get_node", {"path":"GetterProbe", "properties":["dangerous"]})
+	var guarded := await _request(13, "runtime.get_node", {"path":"GetterProbe", "properties":["dangerous"]})
 	_assert(getter_probe.reads == 0 and guarded.get("result", {}).get("properties", {}).is_empty(), "custom getter not invoked")
-	var input := await _request(4, "runtime.input", {"kind":"action", "action":"runtime_smoke_action", "mode":"press_release", "holdMs":200})
+	var input := await _request(14, "runtime.input", {"kind":"action", "action":"runtime_smoke_action", "mode":"press_release", "holdMs":200})
 	_assert(input.get("result", {}).get("ok") == true and Input.is_action_pressed("runtime_smoke_action"), "action pressed: " + JSON.stringify(input))
 	await create_timer(0.25).timeout
 	_assert(not Input.is_action_pressed("runtime_smoke_action"), "action released exactly once")
 	await process_frame
-	var screenshot := await _request(5, "runtime.screenshot", {"name":"smoke.png"})
+	var screenshot := await _request(15, "runtime.screenshot", {"name":"smoke.png"})
 	var shot: Dictionary = screenshot.get("result", {})
 	_assert(shot.get("error") in ["screenshot viewport unavailable", "screenshot readback failed"], "headless screenshot failure is bounded: " + JSON.stringify(screenshot))
 	var image := Image.create(8, 6, false, Image.FORMAT_RGBA8); image.fill(Color.RED)
@@ -54,8 +62,10 @@ func _run() -> void:
 	_write_text("resp-77.json", "owned"); _write_text(".req-77-0123456789abcdef0123456789abcdef.tmp", "owned")
 	bridge.cleanup(); bridge.cleanup(); await process_frame
 	_assert(FileAccess.file_exists(session_root.path_join("req-prefix.json.bak")) and FileAccess.file_exists(session_root.path_join("resp-prefix.json.bak")) and FileAccess.file_exists(session_root.path_join(".req-1-nothex.tmp")), "prefix-like artifacts preserved")
-	_assert(not FileAccess.file_exists(session_root.path_join("req-99.json")) and not FileAccess.file_exists(session_root.path_join("resp-77.json")) and not FileAccess.file_exists(session_root.path_join(".req-77-0123456789abcdef0123456789abcdef.tmp")), "exact artifacts cleaned")
-	var held := await _request(6, "runtime.input", {"kind":"action", "action":"runtime_smoke_action", "mode":"press", "holdMs":2000})
+	_assert(not FileAccess.file_exists(session_root.path_join("req-99.json")), "exact request artifact cleaned")
+	_assert(not FileAccess.file_exists(session_root.path_join("resp-77.json")), "exact response artifact cleaned")
+	_assert(not FileAccess.file_exists(session_root.path_join(".req-77-0123456789abcdef0123456789abcdef.tmp")), "exact temporary artifact cleaned")
+	var held := await _request(16, "runtime.input", {"kind":"action", "action":"runtime_smoke_action", "mode":"press", "holdMs":2000})
 	_assert(held.get("result", {}).get("ok") == true and Input.is_action_pressed("runtime_smoke_action"), "held action active before exit")
 	root.remove_child(bridge)
 	_assert(not Input.is_action_pressed("runtime_smoke_action"), "tree exit synchronously releases held input")
@@ -67,8 +77,22 @@ func _run() -> void:
 	else: print("PASS phase 5 locked runtime bridge"); quit(0)
 
 func _request(id: int, method: String, params: Dictionary) -> Dictionary:
-	var request := {"type":"request", "version":1, "sessionId":SESSION, "token":TOKEN, "id":id, "method":method, "params":params}
-	_write_json("req-%d.json" % id, request)
+	_write_request(id, method, params)
+	return await _await_response(id, method)
+
+func _write_request(id: int, method: String, params: Dictionary) -> void:
+	_write_json("req-%d.json" % id, _request_envelope(id, method, params))
+
+func _request_envelope(id: int, method: String, params: Dictionary) -> Dictionary:
+	var nonce := Crypto.new().generate_random_bytes(32).hex_encode(); var params_json := JSON.stringify(params)
+	return {"type":"request", "version":1, "sessionId":SESSION, "id":id, "method":method, "requestNonce":nonce, "paramsJson":params_json, "requestProof":_request_proof(id, method, nonce, params_json)}
+
+func _request_proof(id: int, method: String, nonce: String, params_json: String) -> String:
+	var parts := ["robogodot-request-v1", SESSION, "1", str(id), method, nonce, params_json]
+	var context := HMACContext.new(); context.start(HashingContext.HASH_SHA256, TOKEN.to_utf8_buffer()); context.update("\n".join(parts).to_utf8_buffer())
+	return context.finish().hex_encode()
+
+func _await_response(id: int, method := "request") -> Dictionary:
 	for attempt in range(30):
 		await process_frame
 		var response := session_root.path_join("resp-%d.json" % id)

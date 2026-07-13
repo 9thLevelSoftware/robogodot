@@ -68,13 +68,10 @@ export class ProcessRunner {
       await this.deps.validate(options);
       if (this.current?.running) throw new Error("A managed process is already running.");
       const argv = ["--path", options.projectPath, ...(options.scene ? [options.scene] : []), ...(options.args ?? [])];
-      let child: RuntimeChild;
-      try {
-        child = this.deps.spawn(options.godotPath, argv, {
-          cwd: options.projectPath, env: { ...process.env, ...options.env }, shell: false,
-          windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
-        });
-      } catch (error) { throw error; }
+      const child = this.deps.spawn(options.godotPath, argv, {
+        cwd: options.projectPath, env: { ...process.env, ...options.env }, shell: false,
+        windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+      });
       const owned = this.install(child, this.deps.childId(), child.pid, this.deps.now());
       this.current = owned;
       this.owned.set(owned.childId, owned);

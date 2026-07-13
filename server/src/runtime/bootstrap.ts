@@ -12,7 +12,7 @@ export interface RuntimePrepareOptions {
   token: string;
   protocolVersion: number;
   preferredPort: number;
-  scene: string;
+  scene?: string;
 }
 
 export interface BridgeLaunchConfig {
@@ -25,7 +25,7 @@ export interface BridgeLaunchConfig {
   readonly args: readonly string[];
 }
 
-interface PrepareResponse { userRoot: string; sessionRoot: string; manifestVersion: number; launcherPath: string; bridgePath: string }
+interface PrepareResponse { userRoot: string; sessionRoot: string; manifestVersion: number; launcherPath: string; bridgePath: string; scene: string }
 interface Dependencies { publishConfig(path: string, contents: string): Promise<void> }
 interface BootstrapBridge { call<T>(method: string, params?: unknown, options?: { timeoutMs?: number; maxRequestBytes?: number }): Promise<T> }
 
@@ -45,7 +45,7 @@ export class RuntimeBootstrap {
       await verifyResource(response.bridgePath, join("addons", "godot_control_mcp", "runtime", "bridge_manifest.gd"), "bridge manifest");
       const canonical = await canonicalSession(response, options.sessionId);
       const configPath = join(canonical.sessionRoot, `bridge-config-v${MANIFEST_VERSION}.json`);
-      const contents = JSON.stringify({ version: MANIFEST_VERSION, sessionId: options.sessionId, token: options.token, protocolVersion: options.protocolVersion, preferredPort: options.preferredPort, scene: options.scene, launcherResource: LAUNCHER_RESOURCE, bridgeResource: BRIDGE_RESOURCE });
+      const contents = JSON.stringify({ version: MANIFEST_VERSION, sessionId: options.sessionId, token: options.token, protocolVersion: options.protocolVersion, preferredPort: options.preferredPort, scene: response.scene, launcherResource: LAUNCHER_RESOURCE, bridgeResource: BRIDGE_RESOURCE });
       await this.publishConfig(configPath, contents);
       return Object.freeze({ sessionId: options.sessionId, userRoot: canonical.userRoot, sessionRoot: canonical.sessionRoot, manifestVersion: MANIFEST_VERSION, launcherResource: LAUNCHER_RESOURCE, bridgeResource: BRIDGE_RESOURCE, args: Object.freeze(["--script", LAUNCHER_RESOURCE, "--", "--mcp-runtime-config", configPath]) });
     } catch (error) {
@@ -75,16 +75,16 @@ function validateRequest(value: RuntimePrepareOptions): void {
   if (tokenBytes < 32 || tokenBytes > 256) throw new Error("Runtime token must contain between 32 and 256 UTF-8 bytes.");
   if (value.protocolVersion !== MANIFEST_VERSION) throw new Error("Unsupported runtime protocol version.");
   if (!Number.isInteger(value.preferredPort) || value.preferredPort < 1 || value.preferredPort > 65_535) throw new Error("Invalid runtime bridge port.");
-  if (!value.scene.startsWith("res://") || value.scene.includes("\\") || value.scene.split("/").some(part => part === ".." || part === ".")) throw new Error("Invalid runtime scene resource path.");
+  if (value.scene !== undefined && (!value.scene.startsWith("res://") || value.scene.includes("\\") || value.scene.split("/").some(part => part === ".." || part === "."))) throw new Error("Invalid runtime scene resource path.");
 }
 
 function parseResponse(value: unknown): PrepareResponse {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid runtime.prepare response.");
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record).sort();
-  const expected = ["bridgePath", "launcherPath", "manifestVersion", "sessionRoot", "userRoot"];
+  const expected = ["bridgePath", "launcherPath", "manifestVersion", "scene", "sessionRoot", "userRoot"];
   if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) throw new Error("Invalid runtime.prepare response fields.");
-  if (typeof record.userRoot !== "string" || typeof record.sessionRoot !== "string" || typeof record.launcherPath !== "string" || typeof record.bridgePath !== "string" || !Number.isInteger(record.manifestVersion)) throw new Error("Invalid runtime.prepare response values.");
+  if (typeof record.userRoot !== "string" || typeof record.sessionRoot !== "string" || typeof record.launcherPath !== "string" || typeof record.bridgePath !== "string" || typeof record.scene !== "string" || !record.scene.startsWith("res://") || !Number.isInteger(record.manifestVersion)) throw new Error("Invalid runtime.prepare response values.");
   if (![record.userRoot, record.sessionRoot, record.launcherPath, record.bridgePath].every(isAbsolute)) throw new Error("Invalid runtime.prepare response paths.");
   return record as unknown as PrepareResponse;
 }
@@ -116,7 +116,7 @@ async function cleanupReturnedSession(value: unknown, sessionId: string): Promis
   const record = value as Record<string, unknown>;
   if (typeof record.userRoot !== "string" || typeof record.sessionRoot !== "string") return;
   try {
-    const canonical = await canonicalSession({ userRoot: record.userRoot, sessionRoot: record.sessionRoot, manifestVersion: 0, launcherPath: "", bridgePath: "" }, sessionId);
+    const canonical = await canonicalSession({ userRoot: record.userRoot, sessionRoot: record.sessionRoot, manifestVersion: 0, launcherPath: "", bridgePath: "", scene: "res://cleanup.tscn" }, sessionId);
     await removeExactTree(join(canonical.userRoot, ".mcp"), canonical.sessionRoot);
   } catch { /* never broaden cleanup beyond a proven exact canonical session */ }
 }

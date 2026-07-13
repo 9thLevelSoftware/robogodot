@@ -90,18 +90,18 @@ export async function runServer(dependencies: RunServerDependencies = {}): Promi
 }
 
 export function createRuntimeService(config: ReturnType<typeof resolveConfig>, editorBridge: CoreBridge): RuntimeLifecycle {
-  const coordinator = new RuntimeSessionCoordinator({ runner: new ProcessRunner(), projectPath: config.projectPath } as any);
-  const bootstrap = new RuntimeBootstrap(editorBridge as any);
+  const coordinator = new RuntimeSessionCoordinator({ runner: new ProcessRunner(), ...(config.projectPath ? { projectPath: config.projectPath } : {}) });
+  const bootstrap = new RuntimeBootstrap(editorBridge);
   const configured = () => {
     if (!config.godotPath || !config.projectPath) throw new GodotMcpError("not_connected", "The runtime process service is not configured.", "Set GODOT_PATH and GODOT_PROJECT_PATH before launching a managed runtime.");
     return { godotPath: config.godotPath, projectPath: config.projectPath };
   };
   const launchIntegrated = (mode: "normal" | "debug", options: { scene?: string; args?: string[]; timeoutMs?: number; initialBreakpoints?: { path: string; lines: number[] }[] }) => {
-    const paths = configured(); const scene = options.scene ?? "res://test_scene.tscn";
+    const paths = configured(); const scene = options.scene;
     return coordinator.integratedLaunch(mode, async (sessionId, token) => {
       const runtimePort = Number(process.env.GODOT_RUNTIME_PORT ?? config.editorPort + 1);
       const debugPort = Number(process.env.GODOT_REMOTE_DEBUG_PORT ?? 6007);
-      const prepared = await bootstrap.prepare({ sessionId, token, protocolVersion: 1, preferredPort: runtimePort, scene });
+      const prepared = await bootstrap.prepare({ sessionId, token, protocolVersion: 1, preferredPort: runtimePort, ...(scene ? { scene } : {}) });
       const client = new RuntimeBridgeClient();
       let artifactsClosed = false;
       const closeArtifacts = async () => { if (artifactsClosed) return; await bootstrap.cleanup(prepared); artifactsClosed = true; };

@@ -44,7 +44,7 @@ describe("DapClient", () => {
   });
   it("uses the DAP disconnect handshake when the coordinator closes a live client", async () => {
     const mock = await server(); const client = new DapClient(); const attaching = client.attach({ host: "127.0.0.1", port: mock.port, runtimeSessionId: SESSION, process: { pid: 2 } }); await respondHandshake(mock); await expect.poll(() => mock.messages.length).toBe(3); mock.respond(mock.messages[2]); await attaching;
-    const closing = client.close(); await expect.poll(() => mock.messages.at(-1)?.command).toBe("disconnect"); expect(mock.messages.at(-1).arguments).toEqual({ restart: false, terminateDebuggee: false }); mock.respond(mock.messages.at(-1)); await expect(closing).resolves.toBeUndefined(); expect(client.status.state).toBe("disconnected");
+    const closing = client.close(); await expect.poll(() => mock.messages.at(-1)?.command).toBe("disconnect"); expect(mock.messages.at(-1).arguments).toEqual({ restart: false, terminateDebuggee: false }); mock.respond(mock.messages.at(-1)); await expect(closing).resolves.toBeUndefined(); expect(client.status.state).toBe("disconnected"); expect(client.status).not.toHaveProperty("capabilities"); expect(client.status).not.toHaveProperty("degradation");
   });
   it("immediately cancels a never-resolving socket acquisition", async () => {
     const client = new DapClient({ socketFactory: () => new Promise(() => undefined) }); const attaching = client.attach({ host: "127.0.0.1", port: 6006, runtimeSessionId: SESSION, process: { pid: 9 }, timeoutMs: 10_000 }); await client.close();

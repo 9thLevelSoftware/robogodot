@@ -14,8 +14,8 @@ export interface RuntimeSessionSnapshot { readonly id: string; readonly mode: Ru
 export interface RuntimeOutput extends OutputPage { sessionId: string; running: boolean; exit?: ManagedProcess["exit"] }
 export interface RuntimeStopResult extends Omit<StopResult, "childId"> { sessionId: string }
 type Runner = Pick<ProcessRunner, "start" | "stop" | "stopCurrent">;
-export interface RuntimeSessionDependencies { runner: Runner; sessionId?: () => string; secret?: () => string; monitorMs?: number; screenshotOpen?: typeof open; screenshotLstat?: typeof lstat }
-interface DapAttachment extends RuntimeLifecycle { readonly status: DapClientStatus; attach(options: DapAttachOptions): Promise<unknown>; setBreakpoints(source: { path: string; name?: string }, breakpoints: readonly { line: number }[]): Promise<unknown>; continue(thread: DapReference): Promise<unknown>; step(kind: "over" | "into", thread: DapReference): Promise<unknown>; stack(thread?: DapReference, startFrame?: number): Promise<unknown>; inspect(frame: DapReference, variables?: DapReference, start?: number): Promise<unknown> }
+export interface RuntimeSessionDependencies { runner: Runner; sessionId?: () => string; secret?: () => string; monitorMs?: number; screenshotOpen?: typeof open; screenshotLstat?: typeof lstat; projectPath?: string; dapFactory?: () => DapAttachment }
+export interface DapAttachment extends RuntimeLifecycle { readonly status: DapClientStatus; attach(options: DapAttachOptions): Promise<unknown>; setBreakpoints(source: { path: string; name?: string; checksums?: readonly unknown[] }, breakpoints: readonly { line: number }[]): Promise<unknown>; continue(thread: DapReference): Promise<unknown>; step(kind: "over" | "into", thread: DapReference): Promise<unknown>; stack(thread?: DapReference, startFrame?: number): Promise<unknown>; inspect(frame: DapReference, variables?: DapReference, start?: number): Promise<unknown> }
 export interface RuntimeDebugAttach { host: string; port: number; timeoutMs: number; bridge?: { transport: "socket" | "file" }; initialBreakpoints?: readonly { path: string; lines: readonly number[] }[] }
 export interface RuntimePreparedLaunch extends RuntimeLifecycle { process: ProcessStartOptions; connect(): Promise<{ attachment: RuntimeBridgeAttachment; root: string; transport: "socket" | "file" }> }
 
@@ -45,8 +45,8 @@ export class RuntimeSessionCoordinator {
     this.monitorMs = dependencies.monitorMs ?? 25;
     this.screenshotOpen = dependencies.screenshotOpen ?? open;
     this.screenshotLstat = dependencies.screenshotLstat ?? lstat;
-    this.projectPath = (dependencies as RuntimeSessionDependencies & { projectPath?: string }).projectPath;
-    this.dapFactory = (dependencies as RuntimeSessionDependencies & { dapFactory?: () => DapAttachment }).dapFactory ?? (() => new DapClient(this.projectPath ? { projectRoot: this.projectPath } : {}));
+    this.projectPath = dependencies.projectPath;
+    this.dapFactory = dependencies.dapFactory ?? (() => new DapClient(this.projectPath ? { projectRoot: this.projectPath } : {}));
   }
 
   get state(): RuntimeSessionState { return this.owned?.state ?? "idle"; }
@@ -76,7 +76,7 @@ export class RuntimeSessionCoordinator {
 
   async debugSetBreakpoints(sessionId: string, path: string, lines: number[]): Promise<unknown> {
     const owned = this.getDebug(sessionId); const absolute = await this.containedSource(path);
-    const raw = await owned.dap!.setBreakpoints({ path: absolute, name: basename(absolute), checksums: [] } as any, lines.map(line => ({ line })));
+    const raw = await owned.dap!.setBreakpoints({ path: absolute, name: basename(absolute), checksums: [] }, lines.map(line => ({ line })));
     const breakpoints = optionalOwn(raw, "breakpoints");
     const list = breakpoints === undefined ? [] : ownArray({ breakpoints }, "breakpoints");
     if (list.length > 500) throw invalidBridge();

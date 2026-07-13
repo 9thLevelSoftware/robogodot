@@ -7,7 +7,7 @@ import { encodeFrame, FrameDecoder, MAX_JSON_BYTES, plainJson } from "./bridge-p
 
 type Transport = "socket" | "file";
 interface SecretConfig { sessionId: string; token: string; protocolVersion: number; preferredPort: number }
-interface Pending { resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout; sessionId: string }
+interface Pending { resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout }
 
 export class RuntimeBridgeClient {
   private transport: Transport | undefined; private socket: Socket | undefined; private secret: SecretConfig | undefined; private config: BridgeLaunchConfig | undefined;
@@ -16,7 +16,8 @@ export class RuntimeBridgeClient {
 
   async connect(config: BridgeLaunchConfig): Promise<Transport> {
     if (this.transport) return this.transport; if (this.connectPromise) return this.connectPromise; if (this.closed) throw new Error("Runtime bridge is closed.");
-    this.connectPromise = this.connectOnce(config); return this.connectPromise;
+    const attempt = this.connectOnce(config); this.connectPromise = attempt;
+    try { return await attempt; } finally { if (this.connectPromise === attempt) this.connectPromise = undefined; }
   }
 
   private async connectOnce(config: BridgeLaunchConfig): Promise<Transport> {
@@ -37,13 +38,14 @@ export class RuntimeBridgeClient {
     const normalizedParams = plainJson(params);
     if (this.exhausted || !Number.isSafeInteger(this.nextId)) throw new Error("Runtime bridge request ID exhausted.");
     const id = this.nextId; if (id === Number.MAX_SAFE_INTEGER) this.exhausted = true; else this.nextId++;
-    const request = plainJson({ type: "request", version: this.secret.protocolVersion, sessionId, token: this.secret.token, id, method, params: normalizedParams }) as Record<string, unknown>;
+    const paramsJson = JSON.stringify(normalizedParams); const requestNonce = randomBytes(32).toString("hex");
+    const request = plainJson({ type: "request", version: this.secret.protocolVersion, sessionId, id, method, requestNonce, paramsJson, requestProof: proof(this.secret.token, "robogodot-request-v1", sessionId, this.secret.protocolVersion, String(id), method, requestNonce, paramsJson) }) as Record<string, unknown>;
     const bytes = Buffer.from(JSON.stringify(request)); if (bytes.length > MAX_JSON_BYTES) throw new Error("Runtime bridge request exceeds bound.");
     this.published = true;
     if (this.transport === "file") { this.filePending++; try { return await this.fileRequest<T>(id, request, Date.now() + timeoutMs); } finally { this.filePending--; } }
     return await new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error("Runtime bridge request deadline exceeded.")); }, timeoutMs);
-      this.pending.set(id, { resolve: value => resolve(plainJson(value) as T), reject, timer, sessionId });
+      this.pending.set(id, { resolve: value => resolve(plainJson(value) as T), reject, timer });
       this.socket!.write(encodeFrame(request), error => { if (error) this.rejectOne(id, new Error("Runtime bridge socket publication failed.")); });
     });
   }
@@ -92,7 +94,7 @@ export class RuntimeBridgeClient {
   }
 }
 
-function proof(token: string, label: string, session: string, version: number, ...nonces: string[]) { return createHmac("sha256", token).update([label, session, String(version), ...nonces].join("\0")).digest("hex"); }
+function proof(token: string, label: string, session: string, version: number, ...fields: string[]) { return createHmac("sha256", token).update([label, session, String(version), ...fields].join("\n")).digest("hex"); }
 function fixedProof(actual: string, expected: string) { if (!/^[a-f0-9]{64}$/.test(actual)) return false; return timingSafeEqual(Buffer.from(actual, "hex"), Buffer.from(expected, "hex")); }
 
 export async function readStableResponse(path: string): Promise<Record<string, unknown> | undefined> {
