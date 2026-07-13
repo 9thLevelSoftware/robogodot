@@ -153,3 +153,57 @@ Result: exit 0. Build (`tsc`) completed without errors. Full server suite: 37 fi
 - `ProcessRunner` remains the sole process owner; no spawn, Task 7, tool-registration, or coordinator lifecycle changes were introduced.
 
 Review-wave concerns: none.
+
+## Final stale-capability correction — 2026-07-13
+
+The final review identified that adapter capabilities remained populated between sequential attaches and `terminate()` checked the capability before checking whether the second adapter was fully configured.
+
+### RED evidence
+
+From `C:\Users\dasbl\Documents\RoboGodot\.worktrees\codex-phase-5\server`:
+
+```powershell
+npm test -- --run tests/dap-client.test.ts -t "gates advertised capabilities|resets capabilities before a replacement attach"
+```
+
+Result: exit 1; 1 file failed; 2 tests failed and 17 were filtered out. The degraded-state test received stale `feature_disabled` instead of state-valid `not_connected`, and the sequential-attach test observed an emitted `terminate` request while the second adapter's initialize request was unresolved. This deterministically reproduced stale reuse of the first adapter's `supportsTerminateRequest: true`.
+
+One attempted rerun used the worktree root rather than `server`:
+
+```powershell
+npm test -- --run tests/dap-client.test.ts -t "gates advertised capabilities|resets capabilities before a replacement attach"
+```
+
+Result: exit 1 with npm `ENOENT` for the absent root `package.json`; no tests ran and no product conclusion was drawn. The command was immediately rerun from the correct `server` directory.
+
+### Targeted GREEN evidence
+
+```powershell
+npm test -- --run tests/dap-client.test.ts -t "gates advertised capabilities|resets capabilities before a replacement attach"
+```
+
+Result from `server`: exit 0; 1 file passed; 2 tests passed and 17 were filtered out.
+
+The replacement-attach regression verifies that the first adapter advertises terminate support and reaches stopped generation 1, then closes. At the synchronous start of the second attach it verifies the new runtime session/process metadata, generation 0, and absence of capabilities/degradation; `terminate()` rejects with `not_connected` and emits no request while initialize is unresolved. After the second adapter configures with `supportsTerminateRequest: false`, `terminate()` rejects with `feature_disabled` and still emits no request.
+
+### Final fresh verification
+
+```powershell
+npm test -- --run tests/dap-transport.test.ts tests/dap-client.test.ts; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; npm run typecheck; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; npm run build; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; npm test -- --run
+```
+
+Result: exit 0.
+
+- Focused DAP: 2 files passed; 32/32 tests passed.
+- Typecheck: `tsc --noEmit` completed without errors.
+- Build: `tsc` completed without errors.
+- Full server suite: 37 files passed and 3 skipped; 417 tests passed and 4 skipped out of 421.
+
+### Final correction decisions
+
+- `attach()` now clears adapter capabilities and resets stopped generation synchronously with the new immutable session/process metadata, degradation reset, attaching state, and closing reset, before socket acquisition or any await.
+- `terminate()` now requires `ready` or `stopped` before consulting `supportsTerminateRequest`; it cannot run during attaching, degraded, disconnected, or exited states.
+- The other capability-gated public path is paged variable inspection. It already validates current-session stopped references and captures a valid stopped state before checking `supportsVariablePaging`, so stale capabilities cannot authorize it during attach or outside the current stop.
+- Internal attach configuration remains capability-gated after the current adapter's initialize response, preserving `initialize -> attach -> initialized -> setBreakpoints -> configurationDone`.
+
+Final-correction concerns: none.

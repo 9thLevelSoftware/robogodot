@@ -47,7 +47,7 @@ export class DapClient {
 
   async attach(options: DapAttachOptions): Promise<DapReadyState> {
     if (this.currentState !== "disconnected") throw bad("DAP client is already attached or attaching.");
-    validateAttach(options); this.options = freezeOptions(options); this.currentState = "attaching"; this.degradation = undefined; this.closing = false;
+    validateAttach(options); this.options = freezeOptions(options); this.capabilities = undefined; this.stoppedGeneration = 0; this.degradation = undefined; this.currentState = "attaching"; this.closing = false;
     const timeoutMs = finiteDeadline(options.timeoutMs ?? 5_000), deadline = Date.now() + timeoutMs;
     const controller = new AbortController(); this.attachAbort = controller;
     const transport = this.transportFactory(); this.transport = transport;
@@ -99,7 +99,7 @@ export class DapClient {
     const response = await this.transport!.request("scopes", { frameId: frame.id }); this.assertStop(generation); const raw = copyRecord(response, "scopes response"); const all = array(raw.scopes, "scopes"); const scopes = all.slice(0, MAX_SCOPES).map((item) => this.normalizeScope(item, generation));
     return Object.freeze({ scopes: Object.freeze(scopes), truncated: all.length > MAX_SCOPES });
   }
-  async terminate(): Promise<unknown> { this.requireCapability("supportsTerminateRequest"); this.requireUsable(); this.invalidateStop(); return this.transport!.request("terminate", {}); }
+  async terminate(): Promise<unknown> { this.requireConfigured(); this.requireCapability("supportsTerminateRequest"); this.invalidateStop(); return this.transport!.request("terminate", {}); }
   async disconnect(): Promise<void> {
     const transport = this.transport; if (!transport) return;
     if (this.currentState !== "ready" && this.currentState !== "stopped") { await this.closeTransport(transport); return; }
@@ -118,7 +118,6 @@ export class DapClient {
   private invalidateStop(): void { if (this.currentState === "stopped") this.currentState = "ready"; }
   private validateReference(ref: DapReference): void { if (this.currentState !== "stopped" || ref.runtimeSessionId !== this.options?.runtimeSessionId || ref.stoppedGeneration !== this.stoppedGeneration || !Number.isSafeInteger(ref.id) || ref.id < 0) throw stale(); }
   private requireStopped(): void { if (this.currentState !== "stopped" || !this.transport) throw unavailable(); }
-  private requireUsable(): void { if (!this.transport || (this.currentState !== "ready" && this.currentState !== "stopped" && this.currentState !== "attaching")) throw unavailable(); }
   private requireConfigured(): void { if (!this.transport || (this.currentState !== "ready" && this.currentState !== "stopped")) throw unavailable(); }
   private requireCapability(name: string): void { if (this.capabilities?.[name] !== true) throw disabled(name); }
   private waitForEvent(name: string, timeoutMs: number): EventWait { let settled = false, rejectWait!: (error: Error) => void, timer: NodeJS.Timeout; let remove: () => void = () => undefined; const finish = (error?: Error) => { if (settled) return; settled = true; clearTimeout(timer); remove(); error ? rejectWait(error) : undefined; }; const promise = new Promise<void>((resolve, reject) => { rejectWait = reject; remove = this.onEvent((event) => { if (event.event !== name) return; finish(); resolve(); }); timer = setTimeout(() => finish(new GodotMcpError("timeout", `DAP ${name} event timed out.`, "Launch a new managed debug session and attach again.")), timeoutMs); }); return { promise, cancel: (error) => finish(error) }; }
