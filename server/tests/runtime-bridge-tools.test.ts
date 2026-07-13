@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../src/server.js";
-import { link, lstat, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { RuntimeSessionCoordinator } from "../src/runtime/session.js";
@@ -15,6 +15,7 @@ async function harness(runtime: any) {
 }
 const base = () => ({ launch: vi.fn(), stop: vi.fn(), output: vi.fn() });
 const makePng = (width = 8, height = 6, bytes = 24) => { const png = Buffer.alloc(bytes); Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(png); png.write("IHDR", 12, "ascii"); png.writeUInt32BE(width, 16); png.writeUInt32BE(height, 20); return png; };
+const tempRoot = async (prefix: string) => realpath(await mkdtemp(join(tmpdir(), prefix)));
 async function coordinatorHarness(root: string, request: (session: string, method: string, params: unknown) => Promise<unknown>, dependencies: Record<string, unknown> = {}) {
   const managed = { childId: "child", pid: 42, startedAt: 100, running: true, output: vi.fn() };
   const runner = { start: vi.fn().mockResolvedValue(managed), stop: vi.fn().mockResolvedValue({ childId: "child", alreadyStopped: false, graceful: true, forced: false }), stopCurrent: vi.fn() };
@@ -90,7 +91,7 @@ describe("public runtime bridge tools", () => {
   });
 
   it("binds bridge operations to the active session and verifies a contained PNG", async () => {
-    const root = await mkdtemp(join(tmpdir(), "robogodot-shot-")); const shots = join(root, "shots"); await mkdir(shots);
+    const root = await tempRoot("robogodot-shot-"); const shots = join(root, "shots"); await mkdir(shots);
     const png = makePng(); const shot = join(shots, "a.png"); await writeFile(shot, png);
     const h = await coordinatorHarness(root, async (_session, method) => method === "runtime.scene_tree" ? { nodes: [{ path: ".", name: "Root", type: "Node", depth: 0 }], truncated: false } : method === "runtime.get_node" ? { path: ".", type: "Node", properties: { name: "Root" } } : method === "runtime.input" ? { ok: true } : { path: shot, format: "png", width: 8, height: 6, bytes: png.length });
     try {
@@ -103,7 +104,7 @@ describe("public runtime bridge tools", () => {
   });
 
   it("declares coordinator-backed node/depth truncation and every property omission", async () => {
-    const root = await mkdtemp(join(tmpdir(), "robogodot-data-")); const h = await coordinatorHarness(root, async (_session, method) => method === "runtime.scene_tree" ? { nodes: [{ path: ".", name: "Root", type: "Node", depth: 0 }, { path: "Child", name: "Child", type: "Node", depth: 2 }], truncated: true } : { path: ".", type: "Node", properties: { name: "Root", invalid: Number.NaN } });
+    const root = await tempRoot("robogodot-data-"); const h = await coordinatorHarness(root, async (_session, method) => method === "runtime.scene_tree" ? { nodes: [{ path: ".", name: "Root", type: "Node", depth: 0 }, { path: "Child", name: "Child", type: "Node", depth: 2 }], truncated: true } : { path: ".", type: "Node", properties: { name: "Root", invalid: Number.NaN } });
     try {
       const tree = await h.client.callTool({ name: "godot_runtime_scene_tree", arguments: { sessionId: SESSION, maxDepth: 2 } }); expect(tree.structuredContent).toMatchObject({ truncated: { nodes: true, depth: true } });
       const node = await h.client.callTool({ name: "godot_runtime_get_node", arguments: { sessionId: SESSION, path: ".", properties: ["name", "missing", "invalid"] } }); expect(node.structuredContent).toEqual({ sessionId: SESSION, path: ".", type: "Node", properties: { name: "Root" }, omittedProperties: ["missing", "invalid"] });
@@ -111,7 +112,7 @@ describe("public runtime bridge tools", () => {
   });
 
   it("maps malformed accessor/proxy data, deadlines, and bridge errors without leaking payloads", async () => {
-    const root = await mkdtemp(join(tmpdir(), "robogodot-errors-")); let mode = "accessor"; let getterReads = 0;
+    const root = await tempRoot("robogodot-errors-"); let mode = "accessor"; let getterReads = 0;
     const h = await coordinatorHarness(root, async () => { if (mode === "accessor") { const raw = { truncated: false }; Object.defineProperty(raw, "nodes", { get() { getterReads++; return []; } }); return raw; } if (mode === "proxy") { const revoked = Proxy.revocable({}, {}); revoked.revoke(); return revoked.proxy; } if (mode === "timeout") throw new Error("request deadline exceeded token-secret"); return { error: "token-secret" }; });
     try {
       let result = await h.client.callTool({ name: "godot_runtime_scene_tree", arguments: { sessionId: SESSION } }); expect(errorPayload(result)).toMatchObject({ code: "godot_error", message: "Runtime bridge returned an invalid response." }); expect(getterReads).toBe(0);
@@ -122,7 +123,7 @@ describe("public runtime bridge tools", () => {
   });
 
   it("rejects escaped, linked, non-regular, malformed, mismatched, and oversized screenshots", async () => {
-    const root = await mkdtemp(join(tmpdir(), "robogodot-shot-bad-")); const shots = join(root, "shots"); await mkdir(shots); const outsideRoot = await mkdtemp(join(tmpdir(), "robogodot-outside-"));
+    const root = await tempRoot("robogodot-shot-bad-"); const shots = join(root, "shots"); await mkdir(shots); const outsideRoot = await tempRoot("robogodot-outside-");
     const valid = makePng(); const outside = join(outsideRoot, "outside.png"); await writeFile(outside, valid); const hardlink = join(shots, "hard.png"); await link(outside, hardlink);
     const badSignature = join(shots, "signature.png"); await writeFile(badSignature, Buffer.alloc(24)); const badDimensions = join(shots, "dimensions.png"); await writeFile(badDimensions, valid);
     const sizeMismatch = join(shots, "size.png"); await writeFile(sizeMismatch, valid); const directory = join(shots, "directory.png"); await mkdir(directory); const oversized = join(shots, "oversized.png"); await writeFile(oversized, makePng(8, 6, 16 * 1024 * 1024 + 1));
@@ -138,7 +139,7 @@ describe("public runtime bridge tools", () => {
   });
 
   it("rejects a same-handle screenshot mutation detected after the bounded read", async () => {
-    const root = await mkdtemp(join(tmpdir(), "robogodot-shot-race-")); const shot = join(root, "race.png"); const png = makePng(); await writeFile(shot, png); const identity = await lstat(shot); let statCalls = 0;
+    const root = await tempRoot("robogodot-shot-race-"); const shot = join(root, "race.png"); const png = makePng(); await writeFile(shot, png); const identity = await lstat(shot); let statCalls = 0;
     const fakeHandle = { stat: vi.fn(async () => ({ dev: identity.dev, ino: identity.ino, nlink: ++statCalls === 1 ? 1 : 2, size: png.length, mtimeMs: identity.mtimeMs })), read: vi.fn(async (target: Buffer) => { png.copy(target); return { bytesRead: png.length, buffer: target }; }), close: vi.fn() };
     const h = await coordinatorHarness(root, async () => ({ path: shot, format: "png", width: 8, height: 6, bytes: png.length }), { screenshotOpen: vi.fn().mockResolvedValue(fakeHandle) });
     try { const result = await h.client.callTool({ name: "godot_runtime_screenshot", arguments: { sessionId: SESSION } }); expect(errorPayload(result)).toMatchObject({ code: "godot_error", message: "Runtime screenshot verification failed." }); expect(fakeHandle.read).toHaveBeenCalledOnce(); }
@@ -146,7 +147,7 @@ describe("public runtime bridge tools", () => {
   });
 
   it("lstats and rejects the lexical raw screenshot candidate before realpath resolution", async () => {
-    const root = await mkdtemp(join(tmpdir(), "robogodot-shot-raw-link-")); const raw = join(root, "raw-link.png");
+    const root = await tempRoot("robogodot-shot-raw-link-"); const raw = join(root, "raw-link.png");
     const screenshotLstat = vi.fn(async (path: string) => path === resolve(raw)
       ? { isDirectory: () => false, isFile: () => true, isSymbolicLink: () => true, nlink: 1, size: 24 }
       : { isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false, nlink: 1, size: 0 });

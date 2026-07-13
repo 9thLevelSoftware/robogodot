@@ -1,4 +1,4 @@
-import { link, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,7 +11,7 @@ const SESSION = "0123456789abcdef0123456789abcdef";
 const TOKEN = "t".repeat(64);
 
 async function fixture(port: number) {
-  const userRoot = await mkdtemp(join(tmpdir(), "robogodot-runtime-")); roots.push(userRoot);
+  const userRoot = await realpath(await mkdtemp(join(tmpdir(), "robogodot-runtime-"))); roots.push(userRoot);
   const sessionRoot = join(userRoot, ".mcp", SESSION); await mkdir(sessionRoot, { recursive: true });
   const configPath = join(sessionRoot, "bridge-config-v1.json");
   await writeFile(configPath, JSON.stringify({ version: 1, protocolVersion: 1, sessionId: SESSION, token: TOKEN, preferredPort: port }));

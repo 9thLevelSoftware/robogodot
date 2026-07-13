@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -11,7 +11,7 @@ const TOKEN = "t".repeat(64);
 const SCENE = "res://test_scene.tscn";
 
 async function fixture() {
-  const userRoot = await mkdtemp(join(tmpdir(), "robogodot-bootstrap-")); roots.push(userRoot);
+  const userRoot = await realpath(await mkdtemp(join(tmpdir(), "robogodot-bootstrap-"))); roots.push(userRoot);
   const approvedRoot = join(userRoot, ".mcp"); const sessionRoot = join(approvedRoot, SESSION);
   await mkdir(sessionRoot, { recursive: true });
   const launcherPath = resolve("../addons/godot_control_mcp/runtime/runtime_launcher.gd");
