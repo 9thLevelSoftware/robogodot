@@ -1,23 +1,16 @@
-# Phase 4 SDD Progress
+# Phase 5 SDD Progress
 
-Branch base: `1c4707761d227ac93fbf5222adc30b2ce1f43cb9`
-Plan: `docs/superpowers/plans/2026-07-12-phase-4-code-intelligence-lsp.md`
-Baseline: 22 test files passed, 2 skipped; 178 tests passed, 2 skipped.
+Branch base: `005371663105697c002ce8c630e7a9179f30d83c`
+Plan: `docs/superpowers/plans/2026-07-12-phase-5-runtime-debug.md`
+Baseline: 28 test files passed, 3 skipped; 315 tests passed, 4 skipped.
 
-| Task | Reviewed commit range | Implementation review | Independent spec review | Focused and integration evidence |
-|---|---|---|---|---|
-| 1 — bounded transport | `0a9b46f..9910c35` | Approved after transport-boundary and outbound-frame fixes | Compliant | 22 focused tests; final server suite 200 passed / 2 skipped; typecheck and build passed |
-| 2 — session lifecycle | `9910c35..af00c7d` | Approved after race, replay, timeout, and reconnect-serialization fixes | Compliant | 40 focused tests; final server suite 218 passed / 2 skipped; typecheck and build passed |
-| 3 — documents/diagnostics | `af00c7d..7ff5793` | Approved after extension, URI, waiter, normalization, and post-open realpath checks | Compliant | 17 focused tests; final server suite 235 passed / 2 skipped; typecheck and build passed |
-| 4 — seven MCP tools | `7ff5793..70eef90` | Approved after descriptor-safe, bounded normalization hardening | Compliant | 15 tool tests; final server suite 252 passed / 2 skipped; typecheck and build passed |
-| 5 — optional LSP host | `70eef90..638cff2` | Approved after close-race, child-lifetime, listener, and owned-error fixes | Compliant | 25 focused tests; final server suite 279 passed / 2 skipped; typecheck and build passed |
-| 6 — live acceptance | `638cff2..fe729ec` | Approved after capability, identity, cleanup, and fixture-isolation fixes | Compliant | Phase 4 live 2/2; two normal parallel all-live runs 305/305; standard suite/typecheck/build passed |
-| 7 — docs/integration | `fe729ec..ec68042` | Approved after exact-contract, ledger, and workspace-symbol semantics corrections | Compliant | Architecture 90 passed / 1 optional skip; docs check and build passed; complete matrix recorded in `task-7-report.md` |
+- Task 1: complete (commits `d7596ef..4fc7692`, spec compliant, quality approved; 21 focused and 336 full-suite tests passed, typecheck/build passed)
+- Task 2: complete (commits `4fc7692..3c77ac3`, spec compliant, quality approved; 40 focused and 350 full-suite tests passed, typecheck/build passed; SDK errors use exact JSON text without structuredContent after discovery)
+- Task 3: complete (commits `3c77ac3..1349dfc`, spec compliant, quality approved; bootstrap 14/14, server 364/4 skipped with 30s hook timeout, typecheck/build and Godot smokes passed)
+- Task 4: complete (commits `1349dfc..78b8a6c`, spec compliant, quality approved; 10 focused and 374 full-suite tests passed, typecheck/build and complete Godot smoke passed)
+- Task 5: complete (commits `78b8a6c..5c65ffc`, spec compliant, quality approved; 43 focused and 385 full-suite tests passed, typecheck/build passed, stdio inventory exactly 45)
+- Task 6: complete (commits `5c65ffc..f3ad739`, spec compliant, quality approved; 32 focused and 417 full-suite tests passed, typecheck/build passed)
+- Task 7: complete (commits `f3ad739..2f4c1f7`, spec compliant, quality approved; 47 focused and 428 full-suite tests passed, typecheck/build passed, exact inventory 51, Phase 5 live 2/2 and aggregate Godot smokes passed)
+- Task 8: implementation and verification complete; the first whole-branch review's seven Important findings are fixed and final re-review is in progress. Documentation records the exact 51-tool inventory and 13 Phase 5 contracts, accepted Q-010/Q-011/Q-012, sole ProcessRunner ownership, final authenticated `hello_ready` transport lock/no replay, attach-only DAP, exact cleanup, and future Phase 6–8 boundaries. CI keeps the Linux/Windows matrix, provisions Linux Xvfb, and runs each live suite in its own fail-closed step. Fresh evidence: architecture 95 passed/1 optional skip; server 435 passed/6 skipped; focused review fixes 46/46; typecheck/build/docs check passed; exact inventory 10/10; aggregate Godot smoke passed; live editor 1/1, Phase 3 1/1, Phase 4 2/2, Phase 5 2/2. Hosted Linux execution remains external CI proof.
 
-## Capability and deferral ledger
-
-- Public Phase 4 inventory is exactly seven read-only `godot_lsp_*` tools, bringing the current branch inventory to exactly 38 tools.
-- Godot 4.6 does not advertise `workspace/symbol`; `godot_lsp_workspace_symbols` returns `feature_disabled`. Per-document symbols are the supported alternative.
-- The Phase 4 part of `Q-002` is resolved: Phase 1 is the API prerequisite; completed Phase 2 is a coordination and regression milestone. Phase 6 dependency strength remains open.
-- Portable Node APIs cannot make mutable-path authorization and `open()` fully atomic on every platform. Phase 4 narrows the race with canonical pre/post-open validation and same-handle reads; hostile-filesystem atomicity remains deliberately deferred to Phase 6/7.
-- Phase 6 broader `FsGuard` and Phase 7 uniform safety/audit/cache hardening remain deferred and are not claimed by Phase 4.
+Final verification notes: the earlier default 10-second `mcp-stdio` build-hook concern did not recur in the fresh Task 8 full suite (exit 0 in 77.58 seconds). Godot aggregate smoke exited 0 with the known non-fatal Mono missing .NET SDK 8.0.28 warning and intentional negative-fixture/shutdown diagnostics. Phase 6 batch/filesystem, Phase 7 uniform hardening/audit, and Phase 8 packaging/resources/prompts remain deliberate future work.

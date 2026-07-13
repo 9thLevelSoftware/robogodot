@@ -14,7 +14,7 @@ func perform(params: Dictionary) -> Dictionary:
 	var event: InputEvent; var release: InputEvent; var should_release := false
 	if kind == "action":
 		var action: Variant = params.get("action"); var mode: Variant = params.get("mode")
-		if not action is String or action.length() > 128 or not InputMap.has_action(action) or mode not in ["press", "release", "press_release"]: return {"error":"invalid action"}
+		if not action is String or action.to_utf8_buffer().size() > 256 or not InputMap.has_action(action) or mode not in ["press", "release", "press_release"]: return {"error":"invalid action"}
 		var signature := "action:%s" % action
 		if mode == "release": Input.action_release(action); _forget(signature)
 		else:

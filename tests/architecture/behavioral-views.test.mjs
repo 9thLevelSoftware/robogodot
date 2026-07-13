@@ -60,21 +60,21 @@ const runtimeMessages = new Map([
   ["FLOW-RUN-002", "PROCESS_RUNNER->>RUNNING_GAME: spawn godot --path <project> [scene]"],
   ["FLOW-RUN-003", "RUNNING_GAME-->>PROCESS_RUNNER: stream stdout/stderr into ring buffer"],
   ["FLOW-RUN-004", "MCP_CLIENT->>RUNTIME_TOOLS: incremental output using since/next"],
-  ["FLOW-RUN-005", "RUNTIME_TOOLS->>DAP_CLIENT: initialize DAP"],
-  ["FLOW-RUN-006", "DAP_CLIENT->>GODOT_DAP: [UNRESOLVED] launch or attach ownership (Q-010)"],
-  ["FLOW-RUN-007", "RUNTIME_TOOLS->>RUNTIME_DRIVER: inject/use bridge autoloads through Phase 2 execution"],
+  ["FLOW-RUN-005", "RUNTIME_TOOLS->>DAP_CLIENT: initialize attach-only DAP"],
+  ["FLOW-RUN-006", "DAP_CLIENT->>GODOT_DAP: attach to ProcessRunner-owned exact child (Q-010 accepted)"],
+  ["FLOW-RUN-007", "RUNTIME_TOOLS->>RUNTIME_DRIVER: plugin resolves canonical user:// root and injects bridge"],
   ["FLOW-RUN-008", "MCP_CLIENT->>RUNTIME_TOOLS: runtime inspect/input/screenshot request"],
-  ["FLOW-RUN-009", "RUNTIME_TOOLS->>RUNTIME_DRIVER: allocate monotonic request ID"],
-  ["FLOW-RUN-010", "RUNTIME_DRIVER->>IPC_FILES: write user://.mcp/req.json"],
+  ["FLOW-RUN-009", "RUNTIME_TOOLS->>RUNTIME_DRIVER: allocate ID after authenticated transport lock"],
+  ["FLOW-RUN-010", "RUNTIME_DRIVER->>IPC_FILES: file fallback atomically writes req-<id>.json"],
   ["FLOW-RUN-011", "AUTOLOADS->>IPC_FILES: autoload polls and reads request"],
   ["FLOW-RUN-012", "AUTOLOADS->>RUNNING_GAME: execute requested operation"],
   ["FLOW-RUN-013", "AUTOLOADS->>IPC_FILES: write user://.mcp/resp-<id>.json"],
   ["FLOW-RUN-014", "RUNTIME_DRIVER->>IPC_FILES: server reads and deletes response"],
   ["FLOW-RUN-015", "RUNTIME_TOOLS-->>MCP_CLIENT: return structured result"],
   ["FLOW-RUN-016", "RUNTIME_TOOLS-->>MCP_CLIENT: timeout alternative with game-not-running hint"],
-  ["FLOW-RUN-017", "RUNTIME_TOOLS-->>MCP_CLIENT: screenshot alternative returns path, dimensions, and PNG"],
+  ["FLOW-RUN-017", "RUNTIME_TOOLS-->>MCP_CLIENT: return verified path, dimensions, bytes, SHA-256, and PNG"],
   ["FLOW-RUN-018", "RUNTIME_TOOLS->>PROCESS_RUNNER: graceful stop, then force if required"],
-  ["FLOW-RUN-019", "RUNTIME_TOOLS->>RUNTIME_TOOLS: remove IPC files, end DAP, clean orphan PID"],
+  ["FLOW-RUN-019", "RUNTIME_TOOLS->>RUNTIME_TOOLS: close DAP, close bridge, stop exact ProcessRunner child"],
   ["FLOW-RUN-020", "RUNTIME_TOOLS->>AUDIT: audit outcome"],
 ]);
 
@@ -208,7 +208,7 @@ const lifecycleViews = [
     transitions: new Map([
       ["FLOW-DAP-001", "[*] --> DAP_DISCONNECTED : [INFERRED] initial disconnected state"],
       ["FLOW-DAP-002", "DAP_DISCONNECTED --> DAP_INITIALIZED : [INFERRED] initialize"],
-      ["FLOW-DAP-003", "DAP_INITIALIZED --> DAP_LAUNCHED_ATTACHED : [INFERRED] launch or attach (Q-010)"],
+      ["FLOW-DAP-003", "DAP_INITIALIZED --> DAP_LAUNCHED_ATTACHED : [INFERRED] attach only (Q-010 accepted)"],
       ["FLOW-DAP-004", "DAP_LAUNCHED_ATTACHED --> DAP_RUNNING : [INFERRED] continue"],
       ["FLOW-DAP-005", "DAP_RUNNING --> DAP_PAUSED : [INFERRED] breakpoint or pause"],
       ["FLOW-DAP-006", "DAP_PAUSED --> DAP_RUNNING : [INFERRED] continue"],
@@ -367,10 +367,10 @@ test("runtime debug sequence preserves the exact setup, interaction, and shutdow
       "SHUTDOWN",
       "since",
       "next",
-      "req.json",
+      "req-<id>.json",
       "resp-<id>.json",
       "PNG",
-      "[UNRESOLVED]",
+      "attach-only",
       "Q-010",
       "Q-011",
       "Q-012",
@@ -489,7 +489,10 @@ test("runtime debug view has exhaustive adjacent participant and relationship ou
   for (const [index, row] of relationshipRows.entries()) {
     const flowId = `FLOW-RUN-${String(index + 1).padStart(3, "0")}`;
     assert.equal(row.split("|").length, 8, `relationship outline column count: ${flowId}`);
-    assert.equal(row.split("|")[4].trim(), flowId === "FLOW-RUN-006" ? "Unresolved" : "Explicit", `${flowId} evidence`);
+    const expectedEvidence = ["FLOW-RUN-006", "FLOW-RUN-010"].includes(flowId)
+      ? "Implemented / accepted"
+      : ["FLOW-RUN-017", "FLOW-RUN-019"].includes(flowId) ? "Implemented" : "Explicit";
+    assert.equal(row.split("|")[4].trim(), expectedEvidence, `${flowId} evidence`);
     assert.match(row.split("|")[5], /Phase 5 \/.+/, `${flowId} phase and protocol detail`);
     assert.ok(
       row.includes("[trace](traceability.md#architecture-atlas-traceability)"),

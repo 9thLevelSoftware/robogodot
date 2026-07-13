@@ -3,7 +3,7 @@ extends RefCounted
 const MAX_PNG := 16 * 1024 * 1024
 func capture(viewport: Viewport, shots_dir: String, params: Dictionary) -> Dictionary:
 	var name: Variant = params.get("name", "shot.png")
-	if not name is String or name.is_empty() or name.length() > 128 or name.get_file() != name or not name.ends_with(".png") or ".." in name: return {"error":"invalid screenshot name"}
+	if not name is String or name.is_empty() or name.to_utf8_buffer().size() > 256 or name.get_file() != name or not name.ends_with(".png") or ".." in name: return {"error":"invalid screenshot name"}
 	var path := shots_dir.path_join(name).simplify_path()
 	if path.get_base_dir() != shots_dir.simplify_path(): return {"error":"screenshot path escaped"}
 	if DisplayServer.get_name() == "headless" or viewport == null or viewport.get_texture() == null: return {"error":"screenshot viewport unavailable"}

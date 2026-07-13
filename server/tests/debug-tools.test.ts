@@ -30,6 +30,15 @@ describe("public debug tools", () => {
         { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       ]);
       for (const tool of tools) expect(tool.inputSchema).toMatchObject({ type: "object", additionalProperties: false });
+      for (const tool of tools) expect(tool.outputSchema).toMatchObject({ type: "object", additionalProperties: false });
+      expect(tools.map(tool => Object.keys((tool.outputSchema as any).properties))).toEqual([
+        ["sessionId", "mode", "state", "pid", "startedAt", "bridgeTransport"],
+        ["sessionId", "path", "breakpoints"],
+        ["sessionId", "resumed"],
+        ["sessionId", "kind", "resumed"],
+        ["sessionId", "stoppedGeneration", "threads", "frames", "totalFrames", "truncated"],
+        ["sessionId", "stoppedGeneration", "scopes", "variables", "next", "truncated"],
+      ]);
       expect((tools[3].inputSchema as any).properties.kind.enum).toEqual(["over", "into"]);
       const unavailable = await h.client.callTool({ name: "godot_debug_launch", arguments: {} });
       expect(unavailable.isError).toBe(true); expect(unavailable.structuredContent).toBeUndefined();
@@ -44,7 +53,7 @@ describe("public debug tools", () => {
       debugSetBreakpoints: vi.fn().mockResolvedValue({ sessionId: SESSION, path: "phase5/runtime_fixture.gd", breakpoints: [{ line: 12, verified: true }] }),
       debugContinue: vi.fn().mockResolvedValue({ sessionId: SESSION, resumed: true }),
       debugStep: vi.fn().mockResolvedValue({ sessionId: SESSION, kind: "over", resumed: true }),
-      debugStack: vi.fn().mockResolvedValue({ sessionId: SESSION, stoppedGeneration: 2, threads: [{ id: 1, name: "Main", ref }], frames: [{ id: 7, name: "jump", line: 12, column: 1, ref, source: { path: "res://phase5/runtime_fixture.gd" } }], truncated: false }),
+      debugStack: vi.fn().mockResolvedValue({ sessionId: SESSION, stoppedGeneration: 2, threads: [{ id: 1, name: "Main", ref }], frames: [{ id: 7, name: "jump", line: 12, column: 0, ref, source: { path: "res://phase5/runtime_fixture.gd" } }], truncated: false }),
       debugInspect: vi.fn().mockResolvedValue({ sessionId: SESSION, stoppedGeneration: 2, variables: [{ name: "phase5_value", value: "42", type: "int", ref: { ...ref, id: 0 } }], truncated: false }),
     };
     const h = await harness(debug);
@@ -71,6 +80,14 @@ describe("public debug tools", () => {
         ["godot_debug_step", { sessionId: SESSION, thread: 1, kind: "out" }],
       ] as const;
       for (const [name, args] of cases) { const result = await h.client.callTool({ name, arguments: args as any }); expect(result.isError).toBe(true); expect(result.structuredContent).toBeUndefined(); }
+    } finally { await h.close(); }
+  });
+
+  it("rejects debug-service output outside the reviewed strict contract", async () => {
+    const h = await harness({ debugLaunch: vi.fn(), debugSetBreakpoints: vi.fn(), debugContinue: vi.fn().mockResolvedValue({ sessionId: SESSION, resumed: true, secret: "leak" }), debugStep: vi.fn(), debugStack: vi.fn(), debugInspect: vi.fn() });
+    try {
+      const result = await h.client.callTool({ name: "godot_debug_continue", arguments: { sessionId: SESSION, thread: { runtimeSessionId: SESSION, stoppedGeneration: 1, id: 1 } } });
+      expect(result.isError).toBe(true); expect(result.structuredContent).toBeUndefined(); expect(JSON.stringify(result.content)).not.toContain("leak");
     } finally { await h.close(); }
   });
 });

@@ -77,7 +77,9 @@ export class RuntimeSessionCoordinator {
     const owned = this.getDebug(sessionId); const absolute = await this.containedSource(path);
     const raw = await owned.dap!.setBreakpoints({ path: absolute, name: basename(absolute), checksums: [] } as any, lines.map(line => ({ line })));
     const breakpoints = optionalOwn(raw, "breakpoints");
-    return Object.freeze({ sessionId, path: path.split(sep).join("/"), breakpoints: breakpoints === undefined ? Object.freeze([]) : cloneJson(breakpoints) });
+    const list = breakpoints === undefined ? [] : ownArray({ breakpoints }, "breakpoints");
+    if (list.length > 500) throw invalidBridge();
+    return Object.freeze({ sessionId, path: path.split(sep).join("/"), breakpoints: Object.freeze(list.map(normalizeBreakpoint)) });
   }
 
   async debugContinue(sessionId: string, thread: DapReference): Promise<unknown> { const owned = this.getDebug(sessionId); await owned.dap!.continue(thread); return Object.freeze({ sessionId, resumed: true as const }); }
@@ -212,6 +214,10 @@ export class RuntimeSessionCoordinator {
       await this.performLaunch(owned, prepared.process, deadline);
       const connecting = Promise.resolve(prepared.connect());
       const connected = deadline === undefined ? await connecting : await beforeDeadline(connecting, deadline, value => value.attachment.close());
+      if (this.owned !== owned || owned.state !== "running" || !owned.process?.running) {
+        await Promise.resolve(connected.attachment.close()).catch(() => undefined);
+        throw new Error("Runtime launch ended before bridge connection completed.");
+      }
       owned.bridge = connected.attachment; owned.bridgeRoot = connected.root; owned.bridgeTransport = connected.transport; bridgeAdopted = true;
       if (debugAttach) {
         while (true) {
@@ -219,6 +225,7 @@ export class RuntimeSessionCoordinator {
           if (remaining <= 0) throw new GodotMcpError("timeout", "Debug launch deadline expired before DAP attachment.", "Increase timeoutMs or verify Godot runtime and bridge startup.");
           try {
             await beforeDeadline(Promise.resolve(dap.attach({ host: debugAttach.host, port: debugAttach.port, runtimeSessionId: owned.id, process: { pid: owned.process!.pid, startedAt: owned.process!.startedAt }, bridge: { transport: connected.transport }, timeoutMs: remaining })), deadline!, () => dap.close());
+            if (this.owned !== owned || owned.state !== "running" || !owned.process?.running) { await Promise.resolve(dap.close()).catch(() => undefined); throw new Error("Runtime launch ended before DAP attachment completed."); }
             break;
           } catch (error) {
             await Promise.resolve(dap.close()).catch(() => undefined); if (owned.dap === dap) owned.dap = undefined;
@@ -302,6 +309,14 @@ function invalidSession() { return new GodotMcpError("invalid_args", "Unknown, s
 function runtimeError(message: string, hint: string) { return new GodotMcpError("godot_error", message, hint); }
 async function cleanup(value: RuntimeLifecycle | undefined, failures: unknown[]): Promise<void> { if (!value) return; try { await value.close(); } catch (error) { failures.push(error); } }
 function optionalOwn(value: unknown, key: string): unknown { if (!value || typeof value !== "object") return undefined; let descriptor: PropertyDescriptor | undefined; try { descriptor = Object.getOwnPropertyDescriptor(value, key); } catch { throw invalidBridge(); } if (!descriptor) return undefined; if (!("value" in descriptor)) throw invalidBridge(); return descriptor.value; }
+function normalizeBreakpoint(value: unknown): Readonly<Record<string, unknown>> {
+  const verified = optionalOwn(value, "verified"); if (typeof verified !== "boolean") throw invalidBridge();
+  const output: Record<string, unknown> = { verified };
+  for (const key of ["id", "line", "column", "endLine", "endColumn"] as const) { const item = optionalOwn(value, key); if (item !== undefined) { if (!Number.isSafeInteger(item) || (item as number) < (key === "id" ? 0 : 1) || (item as number) > 0x7fffffff) throw invalidBridge(); output[key] = item; } }
+  const offset = optionalOwn(value, "offset"); if (offset !== undefined) { if (!Number.isSafeInteger(offset)) throw invalidBridge(); output.offset = offset; }
+  for (const key of ["message", "instructionReference"] as const) { const item = optionalOwn(value, key); if (item !== undefined) { if (typeof item !== "string" || Buffer.byteLength(item, "utf8") > 8192) throw invalidBridge(); output[key] = item; } }
+  return Object.freeze(output);
+}
 function ownValue(value: unknown, key: string): unknown { const result = optionalOwn(value, key); if (result === undefined) throw invalidBridge(); return result; }
 function ownString(value: unknown, key: string, maximum: number): string { const result = ownValue(value, key); if (typeof result !== "string" || Buffer.byteLength(result, "utf8") > maximum) throw invalidBridge(); return result; }
 function ownBoolean(value: unknown, key: string): boolean { const result = ownValue(value, key); if (typeof result !== "boolean") throw invalidBridge(); return result; }

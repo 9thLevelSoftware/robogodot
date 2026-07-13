@@ -2,7 +2,7 @@
 
 ## Purpose
 
-These four state views isolate the independently recoverable lifecycles behind editor transport, Godot LSP document synchronization, the managed game process, and Godot DAP. The WebSocket state machine is source-defined. The Phase 4 LSP view now maps implemented operations and generation boundaries; its named diagram states remain a documentary projection rather than an exported runtime enum. The unimplemented Phase 5 process and DAP partitions remain inferred projections.
+These four state views isolate the independently recoverable lifecycles behind editor transport, Godot LSP document synchronization, the managed game process, and Godot DAP. The WebSocket state machine is source-defined. Phase 4 and Phase 5 operations are implemented, while their named diagram states remain inferred documentary projections rather than exported runtime enums.
 
 ## Source baseline
 
@@ -11,7 +11,7 @@ These four state views isolate the independently recoverable lifecycles behind e
 - Editor WebSocket connection, heartbeat, and retry behavior: `phase-01-foundation-and-transport.md` — §§4–6 and 8–9.
 - LSP TCP, handshake, document synchronization, reconnect, and shutdown operations: `phase-04-code-intelligence-lsp.md` — §§2, 4, and 6–9.
 - Process and DAP operations, stop escalation, cleanup, and launch ambiguity: `phase-05-runtime-and-debug.md` — §§2 and 4–9.
-- Resolved heartbeat mechanics and unresolved DAP launch ownership: [Q-003](open-questions.md#architecture-open-questions) is superseded by ADR 0001; [Q-010](open-questions.md#architecture-open-questions) remains open.
+- Resolved heartbeat and DAP ownership: [Q-003](open-questions.md#architecture-open-questions) is superseded by ADR 0001; [Q-010](open-questions.md#architecture-open-questions) is accepted with ProcessRunner sole ownership and attach-only DAP.
 
 ## Editor WebSocket transport lifecycle
 
@@ -155,7 +155,7 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
   accTitle: Managed Godot game process lifecycle
-  accDescr: An inferred lifecycle projects the explicit run, process-started, launch-failure, graceful-stop, clean-exit, timeout, forced-stop cleanup, process-exit, and abnormal-exit operations. Forced stop is reachable only after the graceful stop times out.
+  accDescr: An inferred state projection maps the implemented sole-owner run, bounded output, launch failure, graceful stop, timeout escalation, exact-child forced cleanup, natural exit, and abnormal exit operations. Forced stop is reachable only after graceful stop times out.
   direction TB
 
   %% atlas-node: STATE-PROC-STOPPED
@@ -195,7 +195,7 @@ stateDiagram-v2
   PROC_RUNNING --> PROC_CRASHED : [INFERRED] abnormal exit
 ```
 
-**Source status.** Phase 5 explicitly specifies spawn, PID and output tracking, run state, graceful stop, timeout-based forced stop, exit reporting, failure, and cleanup operations. It does not declare these seven states or this state machine, so every state and transition is an **[INFERRED]** projection.
+**Source status.** Phase 5 is implemented for sole-owner spawn, PID and bounded cursor output, graceful/forced exact-child stop, exit reporting, failure retention, and cleanup. It does not declare these seven states or this state machine, so every state and transition remains an **[INFERRED]** projection.
 
 **Operational invariant.** A forced stop is a timeout escalation from an already requested graceful stop, never a parallel first choice. Clean graceful exit and killed-plus-cleaned escalation return to `STATE-PROC-STOPPED`; launch failure and unrequested terminal outcomes retain the distinct `STATE-PROC-CRASHED` or `STATE-PROC-EXITED` result required by the exact transition contract.
 
@@ -231,7 +231,7 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
   accTitle: Godot DAP session lifecycle
-  accDescr: An inferred lifecycle projects initialize, unresolved launch-or-attach, continue, breakpoint or pause, step, and termination operations. Q-010 remains visible on the launch-or-attach transition so the diagram does not choose process ownership.
+  accDescr: An inferred lifecycle projects the implemented attach-only DAP handshake, continue, stopped-generation invalidation, breakpoint stop, step, and termination operations. ProcessRunner remains the sole process owner.
   direction TB
 
   %% atlas-node: STATE-DAP-DISCONNECTED
@@ -239,7 +239,7 @@ stateDiagram-v2
   %% atlas-node: STATE-DAP-INITIALIZED
   state "Initialized" as DAP_INITIALIZED
   %% atlas-node: STATE-DAP-LAUNCHED-ATTACHED
-  state "Launched or attached" as DAP_LAUNCHED_ATTACHED
+  state "Attached to owned child" as DAP_LAUNCHED_ATTACHED
   %% atlas-node: STATE-DAP-RUNNING
   state "Running" as DAP_RUNNING
   %% atlas-node: STATE-DAP-PAUSED
@@ -252,7 +252,7 @@ stateDiagram-v2
   %% atlas-flow: FLOW-DAP-002
   DAP_DISCONNECTED --> DAP_INITIALIZED : [INFERRED] initialize
   %% atlas-flow: FLOW-DAP-003
-  DAP_INITIALIZED --> DAP_LAUNCHED_ATTACHED : [INFERRED] launch or attach (Q-010)
+  DAP_INITIALIZED --> DAP_LAUNCHED_ATTACHED : [INFERRED] attach only (Q-010 accepted)
   %% atlas-flow: FLOW-DAP-004
   DAP_LAUNCHED_ATTACHED --> DAP_RUNNING : [INFERRED] continue
   %% atlas-flow: FLOW-DAP-005
@@ -267,9 +267,9 @@ stateDiagram-v2
   DAP_PAUSED --> DAP_TERMINATED : [INFERRED] terminate
 ```
 
-**Source status.** Phase 5 explicitly specifies DAP framing, initialization, launch or attach capability, continue, pause, breakpoint, step, inspection, termination, and cleanup operations. It does not declare these six states or this state machine, so every state and transition is an **[INFERRED]** projection; [Q-010](open-questions.md#architecture-open-questions) remains unresolved.
+**Source status.** Phase 5 is implemented for DAP framing, attach-only initialization, breakpoint/continue/step, capability-gated inspection, termination, and cleanup. It does not declare these six states or this state machine, so every state and transition remains an **[INFERRED]** projection; [Q-010](open-questions.md#architecture-open-questions) is accepted.
 
-**Operational invariant.** Execution controls follow initialization and a launch-or-attach operation. Continue enters running, a breakpoint or pause enters paused, step preserves paused state, and terminate ends either running or paused execution; the view neither selects launch ownership nor adds a second process.
+**Operational invariant.** Execution controls follow initialization and attach to the ProcessRunner-owned child. Continue or step invalidates the previous `stoppedGeneration` references before completion. Stack, scope, and variable references are session/generation bound; inspection never uses evaluate. ProcessRunner remains the sole spawner.
 
 ### State outline
 
@@ -277,7 +277,7 @@ stateDiagram-v2
 |---|---|---|---|---|---|
 | `STATE-DAP-DISCONNECTED` | No initialized DAP session is available. | Inferred | Phase 5 | `runtime/dap-client.ts` TCP client boundary to port 6006. | Phase 5 §§2, 4, 6–9 · [trace](traceability.md#architecture-atlas-traceability) |
 | `STATE-DAP-INITIALIZED` | The DAP initialize handshake has completed before launch or attach. | Inferred | Phase 5 | DAP request framing and capability handshake. | Phase 5 §§4, 6–8 · [trace](traceability.md#architecture-atlas-traceability) |
-| `STATE-DAP-LAUNCHED-ATTACHED` | A launch-or-attach operation has established the debug target without choosing its owner. | Inferred | Phase 5 | DAP launch or attach boundary. | Phase 5 §§2, 4, 6 · [Q-010](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
+| `STATE-DAP-LAUNCHED-ATTACHED` | Attach has established the ProcessRunner-owned debug target; DAP never spawns. | Inferred | Phase 5 | Attach-only DAP boundary. | Phase 5 implementation · [Q-010](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
 | `STATE-DAP-RUNNING` | The debug target is executing after continue. | Inferred | Phase 5 | DAP execution-control boundary. | Phase 5 §§2, 4, 6–8 · [trace](traceability.md#architecture-atlas-traceability) |
 | `STATE-DAP-PAUSED` | The target is stopped at a breakpoint, explicit pause, or completed step. | Inferred | Phase 5 | DAP stopped-event and execution-control boundary. | Phase 5 §§2, 4, 6–8 · [trace](traceability.md#architecture-atlas-traceability) |
 | `STATE-DAP-TERMINATED` | A terminate operation has ended the modeled debug session. | Inferred | Phase 5 | DAP termination and client-teardown boundary. | Phase 5 §§6–9 · [trace](traceability.md#architecture-atlas-traceability) |
@@ -288,7 +288,7 @@ stateDiagram-v2
 |---|---|---|---|---|---|---|
 | `FLOW-DAP-001` | `[*]` → `STATE-DAP-DISCONNECTED` | Project the initial no-session condition. | Inferred | Phase 5 | In-process DAP client lifecycle. | Phase 5 §§4, 6–9 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-DAP-002` | `STATE-DAP-DISCONNECTED` → `STATE-DAP-INITIALIZED` | Complete DAP initialize. | Inferred | Phase 5 | DAP handshake over TCP 6006. | Phase 5 §§4, 6–8 · [trace](traceability.md#architecture-atlas-traceability) |
-| `FLOW-DAP-003` | `STATE-DAP-INITIALIZED` → `STATE-DAP-LAUNCHED-ATTACHED` | Perform launch or attach without selecting ownership. | Inferred | Phase 5 | DAP launch-or-attach boundary. | Phase 5 §§2, 4, 6 · [Q-010](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
+| `FLOW-DAP-003` | `STATE-DAP-INITIALIZED` → `STATE-DAP-LAUNCHED-ATTACHED` | Attach to the exact ProcessRunner-owned child without spawning. | Inferred | Phase 5 | Attach-only DAP boundary. | Phase 5 implementation · [Q-010](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-DAP-004` | `STATE-DAP-LAUNCHED-ATTACHED` → `STATE-DAP-RUNNING` | Continue target execution. | Inferred | Phase 5 | DAP execution-control request. | Phase 5 §§2, 4, 6–8 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-DAP-005` | `STATE-DAP-RUNNING` → `STATE-DAP-PAUSED` | A breakpoint or explicit pause stops execution. | Inferred | Phase 5 | DAP stopped event or pause request. | Phase 5 §§2, 4, 6–8 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-DAP-006` | `STATE-DAP-PAUSED` → `STATE-DAP-RUNNING` | Continue from pause. | Inferred | Phase 5 | DAP continue request. | Phase 5 §§2, 4, 6–8 · [trace](traceability.md#architecture-atlas-traceability) |

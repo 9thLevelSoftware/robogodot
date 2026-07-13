@@ -28,7 +28,7 @@ flowchart TB
     %% atlas-node: CMP-SCHEMA-CONTRACTS
     CMP_SCHEMA_CONTRACTS["CMP-SCHEMA-CONTRACTS<br/>Zod input + structured output"]
     %% atlas-node: CMP-TOOL-FAMILIES
-    CMP_TOOL_FAMILIES["CMP-TOOL-FAMILIES<br/>Tier A · Tier B · implemented LSP<br/>runtime · batch tools"]
+    CMP_TOOL_FAMILIES["CMP-TOOL-FAMILIES<br/>Tier A · Tier B · implemented LSP<br/>implemented runtime/debug · future batch"]
     %% atlas-node: CMP-RESOURCE-PROMPT-SURFACES
     CMP_RESOURCE_PROMPT_SURFACES["CMP-RESOURCE-PROMPT-SURFACES<br/>read-only resources<br/>workflow prompts"]
   end
@@ -51,7 +51,7 @@ flowchart TB
     %% atlas-node: CMP-SEMANTIC-SERVICES
     CMP_SEMANTIC_SERVICES["CMP-SEMANTIC-SERVICES<br/>TypeParser + introspection support"]
     %% atlas-node: CMP-TRANSPORT-ADAPTERS
-    CMP_TRANSPORT_ADAPTERS["CMP-TRANSPORT-ADAPTERS<br/>implemented WebSocket + LSP<br/>later runtime · batch adapters"]
+    CMP_TRANSPORT_ADAPTERS["CMP-TRANSPORT-ADAPTERS<br/>implemented WebSocket + LSP<br/>implemented runtime + DAP · future batch"]
   end
 
   subgraph GDSCRIPT_PLUGIN["GDScript editor plugin"]
@@ -83,7 +83,7 @@ flowchart TB
     %% atlas-node: SYS-UNDO-REDO
     SYS_UNDO_REDO["SYS-UNDO-REDO<br/>EditorUndoRedoManager"]
     %% atlas-node: CMP-RUNTIME-AUTOLOADS
-    CMP_RUNTIME_AUTOLOADS["CMP-RUNTIME-AUTOLOADS<br/>runtime inspection · input<br/>screenshot bridges"]
+    CMP_RUNTIME_AUTOLOADS["CMP-RUNTIME-AUTOLOADS<br/>implemented authenticated runtime<br/>inspection · input · screenshot"]
   end
 
   %% atlas-flow: FLOW-CMP-001
@@ -141,7 +141,7 @@ flowchart TB
 | Tier A curated editing | Validated scene, node, signal, resource, and project mutations. | `tools/scene.ts`, `tools/node.ts`, `tools/signal.ts`, `tools/resource.ts`, and `tools/project.ts` |
 | Tier B universal primitive | Guarded editor-script execution plus live API and project introspection. | `tools/script.ts`, `tools/introspection.ts`, `util/type-parser.ts`, and `exec/guard.ts` |
 | Code intelligence | LSP diagnostics, completion, hover, signature help, symbols, native documentation, and exact-disk document synchronization. | **Implemented:** `tools/lsp.ts`, `lsp/client.ts`, `lsp/transport.ts`, `lsp/documents.ts`, and `lsp/diagnostics.ts` |
-| Runtime and debug | Child-process lifecycle, output, DAP sessions, and running-game bridge operations. | `runtime/process.ts`, `runtime/dap-client.ts`, and the sequenced runtime IPC driver |
+| Runtime and debug | Child-process lifecycle, ring-cursor output, authenticated bridge operations, and attach-only DAP sessions. | **Implemented:** `tools/runtime.ts`, `tools/debug.ts`, `runtime/session.ts`, sole-owner `runtime/process.ts`, `runtime/bootstrap.ts`, `runtime/bridge-client.ts`, and `runtime/dap-client.ts` |
 | Batch, filesystem, UID/export, and assets | Headless scripts, import/export, guarded project files, UID work, and optional generation. | `batch/headless.ts`, `batch/export.ts`, `fs/guard.ts`, `fs/tools.ts`, `uid/tools.ts`, and optional `assets/provider.ts` |
 
 ## Grouped adapter outline
@@ -150,9 +150,9 @@ flowchart TB
 |---|---|---|
 | WebSocket bridge | Local WebSocket plus JSON-RPC 2.0, default port 9200. | `bridge/ws-client.ts` talks to plugin `ws_server.gd`; the plugin remains the editor executor. |
 | LSP | Godot LSP JSON-RPC over TCP 6005 with generation-scoped document lifecycle. | **Implemented:** `lsp/client.ts` attaches to an existing visible-editor listener; optional `lsp/host.ts` launches a headless owned child only when enabled. Close terminates the owned child and never an attached editor. |
-| ProcessRunner | Controlled Godot child process with bounded output and teardown. | `runtime/process.ts` owns launch, capture, stop, and cleanup. |
-| DAP | Godot Debug Adapter Protocol over TCP 6006. | `runtime/dap-client.ts` owns request correlation and debug-session state. |
-| runtime IPC | Sequenced `user://` request and response files with IDs, timeouts, bounds, and cleanup. | The TypeScript driver addresses `MCPRuntimeBridge`, `MCPInputBridge`, and `MCPScreenshotBridge` autoloads. |
+| ProcessRunner | Controlled Godot child process with bounded ring output and exact-child teardown. | **Implemented sole process owner:** `runtime/process.ts` owns launch, PID, capture, graceful/forced stop, and cleanup for normal and debug sessions. |
+| DAP | Attach-only Godot Debug Adapter Protocol over TCP 6006. | **Implemented:** `runtime/dap-client.ts` owns framing, capabilities, stopped-generation references, and teardown; it has no spawn or evaluate path. |
+| runtime IPC | Authenticated loopback socket preferred, with exact sequenced `user://` file fallback, bounds, deadlines, and cleanup. | **Implemented:** Godot resolves the canonical session root; mutual authentication locks transport before requests and requests are never replayed across transports. |
 | HeadlessRunner | Temporary script plus `godot --headless --script`, with capture and cleanup. | `batch/headless.ts` owns the process mechanism. |
 | FsGuard | Canonical path resolution jailed to configured project roots. | `fs/guard.ts` gates `fs/tools.ts`, UID work, export destinations, and asset placement. |
 | UID/export | Project UID maintenance and bounded Godot export invocations. | `uid/tools.ts` and `batch/export.ts` remain behind the guarded batch/filesystem channel. |

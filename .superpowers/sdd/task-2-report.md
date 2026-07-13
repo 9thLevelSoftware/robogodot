@@ -1,140 +1,147 @@
-# Phase 4 Task 2 Report
+# Phase 5 Task 2 Report
 
 ## Status
 
-Implemented the initialized LSP session lifecycle, capability reporting, reconnect/replay behavior, generation isolation, and graceful shutdown. No later-phase work was performed.
+Implemented the single-session runtime coordinator and exactly three public process MCP tools. No later Phase 5 task was implemented.
 
-## Changes
+Commit: `bc3291673ebaacb5e5a887a6a2548dd4899b1912` (`feat: add runtime session process tools`).
 
-- Added `LspSession`, its exact lifecycle states/options, coalesced readiness, request/notification readiness gates, reconnect backoff, replay hook, and graceful close.
-- Added generation-scoped `LspReadyState` and the six-value `LspCapability` union.
-- Validated initialize results before `initialized`, retained raw server capabilities, and implemented strict standard capability mapping plus pinned Godot 4.6/native-extension compatibility.
-- Added focused lifecycle tests for initialization ordering/coalescing, honest capabilities, request ordering, disconnect rejection, reconnect/replay ordering, capped backoff, generation-tagged notifications, and shutdown/exit.
-- Minimal Task 1 integration correction: `LspTransport.notify()` now resolves after the socket write callback. The shutdown test proved that resolving immediately allowed `close()` to destroy the socket before the required `exit` notification reached the peer. No Task 1 public contract changed.
+## TDD evidence
 
-## TDD Evidence
+- RED coordinator: `npm test -- --run tests/runtime-session.test.ts` failed because `../src/runtime/session.js` did not exist (0 tests collected, exit 1).
+- GREEN coordinator: the focused coordinator suite passed 4/4.
+- RED process tools: `npm test -- --run tests/runtime-process-tools.test.ts` failed 3/3 because the three tools were absent.
+- GREEN process tools and integration: the required focused command passed 17/17 across 4 files.
 
-### RED
+## Final verification (fresh)
 
-Command:
+Run from `server`:
 
-`cd server && npm test -- --run tests/lsp-session.test.ts`
-
-Result: exit 1. Vitest failed to import `../src/lsp/session.js`; 1 failed suite, 0 tests collected. This was the expected missing-feature failure before production implementation.
-
-First post-implementation lifecycle run also exposed two integration failures: `initialized` and `exit` had not reached the mock before readiness/close completed. Result: 4 passed, 2 failed. This led to the minimal write-completion correction in `LspTransport.notify()` and polling at the mock boundary.
-
-Typecheck then provided a RED integration signal (`TS2367` twice) for async state narrowing in `connectAndInitialize`; the state check was moved behind `isClosing()`.
-
-### GREEN
-
-Lifecycle-only command:
-
-`cd server && npm test -- --run tests/lsp-session.test.ts`
-
-Result after implementation correction: 1 file passed, 6 tests passed.
-
-Final focused command:
-
-`cd server && npm test -- --run tests/lsp-transport.test.ts tests/lsp-session.test.ts && npm run typecheck`
-
-Result: 2 files passed, 29 tests passed; TypeScript typecheck passed.
-
-Required full server suite (run once):
-
-`cd server && npm test -- --run`
-
-Result: 24 files passed, 2 skipped; 206 tests passed, 2 skipped.
-
-`git diff --check` also passed (only Git's existing LF-to-CRLF advisory was printed).
+1. `npm test -- --run tests/runtime-session.test.ts tests/runtime-process-tools.test.ts tests/server.test.ts tests/mcp-stdio.test.ts`
+   - Exit 0; 4 files passed; 17 tests passed.
+2. `npm run typecheck`
+   - Exit 0; `tsc --noEmit` reported no errors.
+3. `npm run build`
+   - Exit 0; `tsc` reported no errors.
+4. `npm test -- --run`
+   - Exit 0; 32 files passed, 3 skipped; 343 tests passed, 4 skipped.
 
 ## Self-review
 
-- Reconnect cancellation and explicit shutdown states prevent close-triggered reconnects.
-- Reconnect delay sequence is exactly `1000, 2000, 4000, 8000, 16000, 32000, 60000`, then remains capped at `60000`.
-- Replay is awaited while state remains `initializing`; only then is generation-ready state published.
-- Session notification listeners receive only events for the currently ready generation and subscriber exceptions remain isolated.
-- Shutdown uses the transport's bounded minimum request deadline; `exit` remains mandatory after shutdown errors.
+- Session IDs are 128-bit random hex values; the 256-bit runtime token is stored only in coordinator ownership and injected into child environment, never snapshots/tool results.
+- Launch conflicts and stale IDs fail closed. Natural exit invalidates the session.
+- Failed start cleanup uses `ProcessRunner.stopCurrent()` so the coordinator never guesses child ownership.
+- Teardown attempts DAP, bridge, then exact process, preserves the first failure, clears credentials/handles, and returns the coordinator to idle.
+- Tool schemas are strict and enforce contained `res://` scenes, 32 arguments, 1,024 UTF-8 bytes per argument, 8,192 total UTF-8 bytes, safe nonnegative cursors, and limits 1-500.
+- The disconnected default returns the stable standard `not_connected` structured error independently of editor/LSP availability.
 
 ## Concerns
 
-None. The only scope expansion is the minimal transport write-completion integration fix described above.
+- Bridge and DAP are intentionally lifecycle-only injected seams in this task; authentication/bootstrap and protocol clients belong to later tasks.
+- Runtime tool output schemas are exact success schemas with an explicit registry opt-in for the standard structured error envelope.
 
-## Review Fixes — 2026-07-12
+## Review fixes
 
-### RED evidence
+Follow-up fixes were implemented test-first:
 
-Added regression tests before implementation for stale replay publication, close-during-replay, failed first connection recovery, invalid initialize recovery, bounded external hooks, and stalled notification writes.
+Fix commit: `130213b44dde0420297391a7299f6fedd1121e4b` (`fix: harden runtime session teardown`).
 
-Command: `cd server && npm test -- --run tests/lsp-session.test.ts tests/lsp-transport.test.ts`
+- RED: 4 new regressions failed for repeated stop retention, asynchronous natural-exit cleanup/racing stop, attached-channel failed-start cleanup, and hostile runtime DTO leakage.
+- GREEN: focused runtime suites passed 11/11 after implementation.
+- A first full verification found the error-compatible registry wrapper was too broad and regressed LSP/registry tests; it was restricted to explicitly opted-in runtime tools.
 
-Result: exit 1; 5 failed and 29 passed. Exact failures:
+Final fresh verification from `server`:
 
-- replay completion changed an explicitly closed session from `exited` back to `ready`;
-- `beforeConnect` never settled and timed out the Vitest test itself at 5000 ms;
-- first socket rejection remained in `connecting` rather than recovering;
-- invalid initialize remained in `initializing` rather than recovering;
-- stalled notification write never settled and timed out the Vitest test itself at 5000 ms.
+1. `npm test -- --run tests/runtime-session.test.ts tests/runtime-process-tools.test.ts tests/server.test.ts tests/mcp-stdio.test.ts`
+   - Exit 0; 4 files passed; 21 tests passed.
+2. `npm run typecheck`
+   - Exit 0.
+3. `npm run build`
+   - Exit 0.
+4. `npm test -- --run`
+   - Exit 0; 32 files passed, 3 skipped; 347 tests passed, 4 skipped.
 
-The first GREEN attempt exposed one additional bounded-reconnect regression (1 delay observed instead of 8) and TypeScript rejected the generalized close reason. Both were corrected before final verification.
+Review outcomes:
 
-### GREEN evidence
+- One last terminal stop result is retained and keyed by session ID; a new launch replaces it and unrelated stale IDs remain invalid.
+- Natural exit is monitored asynchronously and shares one teardown promise with explicit stop, closing DAP then bridge then exact process without unhandled rejection.
+- Failed launch closes any starting-state DAP/bridge seams in order, preserves the launch error first in an aggregate, and retains failed ownership when `stopCurrent()` is unconfirmed.
+- Runtime tools define exact success DTO schemas and opt into standard-error compatibility in the registry without affecting other tools.
+- DTO normalization reads only own data descriptors and explicitly copies reviewed fields, dropping child IDs, secrets, inherited values, accessors, and extras. Text content is the JSON serialization of structured content.
 
-Expanded focused command: `cd server && npm test -- --run tests/lsp-session.test.ts tests/lsp-transport.test.ts`
+Remaining concern: natural-exit observation is a short unref'ed polling monitor because the reviewed `ManagedProcess` interface intentionally exposes state but no exit subscription seam.
 
-Result: 2 files passed; 38 tests passed. Coverage now also includes disconnect during a controlled replay, ensuring a stale replay cannot close generation 3; replay-hook timeout; before-connect timeout; connect rejection; initialize error, timeout, and invalid result recovery; and fail-closed stalled notification write behavior.
+## Second review-fix pass
 
-Typecheck: `npm run typecheck` passed.
+This pass was also test-first:
 
-Build: `npm run build` passed.
+Fix commit: `5b3fdefa3eca873e478dc34e2c416ff45cdd5f86` (`fix: retain unconfirmed runtime ownership`).
 
-Required full server suite, run once after the final corrections: `npm test -- --run` passed with 24 files passed, 2 skipped; 216 tests passed, 2 skipped.
+- RED: new tests showed normal-stop and close failures cleared unconfirmed exact-child ownership, and the registry compatibility wrapper removed required fields from advertised success schemas.
+- GREEN: unconfirmed teardown now always retains the owned session in retryable `failed` state, blocks launch, keeps/restarts natural-exit monitoring when a managed process remains, and retries the same child ID.
+- Launch `bridgeTransport` is now explicitly optional in the session/tool contract and is validated only when present.
+- The global compatible-output flatten/refinement was removed. Runtime tools advertise exact success DTO schemas with required fields and no error fields; standard structured `isError` responses continue through the registry error path.
 
-`git diff --check` passed with only Git LF-to-CRLF advisories.
+Fresh verification:
 
-### Review-fix implementation notes
+1. `npm test -- --run tests/runtime-session.test.ts tests/runtime-process-tools.test.ts tests/registry.test.ts tests/server.test.ts tests/mcp-stdio.test.ts`
+   - Exit 0; 5 files passed; 29 tests passed.
+2. `npm run typecheck`
+   - Exit 0.
+3. `npm run build`
+   - Exit 0.
+4. `npm test -- --run`
+   - Exit 0; 32 files passed, 3 skipped; 350 tests passed, 4 skipped.
 
-- Every externally awaited initialization phase is followed by attachment, state, closing, and generation ownership checks before later state can be published.
-- Failed attempts close only the transport generation they own, release cached readiness, and enter bounded reconnect without allowing an older replay failure to close a newer transport.
-- `beforeConnect`, socket creation, and replay use the named finite external-phase deadline.
-- Notification write completion uses the named `writeCompletionMs` limit, validates and clamps it to transport request bounds, and fails the transport closed on timeout while safely ignoring a late callback.
+SDK note: the MCP SDK client validates any structured error against a cached success schema after `listTools`; the error-path test therefore calls the disconnected tool without first populating that client-side cache. The server/registry response remains structured with `isError: true` and does not add fake success fields.
 
-### Review-fix concerns
+## Third review-fix pass — NEEDS_CONTEXT
 
-None.
+No implementation or commit was made because the pinned MCP SDK (`@modelcontextprotocol/sdk` 1.29.0) cannot directly accept the required structural Zod union as a tool output schema.
 
-## Final Fix Pass — 2026-07-12
+TDD RED evidence:
 
-### RED evidence
+- A same-client regression (`connect -> listTools -> call disconnected runtime tool`) fails because the client validates structured `isError` content against the cached strict success schema.
+- A registry regression requiring an `anyOf` with separate strict success and strict `{code,message,hint[,data]}` branches also fails with the current exact-object registry behavior.
 
-Added deterministic tests before production changes for the delayed-reconnect/explicit-retry collision and socket-factory late resolution cleanup.
+Pinned-SDK inspection and direct probe:
 
-Command: `cd server && npm test -- --run tests/lsp-session.test.ts tests/lsp-transport.test.ts`
+- The public `AnySchema` TypeScript type includes arbitrary Zod schemas, including `ZodUnion`.
+- Runtime `normalizeObjectSchema` in `dist/esm/server/zod-compat.js` accepts only a root Zod object or raw object shape and returns `undefined` for a union.
+- Directly registering `z.union([strictSuccess, strictError])` causes `tools/list` to omit `outputSchema` entirely.
+- Calling that directly registered tool then returns `isError: true` with `Cannot read properties of undefined (reading '_zod')`.
 
-Result: exit 1; 2 failed and 38 passed. Exact failures:
+The requested fallback instruction was therefore followed: schema flattening, optional-field weakening, and fake success fields were not introduced. Resolution requires either an SDK upgrade/fix that supports object-union output schemas end-to-end, or authorization for a lower-level/custom MCP registration path outside the reviewed registry abstraction.
 
-- firing the already-scheduled reconnect callback after `ensureReady()` began an explicit retry produced 3 connection attempts instead of 2;
-- a `PassThrough` returned by `socketFactory` after its 10 ms deadline remained undestroyed.
+## Approved SDK-compatible error policy
 
-### GREEN evidence
+The user approved resolving the pinned-SDK limitation by keeping exact success output schemas and omitting `structuredContent` only for error results. The registry error path now returns:
 
-Focused command: `cd server && npm test -- --run tests/lsp-session.test.ts tests/lsp-transport.test.ts`
+Fix commit: `3c77ac365c59c4c85ea46310328072d27354d9b2` (`fix: make tool errors schema compatible`).
 
-Result: 2 files passed; 40 tests passed.
+- `isError: true`;
+- one JSON text content item containing exactly `{code,message,hint,data?}`;
+- no `structuredContent`, preventing clients from validating an error payload against a cached success schema.
 
-`npm run typecheck` passed. `npm run build` passed.
+Success results are unchanged and still return identical JSON text plus structured content.
 
-Required full server suite, run once after the final implementation: `npm test -- --run` passed with 24 files passed, 2 skipped; 218 tests passed, 2 skipped.
+TDD evidence:
 
-`git diff --check` passed with only Git LF-to-CRLF advisories.
+- RED: same-client `connect -> listTools -> callTool` regressions failed for disconnected runtime, invalid runtime service output, and representative core errors because the client validated structured errors against cached exact success schemas.
+- GREEN: the focused registry/errors/runtime/session/core/server/stdio set passed 40/40 after the minimal global `toToolError` change and contract assertion updates.
+- All existing error assertions, including skipped live Phase 4 assertions, were updated to parse the stable JSON text payload and verify structured content is absent where relevant.
 
-### Final implementation notes
+Fresh final verification:
 
-- `ensureReady()` cancels pending scheduled recovery before claiming an explicit attempt.
-- Each reconnect callback has an active token and the readiness promise it was scheduled for; cancelled/stale callbacks no-op when a newer attempt owns readiness.
-- Socket creation now has socket-specific late-result cleanup: if the bounded phase rejects, any subsequently resolved `Duplex` is destroyed.
-- The prior notification test was renamed to accurately state that it verifies current-generation routing.
+1. `npm test -- --run tests/registry.test.ts tests/errors.test.ts tests/runtime-session.test.ts tests/runtime-process-tools.test.ts tests/core-tools.test.ts tests/server.test.ts tests/mcp-stdio.test.ts`
+   - Exit 0; 7 files passed; 40 tests passed.
+2. `npm test -- --run`
+   - Exit 0; 32 files passed, 3 skipped; 350 tests passed, 4 skipped.
+3. `npm run typecheck`
+   - Exit 0.
+4. `npm run build`
+   - Exit 0.
 
-### Final concerns
+Exact success schemas remain strict and unchanged; no permissive schema, union flattening, or fake success fields were added.
 
-None.
+Final post-commit rerun note: the combined focused command initially hit the stdio test's 3-second response timeout under parallel load (no malformed frame or assertion mismatch). `tests/mcp-stdio.test.ts` immediately passed 2/2 in isolation, followed by clean typecheck, build, and full 350/350 non-skipped tests.

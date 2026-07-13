@@ -28,7 +28,7 @@ func get_node(root: Node, params: Dictionary) -> Dictionary:
 	if not requested is Array or requested.size() > MAX_PROPERTIES: return {"error":"invalid properties"}
 	var properties := {}
 	for property in requested:
-		if not property is String or property.length() > 128: return {"error":"invalid property"}
+		if not property is String or property.to_utf8_buffer().size() > 256: return {"error":"invalid property"}
 		var allowed := StringName(property) in SAFE_PROPERTIES
 		for info in node.get_property_list():
 			if info.name == property and int(info.usage) & PROPERTY_USAGE_SCRIPT_VARIABLE != 0: allowed = false; break

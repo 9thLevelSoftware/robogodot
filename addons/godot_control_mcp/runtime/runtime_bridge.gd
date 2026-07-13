@@ -66,9 +66,14 @@ func _process_socket_message(parsed: Variant) -> void:
 			return
 		var confirmation: Variant = parsed.get("confirmation")
 		if parsed.get("type") != "hello_confirm" or parsed.get("version") != config.protocolVersion or parsed.get("sessionId") != config.sessionId or parsed.get("clientNonce") != _pending_client_nonce or parsed.get("serverNonce") != _pending_server_nonce or not confirmation is String or not _fixed_equal(confirmation, _proof("robogodot-confirm-v1", [_pending_client_nonce, _pending_server_nonce])): _drop_peer(); return
-		_socket_authenticated = true; _transport = "socket"
+		if not _send_socket({"type":"hello_ready", "version":config.protocolVersion, "sessionId":config.sessionId, "clientNonce":_pending_client_nonce, "serverNonce":_pending_server_nonce, "readyProof":_proof("robogodot-ready-v1", [_pending_client_nonce, _pending_server_nonce])}): _drop_peer(); return
+		# Authentication is ready, but transport ownership is not committed until
+		# the first authenticated request arrives. A client that misses hello_ready
+		# can therefore disconnect and use file fallback without splitting the lock.
+		_socket_authenticated = true
 		return
 	if not _authenticated(parsed): return
+	if _transport.is_empty(): _transport = "socket"; _server.stop()
 	var id: int = int(parsed.id)
 	if id <= _last_id: return
 	_last_id = id
@@ -76,10 +81,11 @@ func _process_socket_message(parsed: Variant) -> void:
 	if JSON.stringify(response).to_utf8_buffer().size() > MAX_JSON: response = {"type":"response", "version":config.protocolVersion, "sessionId":config.sessionId, "id":id, "error":"response exceeds bound"}
 	_send_socket(response)
 
-func _send_socket(value: Dictionary) -> void:
+func _send_socket(value: Dictionary) -> bool:
 	var bytes := JSON.stringify(value).to_utf8_buffer()
-	if _peer == null or bytes.size() > MAX_JSON: return
-	_peer.put_u32(bytes.size()); _peer.put_data(bytes)
+	if _peer == null or bytes.size() > MAX_JSON: return false
+	_peer.put_u32(bytes.size())
+	return _peer.put_data(bytes) == OK
 
 func _drop_peer() -> void:
 	if _peer != null: _peer.disconnect_from_host()

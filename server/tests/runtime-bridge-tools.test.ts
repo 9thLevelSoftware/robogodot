@@ -72,6 +72,15 @@ describe("public runtime bridge tools", () => {
     } finally { await h.close(); }
   });
 
+  it("accepts exactly 256 UTF-8 bytes and rejects byte 257 for bridge names", async () => {
+    const runtime = { ...base(), getNode: vi.fn().mockResolvedValue({ sessionId: SESSION, path: ".", type: "Node", properties: {}, omittedProperties: [] }), input: vi.fn().mockResolvedValue({ sessionId: SESSION, accepted: true }), screenshot: vi.fn().mockResolvedValue({ sessionId: SESSION, path: "shots/a.png", absolutePath: "C:/safe/a.png", width: 1, height: 1, bytes: 24, sha256: "b".repeat(64), format: "png" }) };
+    const h = await harness(runtime); try {
+      const property256 = "é".repeat(128), action256 = "é".repeat(128), screenshot256 = `${"é".repeat(126)}.png`;
+      for (const [name, args] of [["godot_runtime_get_node", { sessionId: SESSION, path: ".", properties: [property256] }], ["godot_runtime_input", { sessionId: SESSION, kind: "action", action: action256, mode: "press" }], ["godot_runtime_screenshot", { sessionId: SESSION, name: screenshot256 }]] as const) expect((await h.client.callTool({ name, arguments: args as any })).isError).not.toBe(true);
+      for (const [name, args] of [["godot_runtime_get_node", { sessionId: SESSION, path: ".", properties: [`${property256}a`] }], ["godot_runtime_input", { sessionId: SESSION, kind: "action", action: `${action256}a`, mode: "press" }], ["godot_runtime_screenshot", { sessionId: SESSION, name: `${"é".repeat(127)}.png` }]] as const) expect((await h.client.callTool({ name, arguments: args as any })).isError).toBe(true);
+    } finally { await h.close(); }
+  });
+
   it("returns stable bridge-unavailable errors without structured content", async () => {
     const h = await harness(base()); try {
       const result = await h.client.callTool({ name: "godot_runtime_scene_tree", arguments: { sessionId: SESSION } });

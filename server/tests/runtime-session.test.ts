@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { resolve } from "node:path";
 import { RuntimeSessionCoordinator } from "../src/runtime/session.js";
 
 const processView = (running = true) => ({ childId: "child", pid: 42, startedAt: 100, running, exit: undefined, output: vi.fn().mockReturnValue({ records: [], next: 0, lost: 0, truncated: false }) });
@@ -50,6 +51,24 @@ describe("RuntimeSessionCoordinator", () => {
     vi.useRealTimers();
   });
 
+  it("rejects and closes a bridge that connects after natural exit cleared launch ownership", async () => {
+    vi.useFakeTimers();
+    try {
+      let release!: (value: any) => void; const connecting = new Promise<any>(resolve => { release = resolve; });
+      const managed = processView(); const bridgeClose = vi.fn();
+      const runner = { start: vi.fn().mockResolvedValue(managed), stop: vi.fn().mockResolvedValue({ childId: "child", alreadyStopped: true, graceful: false, forced: false }), stopCurrent: vi.fn() };
+      const prepared = { process: options, connect: vi.fn().mockReturnValue(connecting), close: vi.fn() };
+      const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, monitorMs: 10 });
+      const launch = coordinator.integratedLaunch("normal", async () => prepared as any);
+      await vi.waitFor(() => expect(prepared.connect).toHaveBeenCalledOnce());
+      Reflect.defineProperty(managed, "running", { value: false }); await vi.advanceTimersByTimeAsync(10);
+      await vi.waitFor(() => expect(coordinator.state).toBe("idle"));
+      release({ attachment: { close: bridgeClose }, root: "root", transport: "socket" });
+      await expect(launch).rejects.toThrow(/ended|cancelled/i);
+      expect(bridgeClose).toHaveBeenCalledOnce(); expect(prepared.close).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+
   it("launches the coordinator-owned process before attach and returns only at debug_ready", async () => {
     const order: string[] = []; const dap = { status: { state: "disconnected" }, attach: vi.fn().mockImplementation(async (value) => { order.push("dap"); expect(value.process.pid).toBe(42); return { state: "ready" }; }), setBreakpoints: vi.fn(), continue: vi.fn(), step: vi.fn(), stack: vi.fn(), inspect: vi.fn(), close: vi.fn() };
     const runner = { start: vi.fn().mockImplementation(async () => { order.push("process"); return processView(); }), stop: vi.fn().mockResolvedValue({ childId: "child", graceful: true, forced: false }), stopCurrent: vi.fn() };
@@ -79,6 +98,21 @@ describe("RuntimeSessionCoordinator", () => {
     await expect(coordinator.debugSetBreakpoints(result.id, "../escape.gd", [2])).rejects.toMatchObject({ code: "invalid_args" });
     await coordinator.debugContinue(result.id, { runtimeSessionId: result.id, stoppedGeneration: 1, id: 1 });
     expect(dap.continue).toHaveBeenCalledOnce(); await coordinator.stop(result.id);
+  });
+
+  it("normalizes breakpoint responses to bounded reviewed own-data fields", async () => {
+    const hostile: any = { verified: true, line: 2, message: "ok", source: { name: "main.gd", path: "C:/secret/main.gd" }, extra: "drop" };
+    Object.defineProperty(hostile, "accessor", { enumerable: true, get() { throw new Error("must not read"); } });
+    const dap = { status: { state: "stopped", stoppedGeneration: 1 }, attach: vi.fn().mockResolvedValue({}), setBreakpoints: vi.fn().mockResolvedValue({ breakpoints: [hostile] }), continue: vi.fn(), step: vi.fn(), stack: vi.fn(), inspect: vi.fn(), close: vi.fn() };
+    const runner = { start: vi.fn().mockResolvedValue(processView()), stop: vi.fn().mockResolvedValue({ childId: "child", graceful: true, forced: false }), stopCurrent: vi.fn() };
+    const coordinator = new RuntimeSessionCoordinator({ runner: runner as any, dapFactory: () => dap as any, projectPath: resolve(process.cwd(), "..", "tests", "fixtures", "godot_project") } as any);
+    const result = await coordinator.debugLaunch(options, { host: "127.0.0.1", port: 6006, timeoutMs: 1000 });
+    const output: any = await coordinator.debugSetBreakpoints(result.id, "phase5/runtime_fixture.gd", [2]);
+    expect(output.breakpoints).toEqual([{ verified: true, line: 2, message: "ok" }]);
+    expect(output.breakpoints[0]).not.toHaveProperty("source"); expect(output.breakpoints[0]).not.toHaveProperty("extra");
+    dap.setBreakpoints.mockResolvedValueOnce({ breakpoints: Array.from({ length: 501 }, () => ({ verified: true })) });
+    await expect(coordinator.debugSetBreakpoints(result.id, "phase5/runtime_fixture.gd", [2])).rejects.toMatchObject({ code: "godot_error" });
+    await coordinator.stop(result.id);
   });
   it("owns one opaque immutable session and rejects concurrent and stale calls", async () => {
     let resolve!: (value: any) => void; const pending = new Promise<any>((yes) => { resolve = yes; });

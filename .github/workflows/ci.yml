@@ -54,8 +54,25 @@ jobs:
         env:
           GODOT_PROJECT_PATH: ${{ github.workspace }}/tests/fixtures/godot_project
         working-directory: server
+        run: npm run test:live
+      - name: Live Phase 3 acceptance
+        env:
+          GODOT_PROJECT_PATH: ${{ github.workspace }}/tests/fixtures/godot_project
+        working-directory: server
+        run: npm run test:live:phase3
+      - name: Live Phase 4 acceptance
+        env:
+          GODOT_PROJECT_PATH: ${{ github.workspace }}/tests/fixtures/godot_project
+        working-directory: server
+        run: npm run test:live:phase4
+      - name: Provision Linux virtual display
+        if: runner.os == 'Linux'
+        shell: bash
         run: |
-          npm run test:live
-          npm run test:live:phase3
-          npm run test:live:phase4
-          npm run test:live:phase5
+          Xvfb :99 -screen 0 1280x720x24 > /tmp/robogodot-xvfb.log 2>&1 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+      - name: Live Phase 5 acceptance
+        env:
+          GODOT_PROJECT_PATH: ${{ github.workspace }}/tests/fixtures/godot_project
+        working-directory: server
+        run: npm run test:live:phase5
