@@ -4,7 +4,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../src/server.js";
 import { link, lstat, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { RuntimeSessionCoordinator } from "../src/runtime/session.js";
 
 const SESSION = "a".repeat(32);
@@ -130,9 +130,21 @@ describe("public runtime bridge tools", () => {
 
   it("rejects a same-handle screenshot mutation detected after the bounded read", async () => {
     const root = await mkdtemp(join(tmpdir(), "robogodot-shot-race-")); const shot = join(root, "race.png"); const png = makePng(); await writeFile(shot, png); const identity = await lstat(shot); let statCalls = 0;
-    const fakeHandle = { stat: vi.fn(async () => ({ dev: identity.dev, ino: identity.ino, size: png.length, mtimeMs: identity.mtimeMs + (++statCalls === 1 ? 0 : 1) })), read: vi.fn(async (target: Buffer) => { png.copy(target); return { bytesRead: png.length, buffer: target }; }), close: vi.fn() };
+    const fakeHandle = { stat: vi.fn(async () => ({ dev: identity.dev, ino: identity.ino, nlink: ++statCalls === 1 ? 1 : 2, size: png.length, mtimeMs: identity.mtimeMs })), read: vi.fn(async (target: Buffer) => { png.copy(target); return { bytesRead: png.length, buffer: target }; }), close: vi.fn() };
     const h = await coordinatorHarness(root, async () => ({ path: shot, format: "png", width: 8, height: 6, bytes: png.length }), { screenshotOpen: vi.fn().mockResolvedValue(fakeHandle) });
     try { const result = await h.client.callTool({ name: "godot_runtime_screenshot", arguments: { sessionId: SESSION } }); expect(errorPayload(result)).toMatchObject({ code: "godot_error", message: "Runtime screenshot verification failed." }); expect(fakeHandle.read).toHaveBeenCalledOnce(); }
     finally { await h.dispose(); await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("lstats and rejects the lexical raw screenshot candidate before realpath resolution", async () => {
+    const root = await mkdtemp(join(tmpdir(), "robogodot-shot-raw-link-")); const raw = join(root, "raw-link.png");
+    const screenshotLstat = vi.fn(async (path: string) => path === resolve(raw)
+      ? { isDirectory: () => false, isFile: () => true, isSymbolicLink: () => true, nlink: 1, size: 24 }
+      : { isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false, nlink: 1, size: 0 });
+    const h = await coordinatorHarness(root, async () => ({ path: "raw-link.png", format: "png", width: 8, height: 6, bytes: 24 }), { screenshotLstat });
+    try {
+      const result = await h.client.callTool({ name: "godot_runtime_screenshot", arguments: { sessionId: SESSION } }); expect(errorPayload(result)).toMatchObject({ code: "godot_error", message: "Runtime screenshot verification failed." });
+      expect(screenshotLstat).toHaveBeenCalledWith(resolve(raw));
+    } finally { await h.dispose(); await rm(root, { recursive: true, force: true }); }
   });
 });

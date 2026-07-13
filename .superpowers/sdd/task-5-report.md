@@ -85,3 +85,23 @@ Status: complete
 
 - Symlink creation can require Windows Developer Mode or elevated privilege; that assertion runs when creation succeeds and tolerates only `EPERM`. The portable hard-link case always runs and proves link rejection through `nlink`.
 - The conservative depth-truncation semantics remain the documented Minor noted above.
+
+## Final raw-candidate correction
+
+### Fix and TDD evidence
+
+- Added a production filesystem dependency for screenshot `lstat`, matching the existing injected `open` dependency. This gives platform-independent proof of raw-link rejection without relying on Windows symlink privileges.
+- RED: `cd server && npm test -- --run tests/runtime-bridge-tools.test.ts -t "lexical raw"` failed 1/1 because the raw-candidate `lstat` seam received zero calls.
+- GREEN: `cd server && npm test -- --run tests/runtime-bridge-tools.test.ts -t "lexical raw|same-handle"` passed 2/2 after implementing the required ordering.
+- Screenshot verification now resolves a relative bridge-returned path lexically against the expected session root (or normalizes an absolute candidate), `lstat`s that raw pathname, and rejects symbolic links, non-regular files, and multi-link files before `realpath`.
+- Only after raw-path rejection does it canonicalize the root and candidate, enforce canonical containment, re-`lstat` the canonical target, and open that exact target. Both handle `fstat`s retain device, inode, link-count, size, and modification-time defenses around the bounded read.
+- The deterministic fake-handle test now also proves that a link-count mutation from 1 to 2 across the same-handle read is rejected. The EPERM-tolerant real symlink integration assertion remains in place.
+
+### Fresh final-correction verification
+
+- `cd server && npm test -- --run tests/runtime-bridge-tools.test.ts tests/runtime-session.test.ts tests/runtime-bridge-client.test.ts tests/runtime-process-tools.test.ts tests/server.test.ts`: PASS, 5 files / 43 tests.
+- `cd server && npm run typecheck`: PASS.
+- `cd server && npm run build`: PASS.
+- `cd server && npm test -- --run --hookTimeout=30000`: PASS, 35 files passed / 3 skipped; 385 tests passed / 4 skipped.
+- `cd server && npm test -- --run tests/mcp-stdio.test.ts`: PASS, 1 file / 2 tests; freshly built stdio inventory remains exactly 45.
+- `git diff --check`: PASS.

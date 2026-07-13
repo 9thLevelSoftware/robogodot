@@ -13,7 +13,7 @@ export interface RuntimeSessionSnapshot { readonly id: string; readonly mode: Ru
 export interface RuntimeOutput extends OutputPage { sessionId: string; running: boolean; exit?: ManagedProcess["exit"] }
 export interface RuntimeStopResult extends Omit<StopResult, "childId"> { sessionId: string }
 type Runner = Pick<ProcessRunner, "start" | "stop" | "stopCurrent">;
-export interface RuntimeSessionDependencies { runner: Runner; sessionId?: () => string; secret?: () => string; monitorMs?: number; screenshotOpen?: typeof open }
+export interface RuntimeSessionDependencies { runner: Runner; sessionId?: () => string; secret?: () => string; monitorMs?: number; screenshotOpen?: typeof open; screenshotLstat?: typeof lstat }
 
 interface OwnedSession { id: string; secret: string; mode: RuntimeMode; state: Exclude<RuntimeSessionState, "idle">; process: ManagedProcess | undefined; bridge: RuntimeBridgeAttachment | undefined; bridgeRoot: string | undefined; dap: RuntimeLifecycle | undefined }
 
@@ -29,6 +29,7 @@ export class RuntimeSessionCoordinator {
   private readonly sessionId: () => string;
   private readonly secret: () => string;
   private readonly screenshotOpen: typeof open;
+  private readonly screenshotLstat: typeof lstat;
   readonly runner: Runner;
 
   constructor(dependencies: RuntimeSessionDependencies) {
@@ -37,6 +38,7 @@ export class RuntimeSessionCoordinator {
     this.secret = dependencies.secret ?? (() => randomBytes(32).toString("hex"));
     this.monitorMs = dependencies.monitorMs ?? 25;
     this.screenshotOpen = dependencies.screenshotOpen ?? open;
+    this.screenshotLstat = dependencies.screenshotLstat ?? lstat;
   }
 
   get state(): RuntimeSessionState { return this.owned?.state ?? "idle"; }
@@ -101,12 +103,14 @@ export class RuntimeSessionCoordinator {
     const path = ownString(raw, "path", 4096); if (ownString(raw, "format", 16) !== "png") throw screenshotError();
     const claimedWidth = ownInteger(raw, "width", 1, 0x7fffffff); const claimedHeight = ownInteger(raw, "height", 1, 0x7fffffff); const claimedBytes = ownInteger(raw, "bytes", 1, 16 * 1024 * 1024);
     try {
-    const rootInput = resolve(owned.bridgeRoot); const rootStat = await lstat(rootInput); if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw screenshotError();
-    const root = await realpath(rootInput); const absolutePath = await realpath(resolve(path)); const contained = relative(root, absolutePath);
+    const rootInput = resolve(owned.bridgeRoot); const rootStat = await this.screenshotLstat(rootInput); if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw screenshotError();
+    const rawCandidate = isAbsolute(path) ? resolve(path) : resolve(rootInput, path); const rawStat = await this.screenshotLstat(rawCandidate);
+    if (!rawStat.isFile() || rawStat.isSymbolicLink() || rawStat.nlink !== 1) throw screenshotError();
+    const root = await realpath(rootInput); const absolutePath = await realpath(rawCandidate); const contained = relative(root, absolutePath);
     if (!contained || contained === ".." || contained.startsWith(`..${sep}`) || isAbsolute(contained)) throw screenshotError();
-    const before = await lstat(absolutePath); if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size < 24 || before.size > 16 * 1024 * 1024 || before.size !== claimedBytes) throw screenshotError();
+    const before = await this.screenshotLstat(absolutePath); if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size < 24 || before.size > 16 * 1024 * 1024 || before.size !== claimedBytes) throw screenshotError();
     const handle = await this.screenshotOpen(absolutePath, "r"); let bytes: Buffer;
-    try { const opened = await handle.stat(); if (opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size) throw screenshotError(); bytes = Buffer.alloc(opened.size); const read = await handle.read(bytes, 0, bytes.length, 0); const after = await handle.stat(); if (read.bytesRead !== bytes.length || after.dev !== opened.dev || after.ino !== opened.ino || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) throw screenshotError(); } finally { await handle.close(); }
+    try { const opened = await handle.stat(); if (opened.dev !== before.dev || opened.ino !== before.ino || opened.nlink !== 1 || opened.size !== before.size) throw screenshotError(); bytes = Buffer.alloc(opened.size); const read = await handle.read(bytes, 0, bytes.length, 0); const after = await handle.stat(); if (read.bytesRead !== bytes.length || after.dev !== opened.dev || after.ino !== opened.ino || after.nlink !== 1 || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) throw screenshotError(); } finally { await handle.close(); }
     if (!bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) || bytes.toString("ascii", 12, 16) !== "IHDR") throw screenshotError();
     const width = bytes.readUInt32BE(16); const height = bytes.readUInt32BE(20); if (width !== claimedWidth || height !== claimedHeight || width === 0 || height === 0) throw screenshotError();
     return Object.freeze({ sessionId, path: contained.split(sep).join("/"), absolutePath, width, height, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), format: "png" as const });
