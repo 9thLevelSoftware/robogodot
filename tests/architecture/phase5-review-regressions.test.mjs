@@ -10,6 +10,31 @@ const phase5Tools = [
   "godot_debug_launch", "godot_debug_set_breakpoints", "godot_debug_continue", "godot_debug_step", "godot_debug_stack", "godot_debug_inspect",
 ];
 
+const phase5Contracts = [
+  ["godot_run_project", "optional `scene`, optional `arguments`", '`{ sessionId, mode: "normal", pid, bridgeTransport?, startedAt }`', [false, false, false, true]],
+  ["godot_stop_project", "`sessionId`", "`{ sessionId, alreadyStopped, graceful, forced, exit? }`; `exit` has `code`, `signal`, `at`, optional `error`", [false, true, true, true]],
+  ["godot_run_output", "`sessionId`; `since` safe integer ≥0, default 0; `limit` 1–500, default 100", "`{ sessionId, running, exit?, records, next, lost, truncated }`; each record has `cursor`, `stream` (`stdout` or `stderr`), `at`, `text`, `truncated`", [true, false, false, true]],
+  ["godot_runtime_scene_tree", "`sessionId`; `maxDepth` 1–32, default 8", "`{ sessionId, nodes, truncated: { nodes, depth } }`; each node has `path`, `name`, `type`, `depth`", [true, false, true, true]],
+  ["godot_runtime_get_node", "`sessionId`, node `path`, up to 64 allowlisted `properties`", "`{ sessionId, path, type, properties, omittedProperties }`", [true, false, true, true]],
+  ["godot_runtime_input", "`sessionId` and exactly one `action`, `key`, or `mouse_button` form; `holdMs` 0–2000", "`{ sessionId, accepted: true }`", [false, false, false, true]],
+  ["godot_runtime_screenshot", "`sessionId`; optional contained leaf `.png` name", '`{ sessionId, path, absolutePath, width, height, bytes, sha256, format: "png" }`', [false, false, false, true]],
+  ["godot_debug_launch", "optional `scene`, optional `arguments`; `timeoutMs` 100–60000, default 15000", '`{ sessionId, mode: "debug", state: "debug_ready", pid, bridgeTransport?, startedAt }`', [false, false, false, true]],
+  ["godot_debug_set_breakpoints", "`sessionId`, one contained project-relative `.gd` `path`, up to 500 unique positive `lines`", "`{ sessionId, path, breakpoints }` with the adapter's bounded replaced results", [false, false, true, true]],
+  ["godot_debug_continue", "`sessionId`, stopped `thread` reference", "`{ sessionId, resumed: true }`", [false, false, false, true]],
+  ["godot_debug_step", "`sessionId`, stopped `thread`, `kind` `over` or `into`", "`{ sessionId, kind, resumed: true }`", [false, false, false, true]],
+  ["godot_debug_stack", "`sessionId`; optional stopped `thread`; `startFrame` safe integer ≥0", "`{ sessionId, stoppedGeneration, threads, frames, totalFrames?, truncated }` with bounded references", [true, false, false, true]],
+  ["godot_debug_inspect", "`sessionId`, stopped `frame`; optional `variables`; `start` safe integer ≥0", "Scope page: `{ sessionId, stoppedGeneration, scopes, truncated }`. Variable page: `{ sessionId, stoppedGeneration, variables, next?, truncated }`.", [true, false, false, true]],
+];
+
+function parsePhase5ContractRows(readme) {
+  const section = readme.split("| Tool | Exact inputs | Normalized success output | MCP annotations")[1]?.split("\n\n")[0] ?? "";
+  return section.split(/\r?\n/).filter(line => /^\| `godot_/.test(line)).map(line => {
+    const cells = line.split("|").slice(1, -1).map(cell => cell.trim());
+    const annotations = [...cells[3].matchAll(/`(true|false)`/g)].map(match => match[1] === "true");
+    return [cells[0].replaceAll("`", ""), cells[1], cells[2], annotations];
+  });
+}
+
 test("Phase 5 runbook documents the exact 13-tool contract and exact 51-tool inventory", async () => {
   const [readme, runtimeTools, debugTools, serverTest] = await Promise.all([
     read("README.md"), read("server/src/tools/runtime.ts"), read("server/src/tools/debug.ts"), read("server/tests/server.test.ts"),
@@ -26,12 +51,7 @@ test("Phase 5 runbook documents the exact 13-tool contract and exact 51-tool inv
   assert.equal(new Set(documented).size, 51);
   assert.deepEqual(documented, registered.slice(0, 51));
 
-  for (const token of [
-    "sessionId", "scene", "arguments", "pid", "bridgeTransport", "startedAt", "alreadyStopped", "graceful", "forced", "exit",
-    "since", "limit", "records", "cursor", "stdout", "stderr", "next", "lost", "truncated", "maxDepth", "nodes", "properties",
-    "action", "key", "mouse_button", "holdMs", "absolutePath", "width", "height", "bytes", "sha256", "timeoutMs", "path", "lines",
-    "runtimeSessionId", "stoppedGeneration", "thread", "over", "into", "startFrame", "frame", "variables", "start",
-  ]) assert.match(readme, new RegExp(`\\b${token}\\b`), `README contract token: ${token}`);
+  assert.deepEqual(parsePhase5ContractRows(readme), phase5Contracts, "all 13 rows must bind exact tool, inputs, output, and four annotations");
   assert.match(readme, /32 arguments[^\n]*1,024 UTF-8 bytes[^\n]*8,192 total UTF-8 bytes/i);
   assert.match(readme, /readOnlyHint[^\n]*destructiveHint[^\n]*idempotentHint[^\n]*openWorldHint/i);
   assert.match(readme, /structuredContent[^\n]*omitted[^\n]*error/i);
@@ -108,13 +128,17 @@ test("CI keeps the cross-platform matrix and runs every live suite fail-closed",
 });
 
 test("runtime bridge parity uses advertised UTF-8 byte limits and peer readiness proof", async () => {
-  const [scene, input, screenshot, bridge, client, trace] = await Promise.all([
+  const [scene, input, screenshot, bridge, client, trace, sequence, renderedSequence] = await Promise.all([
     read("addons/godot_control_mcp/runtime/scene_bridge.gd"), read("addons/godot_control_mcp/runtime/input_bridge.gd"),
     read("addons/godot_control_mcp/runtime/screenshot_bridge.gd"), read("addons/godot_control_mcp/runtime/runtime_bridge.gd"),
-    read("server/src/runtime/bridge-client.ts"), read("docs/architecture/traceability.md"),
+    read("server/src/runtime/bridge-client.ts"), read("docs/architecture/traceability.md"), read("docs/architecture/06-runtime-debug-sequence.md"), read("docs/architecture/rendered/06-runtime-debug-sequence.svg"),
   ]);
   for (const source of [scene, input, screenshot]) assert.match(source, /to_utf8_buffer\(\)\.size\(\) > 256/);
   assert.match(bridge, /hello_ready/); assert.match(bridge, /robogodot-ready-v1/);
   assert.match(client, /hello_ready/); assert.match(client, /robogodot-ready-v1/);
+  for (const source of [trace, sequence]) assert.match(source, /user:\/\/\.mcp\/<sessionId>\/resp-<id>\.json/);
+  assert.doesNotMatch(`${trace}\n${sequence}`, /user:\/\/\.mcp\/resp-<id>\.json/);
+  const visibleSvgText = renderedSequence.replace(/<[^>]+>/g, "").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+  assert.match(visibleSvgText, /user:\/\/\.mcp\/<sessionId>\/resp-<id>\.json/, "rendered visible text must preserve the exact response path without hyphenation");
   assert.match(trace, /req-<id>\.json/); assert.doesNotMatch(trace, /host path and socket fallback unresolved/i);
 });

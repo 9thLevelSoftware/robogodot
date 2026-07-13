@@ -58,3 +58,12 @@ The Mono editor emits `ERROR: .NET Sdk not found. The required version is '8.0.2
 ## Concerns
 
 Hosted Linux/Xvfb proof cannot run on this Windows workstation; configuration and fail-closed command structure are tested deterministically, and the actual Linux execution remains CI evidence. Awaiting the required final independent whole-branch re-review.
+
+## Follow-up review corrections
+
+- Corrected every architecture occurrence of the correlated runtime response to the exact `user://.mcp/<sessionId>/resp-<id>.json` path, including the source sequence, FLOW-RUN-013 trace row, container artifact row, and atlas plan expectation. Regenerated only `06-runtime-debug-sequence.svg` and its manifest entry; no unrelated render drift is included.
+- Replaced the Phase 5 README token-bag assertion with deterministic Markdown-table parsing. All 13 rows are now compared in order against exact tool name, exact inputs, exact normalized output, and all four annotation booleans.
+- RED proof: deliberately changed `godot_runtime_scene_tree` from `maxDepth` 1–32 to 1–31; the focused regression failed with an exact row diff (4 passed, 1 failed). The mutation was then restored.
+- GREEN proof: focused Phase 5 architecture regressions passed 5/5. The complete architecture suite passed 95 with one intentional external-archive skip. Atlas render/check, manifest provenance, offline `docs:check`, stale-path search, and `git diff --check` all passed. No production files changed, so the server test matrix was not rerun for this documentation-only correction.
+- Narrow re-review then found two remaining atlas-presentation defects: an older plan checklist still admitted generic `req.json`/`resp-<id>.json`, and Mermaid visibly hyphenated `.json` in the exported response path. The plan now requires exact session-scoped request/response artifacts. FLOW-RUN-013 uses a short message plus a wide exact-path note, preventing hyphenation while preserving the exact source/table contract.
+- Rendered-output RED/GREEN proof: the new visible-SVG assertion failed against the prior export because its text normalized to `resp-<id>.jso-n`; after the sequence-layout correction and targeted regeneration it passed 5/5 and visibly contains contiguous `user://.mcp/<sessionId>/resp-<id>.json`. The complete architecture suite again passed 95 with one intentional skip; render/manifest, `docs:check`, stale generic-path search, and diff checks passed.

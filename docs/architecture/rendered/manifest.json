@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-13T15:09:06.418Z",
+  "generatedAt": "2026-07-13T15:52:26.300Z",
   "renderer": "@mermaid-js/mermaid-cli@11.16.0",
   "sourceArchive": {
     "path": "C:\\Users\\dasbl\\Downloads\\files.zip",
@@ -61,10 +61,10 @@
       "output": "06-runtime-debug-sequence.svg",
       "source": "06-runtime-debug-sequence.md",
       "block": 1,
-      "sourceBlockSha256": "7621916AEFC770B5B660818130AEBAEF5BBC9690FF7B5AEB601AB644F061B3C8",
-      "outputSha256": "95A894B2DED9C3731390A1C5165202CDF740AA66B5302A0C9238F3D0579C125C",
+      "sourceBlockSha256": "B37083CB9529574C447AC1DE80B1E3A280259B33935DC3B5BC4292DCD10CE40B",
+      "outputSha256": "0FB625510F0C6E6E79D538209215B5316B48A953A3F989FAD2E055E0AED3E88B",
       "archiveSha256": "0B78D0AC0B0676AEFD31A394ADBB95980B6AC2A6273246840325633CB1F96229",
-      "generatedAt": "2026-07-13T15:09:06.418Z",
+      "generatedAt": "2026-07-13T15:52:26.300Z",
       "renderer": "@mermaid-js/mermaid-cli@11.16.0"
     },
     {

@@ -68,7 +68,7 @@ const runtimeMessages = new Map([
   ["FLOW-RUN-010", "RUNTIME_DRIVER->>IPC_FILES: file fallback atomically writes req-<id>.json"],
   ["FLOW-RUN-011", "AUTOLOADS->>IPC_FILES: autoload polls and reads request"],
   ["FLOW-RUN-012", "AUTOLOADS->>RUNNING_GAME: execute requested operation"],
-  ["FLOW-RUN-013", "AUTOLOADS->>IPC_FILES: write user://.mcp/resp-<id>.json"],
+  ["FLOW-RUN-013", "AUTOLOADS->>IPC_FILES: write correlated response file"],
   ["FLOW-RUN-014", "RUNTIME_DRIVER->>IPC_FILES: server reads and deletes response"],
   ["FLOW-RUN-015", "RUNTIME_TOOLS-->>MCP_CLIENT: return structured result"],
   ["FLOW-RUN-016", "RUNTIME_TOOLS-->>MCP_CLIENT: timeout alternative with game-not-running hint"],
