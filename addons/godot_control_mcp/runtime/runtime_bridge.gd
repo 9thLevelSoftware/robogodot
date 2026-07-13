@@ -166,6 +166,7 @@ func cleanup() -> void:
 	_drop_peer(); _server.stop()
 	var directory := DirAccess.open(config.sessionRoot)
 	if directory != null:
+		directory.include_hidden = true
 		for name in directory.get_files():
 			if _owned_artifact(name): directory.remove(name)
 
