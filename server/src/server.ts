@@ -25,6 +25,13 @@ import type { FsGuard } from "./fs/guard.js";
 import { createPolicyBundle, type PolicyBundle } from "./policy.js";
 import { bindPolicy } from "./registry.js";
 import type { ChannelState } from "./obs/health.js";
+import { registerResourceSurfaces } from "./resources/surfaces.js";
+import { registerWorkflowPrompts } from "./prompts/workflows.js";
+import { RECONNECT_ACCEPTANCE_MS } from "./bridge/ws-client.js";
+
+export const PUBLIC_TOOL_COUNT = 58;
+export const SUPPORTED_GODOT_MINOR = "4.6";
+export const NODE_ENGINE = ">=22";
 
 export interface ServerDependencies {
   bridge?: CoreBridge;
@@ -98,6 +105,16 @@ export function createServer(dependencies: ServerDependencies): McpServer {
     provider: new DisabledAssetProvider(),
     enabled: false,
   });
+  registerResourceSurfaces(server, {
+    health: policy.health,
+    bridge,
+    mode,
+    godotMinor: SUPPORTED_GODOT_MINOR,
+    nodeEngine: NODE_ENGINE,
+    reconnectAcceptanceMs: RECONNECT_ACCEPTANCE_MS,
+    toolCount: PUBLIC_TOOL_COUNT,
+  });
+  registerWorkflowPrompts(server);
   return server;
 }
 

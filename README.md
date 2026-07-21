@@ -1,6 +1,8 @@
-# Godot Control MCP — Phase 5
+# Godot Control MCP
 
-Godot Control MCP connects an MCP host to one local Godot 4.6.x editor, one coordinator-owned game process, and guarded headless/filesystem tools. Phase 6 exposes exactly 58 public tools (Phase 3's 31 public tools, plus Phase 4–6 additions). There are no aliases.
+Godot Control MCP is a local MCP control plane for **Godot 4.6.x**: editor mutation, ClassDB/docs introspection, LSP code intelligence, managed runtime/debug, guarded batch/filesystem tools, and Phase 7 policy middleware. It exposes exactly 58 public tools (Phase 3's 31 public tools, plus Phase 4–8 additions; no aliases), four `godot://` resources, and the `add-feature-to-scene` prompt.
+
+**Support matrix (ADR 0006):** Node.js `>=22`, Godot **4.6.x only**, reconnect acceptance window **65s** after the plugin listener is available.
 
 ## Quickstart
 
@@ -9,6 +11,8 @@ Requirements: Node.js 22+, npm, Godot 4.6.x, and a random shared token containin
 ```sh
 cd server
 npm ci && npm run build
+# optional package entry after build:
+# npx godot-control-mcp   # via package bin → dist/index.js
 ```
 
 Copy `addons/godot_control_mcp` into the target project's `addons` directory, enable **Godot Control MCP** under **Project > Project Settings > Plugins**, and keep that editor open. Give the plugin and server the same token:
@@ -185,6 +189,16 @@ For local live verification, `GODOT_PROJECT_PATH` must resolve to `tests/fixture
 
 The recorded local Phase 5 proof is Windows. Linux CI provisions `Xvfb :99` at 1280×720×24, exports `DISPLAY=:99`, and then runs Phase 5 as its own fail-closed step so screenshot acceptance uses a non-headless display. The workflow configuration is covered deterministically in repository tests; the hosted Linux execution remains CI evidence rather than a claim about this Windows workstation.
 
+## Resources and prompts
+
+| Surface | Purpose |
+| --- | --- |
+| `godot://health` | Channel readiness, mode, audit size, cache generation |
+| `godot://connection` | Editor WebSocket bridge status |
+| `godot://mode` | Configured `GODOT_MCP_MODE` |
+| `godot://support-matrix` | Node/Godot support pins, tool count, reconnect window |
+| Prompt `add-feature-to-scene` | Workflow template for Tier A scene feature work (no aliases) |
+
 ## Verification
 
 ```sh
@@ -194,6 +208,7 @@ npm test -- --run
 npm run typecheck
 npm run build
 npm run docs:check
+npm run test:eval
 ```
 
 With `GODOT_PATH` set, run the real plugin/parser/execution/introspection smokes and authenticated authoring acceptance test:
