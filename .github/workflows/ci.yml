@@ -31,6 +31,9 @@ jobs:
       - name: Offline documentation integrity
         working-directory: server
         run: npm run docs:check
+      - name: Phase 8 evaluation suite
+        working-directory: server
+        run: npm run test:eval
       - name: Install Godot (Linux)
         if: runner.os == 'Linux'
         shell: bash

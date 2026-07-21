@@ -36,7 +36,11 @@ interface Pending {
   timer: ReturnType<typeof setTimeout>;
 }
 
-const BACKOFF = [1000, 2000, 4000, 8000, 16000, 32000, 60000] as const;
+/** Exponential reconnect delays (ms). Cap is 60s per Phase 1 / ADR 0001. */
+export const RECONNECT_BACKOFF_MS = [1000, 2000, 4000, 8000, 16000, 32000, 60000] as const;
+/** End-to-end acceptance window after the plugin listener is available (ADR 0006 / Q-016). */
+export const RECONNECT_ACCEPTANCE_MS = 65_000;
+const BACKOFF = RECONNECT_BACKOFF_MS;
 
 function unrefTimer<T>(timer: T): T {
   if ((typeof timer === "object" && timer !== null) || typeof timer === "function") {
