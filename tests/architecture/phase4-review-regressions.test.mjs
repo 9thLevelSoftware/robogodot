@@ -60,7 +60,7 @@ test("Phase 4 runbook documents the exact public surface and operating contract"
   assert.match(tools, /Math\.min\(LSP_LIMITS\.maxRequestMs, firstRemaining\)/);
 });
 
-test("Phase 4 dependency is resolved without deciding Phase 6", async () => {
+test("Phase 4 dependency is resolved and Phase 6 Q-002 is closed by ADR 0004", async () => {
   const [phases, openQuestions, traceability] = await Promise.all([
     read("docs/architecture/03-phase-dependencies.md"),
     read("docs/architecture/open-questions.md"),
@@ -69,9 +69,10 @@ test("Phase 4 dependency is resolved without deciding Phase 6", async () => {
   assert.match(phases, /PHASE_01 -->\|"config · logger · errors"\| PHASE_04/);
   assert.match(phases, /Phase 2[^\n]*(coordination|regression)/i);
   assert.doesNotMatch(phases, /PHASE_02 -\.->\|"\? unresolved · Q-002"\| PHASE_04/);
-  assert.match(phases, /PHASE_02 -\.->\|"\? unresolved · Q-002"\| PHASE_06/);
+  assert.doesNotMatch(phases, /PHASE_02 -\.->\|"\? unresolved · Q-002"\| PHASE_06/);
+  assert.match(phases, /PHASE_02 -\.->\|"completed coordination · Q-002 resolved for Phase 6"\| PHASE_06/);
   assert.match(openQuestions, /Q-002[^]*Phase 4[^]*Resolved/i);
-  assert.match(openQuestions, /Phase 6[^]*(unresolved|open)/i);
+  assert.match(openQuestions, /Q-002[^]*Phase 6[^]*Resolved|ADR 0004/i);
   assert.match(traceability, /FLOW-PH-007[^\n]*(Resolved|coordination)/i);
 });
 

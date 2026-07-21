@@ -14,6 +14,8 @@ export interface ResolvedConfig {
   mode: SafetyMode;
   debug: boolean;
   lspAutoStart: boolean;
+  exportRoots: string[];
+  assetProviderEnabled: boolean;
 }
 
 export interface ResolveConfigProbes {
@@ -51,6 +53,18 @@ function readLspAutoStart(raw: string | undefined): boolean {
   if (raw === undefined || raw === "false" || raw === "0") return false;
   if (raw === "true" || raw === "1") return true;
   throw new Error("GODOT_MCP_LSP_AUTO_START must be true, false, 1, or 0");
+}
+
+function readBoolFlag(raw: string | undefined, name: string): boolean {
+  if (raw === undefined || raw === "false" || raw === "0") return false;
+  if (raw === "true" || raw === "1") return true;
+  throw new Error(`${name} must be true, false, 1, or 0`);
+}
+
+function readExportRoots(raw: string | undefined, platform: NodeJS.Platform): string[] {
+  if (raw === undefined || raw.trim() === "") return [];
+  const delimiter = platform === "win32" ? ";" : ":";
+  return raw.split(delimiter).map((part) => part.trim()).filter(Boolean);
 }
 
 function findProject(cwd: string, isFile: (candidate: string) => boolean, pathApi: typeof path.win32): string | undefined {
@@ -103,6 +117,8 @@ export function resolveConfig(
     mode: readMode(env.GODOT_MCP_MODE),
     debug: env.DEBUG === "true" || env.DEBUG === "1",
     lspAutoStart: readLspAutoStart(env.GODOT_MCP_LSP_AUTO_START),
+    exportRoots: readExportRoots(env.GODOT_MCP_EXPORT_ROOTS, platform),
+    assetProviderEnabled: readBoolFlag(env.GODOT_MCP_ASSET_PROVIDER, "GODOT_MCP_ASSET_PROVIDER"),
   };
   const godotPath = env.GODOT_PATH ?? discoveredGodot;
   const projectPath = env.GODOT_PROJECT_PATH ?? discoveredProject;

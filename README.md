@@ -1,6 +1,6 @@
 # Godot Control MCP — Phase 5
 
-Godot Control MCP connects an MCP host to one local Godot 4.6.x editor and one coordinator-owned game process. Phase 5 exposes exactly 51 public tools: Phase 3 contributed 31 public tools, Phase 4 added seven LSP tools, and Phase 5 adds 13 runtime/debug tools. There are no aliases.
+Godot Control MCP connects an MCP host to one local Godot 4.6.x editor, one coordinator-owned game process, and guarded headless/filesystem tools. Phase 6 exposes exactly 58 public tools (Phase 3's 31 public tools, plus Phase 4–6 additions). There are no aliases.
 
 ## Quickstart
 
@@ -70,12 +70,22 @@ Other environment variables:
 | `godot_run_project`, `godot_stop_project`, `godot_run_output` | Start, stop, and page output from one managed game process |
 | `godot_runtime_scene_tree`, `godot_runtime_get_node`, `godot_runtime_input`, `godot_runtime_screenshot` | Inspect and interact with the authenticated running-game bridge |
 | `godot_debug_launch`, `godot_debug_set_breakpoints`, `godot_debug_continue`, `godot_debug_step`, `godot_debug_stack`, `godot_debug_inspect` | Attach to Godot DAP and debug the coordinator-owned process |
+| `godot_fs_read`, `godot_fs_write`, `godot_fs_list` | Project-root-jailed filesystem read/write/list |
+| `godot_headless_run` | Isolated `godot --headless --script` batch execution |
+| `godot_export_project` | Export with preset to project, session temp, or `GODOT_MCP_EXPORT_ROOTS` |
+| `godot_uid_list` | Bounded inventory of `.uid` sidecars |
+| `godot_asset_generate` | Optional asset provider write (default `feature_disabled`) |
+
+Other environment variables for Phase 6:
+
+- `GODOT_MCP_EXPORT_ROOTS`: extra absolute export roots (`:` on Unix, `;` on Windows), realpath-checked.
+- `GODOT_MCP_ASSET_PROVIDER`: `true`/`1` enables the asset tool path (still requires a registered provider implementation).
 
 The exact ordered public inventory is authoritative and matches both in-memory and freshly built stdio discovery:
 
-<!-- exact-51-tool-inventory -->
-`godot_connection_status`, `godot_get_version`, `godot_ping`, `godot_script_run`, `godot_api_list_classes`, `godot_api_describe_class`, `godot_api_search`, `godot_api_class_doc`, `godot_node_add`, `godot_node_delete`, `godot_node_reparent`, `godot_node_rename`, `godot_node_duplicate`, `godot_node_get`, `godot_node_set_property`, `godot_node_call_method`, `godot_scene_instance`, `godot_scene_open`, `godot_scene_new`, `godot_scene_save`, `godot_scene_tree`, `godot_scene_current`, `godot_signal_list`, `godot_signal_connect`, `godot_signal_disconnect`, `godot_resource_load`, `godot_resource_create`, `godot_resource_save`, `godot_project_setting_get`, `godot_project_setting_set`, `godot_project_setting_list`, `godot_lsp_diagnostics`, `godot_lsp_completion`, `godot_lsp_hover`, `godot_lsp_signature_help`, `godot_lsp_document_symbols`, `godot_lsp_workspace_symbols`, `godot_lsp_native_symbol`, `godot_run_project`, `godot_stop_project`, `godot_run_output`, `godot_runtime_scene_tree`, `godot_runtime_get_node`, `godot_runtime_input`, `godot_runtime_screenshot`, `godot_debug_launch`, `godot_debug_set_breakpoints`, `godot_debug_continue`, `godot_debug_step`, `godot_debug_stack`, `godot_debug_inspect`.
-<!-- /exact-51-tool-inventory -->
+<!-- exact-58-tool-inventory -->
+`godot_connection_status`, `godot_get_version`, `godot_ping`, `godot_script_run`, `godot_api_list_classes`, `godot_api_describe_class`, `godot_api_search`, `godot_api_class_doc`, `godot_node_add`, `godot_node_delete`, `godot_node_reparent`, `godot_node_rename`, `godot_node_duplicate`, `godot_node_get`, `godot_node_set_property`, `godot_node_call_method`, `godot_scene_instance`, `godot_scene_open`, `godot_scene_new`, `godot_scene_save`, `godot_scene_tree`, `godot_scene_current`, `godot_signal_list`, `godot_signal_connect`, `godot_signal_disconnect`, `godot_resource_load`, `godot_resource_create`, `godot_resource_save`, `godot_project_setting_get`, `godot_project_setting_set`, `godot_project_setting_list`, `godot_lsp_diagnostics`, `godot_lsp_completion`, `godot_lsp_hover`, `godot_lsp_signature_help`, `godot_lsp_document_symbols`, `godot_lsp_workspace_symbols`, `godot_lsp_native_symbol`, `godot_run_project`, `godot_stop_project`, `godot_run_output`, `godot_runtime_scene_tree`, `godot_runtime_get_node`, `godot_runtime_input`, `godot_runtime_screenshot`, `godot_debug_launch`, `godot_debug_set_breakpoints`, `godot_debug_continue`, `godot_debug_step`, `godot_debug_stack`, `godot_debug_inspect`, `godot_fs_read`, `godot_fs_write`, `godot_fs_list`, `godot_headless_run`, `godot_export_project`, `godot_uid_list`, `godot_asset_generate`.
+<!-- /exact-58-tool-inventory -->
 
 All curated in-memory mutations enter a single FIFO mutation lane before reaching Godot, preventing concurrent requests from capturing stale inverse state. Each accepted node, signal, instance, or project-setting mutation creates one `EditorUndoRedoManager` action; users undo it with normal Godot Ctrl-Z. Scene open/new are lifecycle operations, while scene/resource save are explicit persistence operations: none claims UndoRedo semantics.
 

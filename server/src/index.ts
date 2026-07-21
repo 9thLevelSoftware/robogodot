@@ -17,6 +17,13 @@ import { RuntimeBridgeClient } from "./runtime/bridge-client.js";
 import type { RuntimeToolService } from "./tools/runtime.js";
 import type { DebugToolService } from "./tools/debug.js";
 import { GodotMcpError } from "./errors.js";
+import { FsGuard } from "./fs/guard.js";
+import { HeadlessRunner } from "./batch/headless.js";
+import { ProjectExporter } from "./batch/export.js";
+import { DisabledAssetProvider } from "./assets/provider.js";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 interface BridgeLifecycle extends CoreBridge { start(): void; stop(): void }
 interface ServerLifecycle { connect(transport: Transport): Promise<void>; close(): Promise<void> }
@@ -53,7 +60,13 @@ export async function runServer(dependencies: RunServerDependencies = {}): Promi
     beforeConnect: async () => { await lspHost.ensureAvailable(); },
   }));
   const runtime = dependencies.runtime ?? createRuntimeService(config, bridge);
-  const server = dependencies.server ?? createServer({ bridge, mode: config.mode, lsp: lspClient, runtime, debug: runtime });
+  const phase6 = config.projectPath
+    ? await createPhase6Services(config)
+    : undefined;
+  const server = dependencies.server ?? createServer({
+    bridge, mode: config.mode, lsp: lspClient, runtime, debug: runtime,
+    ...(phase6 ? { fs: phase6.fs, batch: phase6.batch, uid: phase6.uid, assets: phase6.assets } : {}),
+  });
   const transport = dependencies.transport ?? new StdioServerTransport();
   const signals = dependencies.signals ?? process;
   const input = dependencies.input ?? process.stdin;
@@ -87,6 +100,29 @@ export async function runServer(dependencies: RunServerDependencies = {}): Promi
   } finally {
     await cleanup();
   }
+}
+
+export async function createPhase6Services(config: ReturnType<typeof resolveConfig>) {
+  const projectPath = config.projectPath!;
+  const sessionExport = await mkdtemp(path.join(tmpdir(), "robogodot-export-"));
+  const guard = await FsGuard.create(projectPath, [...config.exportRoots, sessionExport]);
+  await guard.ensureExportRoot(sessionExport);
+  return {
+    fs: { guard },
+    batch: {
+      ...(config.godotPath ? { godotPath: config.godotPath } : {}),
+      projectPath,
+      headless: new HeadlessRunner(),
+      exporter: new ProjectExporter(),
+      guard,
+    },
+    uid: { guard },
+    assets: {
+      guard,
+      provider: new DisabledAssetProvider(),
+      enabled: config.assetProviderEnabled,
+    },
+  };
 }
 
 export function createRuntimeService(config: ReturnType<typeof resolveConfig>, editorBridge: CoreBridge): RuntimeLifecycle {

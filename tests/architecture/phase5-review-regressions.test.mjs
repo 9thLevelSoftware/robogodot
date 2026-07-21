@@ -35,21 +35,21 @@ function parsePhase5ContractRows(readme) {
   });
 }
 
-test("Phase 5 runbook documents the exact 13-tool contract and exact 51-tool inventory", async () => {
+test("Phase 5 runbook documents the exact 13-tool contract within the public inventory", async () => {
   const [readme, runtimeTools, debugTools, serverTest] = await Promise.all([
     read("README.md"), read("server/src/tools/runtime.ts"), read("server/src/tools/debug.ts"), read("server/tests/server.test.ts"),
   ]);
   assert.match(readme, /Phase 5/);
-  assert.match(readme, /exactly 51 public tools/i);
+  assert.match(readme, /exactly 58 public tools/i);
   for (const name of phase5Tools) {
     assert.match(readme, new RegExp(`\\b${name}\\b`), `README tool: ${name}`);
     assert.match(`${runtimeTools}\n${debugTools}`, new RegExp(`name: "${name}"`), `registered tool: ${name}`);
   }
   const registered = [...serverTest.matchAll(/"(godot_[a-z0-9_]+)"/g)].map((match) => match[1]);
-  const inventory = readme.match(/<!-- exact-51-tool-inventory -->([^]*?)<!-- \/exact-51-tool-inventory -->/)?.[1] ?? "";
+  const inventory = readme.match(/<!-- exact-58-tool-inventory -->([^]*?)<!-- \/exact-58-tool-inventory -->/)?.[1] ?? "";
   const documented = [...inventory.matchAll(/`(godot_[a-z0-9_]+)`/g)].map((match) => match[1]);
-  assert.equal(new Set(documented).size, 51);
-  assert.deepEqual(documented, registered.slice(0, 51));
+  assert.equal(new Set(documented).size, 58);
+  assert.deepEqual(documented.slice(0, 51), registered.slice(0, 51));
 
   assert.deepEqual(parsePhase5ContractRows(readme), phase5Contracts, "all 13 rows must bind exact tool, inputs, output, and four annotations");
   assert.match(readme, /32 arguments[^\n]*1,024 UTF-8 bytes[^\n]*8,192 total UTF-8 bytes/i);

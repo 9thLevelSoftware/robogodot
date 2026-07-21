@@ -93,7 +93,7 @@ const phaseEdges = new Map([
   ["FLOW-PH-008", 'PHASE_01 -->|"transport · config · log · errors"| PHASE_05'],
   ["FLOW-PH-009", 'PHASE_02 -->|"execution contract"| PHASE_05'],
   ["FLOW-PH-010", 'PHASE_01 -->|"config · logger · errors"| PHASE_06'],
-  ["FLOW-PH-011", 'PHASE_02 -.->|"? unresolved · Q-002"| PHASE_06'],
+  ["FLOW-PH-011", 'PHASE_02 -.->|"completed coordination · Q-002 resolved for Phase 6"| PHASE_06'],
   ["FLOW-PH-012", 'PHASE_01 -->|"JsonRpcClient.call"| PHASE_07'],
   ["FLOW-PH-013", 'PHASE_02 -->|"execution guard"| PHASE_07'],
   ["FLOW-PH-014", 'PHASE_03 -->|"23 curated tools · shared mutation lane"| PHASE_07'],
