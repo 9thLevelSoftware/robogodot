@@ -5,7 +5,6 @@ import type { SafetyMode } from "./config.js";
 import { registerScriptTool } from "./tools/script.js";
 import { registerIntrospectionTools } from "./tools/introspection.js";
 import type { DocsIndex } from "./docs/class-docs.js";
-import { MutationLane } from "./mutation/lane.js";
 import { registerNodeTools } from "./tools/node.js";
 import { registerSceneTools } from "./tools/scene.js";
 import { registerSignalTools } from "./tools/signal.js";
@@ -23,6 +22,9 @@ import { DisabledAssetProvider } from "./assets/provider.js";
 import { HeadlessRunner } from "./batch/headless.js";
 import { ProjectExporter } from "./batch/export.js";
 import type { FsGuard } from "./fs/guard.js";
+import { createPolicyBundle, type PolicyBundle } from "./policy.js";
+import { bindPolicy } from "./registry.js";
+import type { ChannelState } from "./obs/health.js";
 
 export interface ServerDependencies {
   bridge?: CoreBridge;
@@ -35,6 +37,13 @@ export interface ServerDependencies {
   batch?: BatchToolService;
   uid?: UidToolService;
   assets?: AssetToolService;
+  policy?: PolicyBundle;
+  healthProbes?: Partial<{
+    editorBridge: () => ChannelState;
+    lsp: () => ChannelState;
+    runtime: () => ChannelState;
+    filesystem: () => ChannelState;
+  }>;
 }
 
 const unconfiguredGuard = new Proxy({} as FsGuard, {
@@ -61,16 +70,18 @@ const disconnectedLsp: LspToolClient = {
 
 export function createServer(dependencies: ServerDependencies): McpServer {
   const server = new McpServer({ name: "godot-control-mcp", version: "0.1.0" });
+  const mode = dependencies.mode ?? "full";
+  const policy = dependencies.policy ?? createPolicyBundle(mode, dependencies.healthProbes);
+  bindPolicy(server, policy);
   const bridge = dependencies.bridge ?? disconnectedBridge;
   registerCoreTools(server, bridge);
-  registerScriptTool(server, bridge, dependencies.mode ?? "full");
+  registerScriptTool(server, bridge, mode);
   registerIntrospectionTools(server, bridge, dependencies.docsLoader);
-  const mutationLane = new MutationLane();
-  registerNodeTools(server, bridge, mutationLane);
+  registerNodeTools(server, bridge);
   registerSceneTools(server, bridge);
-  registerSignalTools(server, bridge, mutationLane);
+  registerSignalTools(server, bridge);
   registerResourceTools(server, bridge);
-  registerProjectTools(server, bridge, mutationLane);
+  registerProjectTools(server, bridge);
   registerLspTools(server, dependencies.lsp ?? disconnectedLsp);
   registerRuntimeTools(server, dependencies.runtime ?? disconnectedRuntime);
   registerDebugTools(server, dependencies.debug ?? disconnectedDebug);
@@ -89,3 +100,5 @@ export function createServer(dependencies: ServerDependencies): McpServer {
   });
   return server;
 }
+
+export type { PolicyBundle };

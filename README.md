@@ -38,7 +38,7 @@ Other environment variables:
 - `GODOT_LSP_PORT`: Godot language-server TCP port, default `6005`.
 - `GODOT_MCP_LSP_AUTO_START`: `false` by default; only `true` or `1` lets the server start a headless editor when no visible editor LSP is listening.
 - `GODOT_DAP_PORT`: reserved debug-adapter port, default `6006`.
-- `GODOT_MCP_MODE`: `full` (default), `read_only`, or `confirm_destructive`. **Until Phase 7 hardening, mode only gates `godot_script_run`** (blocked outside `full`, and `full` still requires `allowDangerous: true`). Curated editor mutations, scene lifecycle/persistence, and LSP tools do not yet consult this mode.
+- `GODOT_MCP_MODE`: `full` (default), `read_only`, or `confirm_destructive`. **Phase 7 applies mode uniformly:** `read_only` allows only `readOnlyHint` tools; `confirm_destructive` requires `confirmed: true` on destructive tools (except `godot_script_run`, which stays blocked until `full` + `allowDangerous: true`). All non-read tools share one FIFO mutation lane; reads may be cached with mutation fencing.
 - `DEBUG`: `true` or `1` for stderr debug logs. MCP owns stdout exclusively.
 
 ## Tools
