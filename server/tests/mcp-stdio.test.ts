@@ -65,6 +65,7 @@ describe("freshly built stdio server", () => {
       "godot_run_project", "godot_stop_project", "godot_run_output",
       "godot_runtime_scene_tree", "godot_runtime_get_node", "godot_runtime_input", "godot_runtime_screenshot",
       "godot_debug_launch", "godot_debug_set_breakpoints", "godot_debug_continue", "godot_debug_step", "godot_debug_stack", "godot_debug_inspect",
+      "godot_fs_read", "godot_fs_write", "godot_fs_list", "godot_headless_run", "godot_export_project", "godot_uid_list", "godot_asset_generate",
     ]);
   });
 

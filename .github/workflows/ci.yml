@@ -78,3 +78,8 @@ jobs:
           GODOT_PROJECT_PATH: ${{ github.workspace }}/tests/fixtures/godot_project
         working-directory: server
         run: npm run test:live:phase5
+      - name: Live Phase 6 acceptance
+        env:
+          GODOT_PROJECT_PATH: ${{ github.workspace }}/tests/fixtures/godot_project
+        working-directory: server
+        run: npm run test:live:phase6

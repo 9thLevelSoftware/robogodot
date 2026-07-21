@@ -15,8 +15,37 @@ import { registerLspTools, type LspToolClient } from "./tools/lsp.js";
 import { GodotMcpError } from "./errors.js";
 import { disconnectedRuntime, registerRuntimeTools, type RuntimeToolService } from "./tools/runtime.js";
 import { disconnectedDebug, registerDebugTools, type DebugToolService } from "./tools/debug.js";
+import { registerFsTools, type FsToolService } from "./tools/fs.js";
+import { registerBatchTools, type BatchToolService } from "./tools/batch.js";
+import { registerUidTools, type UidToolService } from "./tools/uid.js";
+import { registerAssetTools, type AssetToolService } from "./tools/assets.js";
+import { DisabledAssetProvider } from "./assets/provider.js";
+import { HeadlessRunner } from "./batch/headless.js";
+import { ProjectExporter } from "./batch/export.js";
+import type { FsGuard } from "./fs/guard.js";
 
-export interface ServerDependencies { bridge?: CoreBridge; mode?: SafetyMode; docsLoader?: () => Promise<DocsIndex>; lsp?: LspToolClient; runtime?: RuntimeToolService; debug?: DebugToolService }
+export interface ServerDependencies {
+  bridge?: CoreBridge;
+  mode?: SafetyMode;
+  docsLoader?: () => Promise<DocsIndex>;
+  lsp?: LspToolClient;
+  runtime?: RuntimeToolService;
+  debug?: DebugToolService;
+  fs?: FsToolService;
+  batch?: BatchToolService;
+  uid?: UidToolService;
+  assets?: AssetToolService;
+}
+
+const unconfiguredGuard = new Proxy({} as FsGuard, {
+  get() {
+    throw new GodotMcpError(
+      "editor_required",
+      "Filesystem tools require GODOT_PROJECT_PATH.",
+      "Set GODOT_PROJECT_PATH to a Godot project directory containing project.godot.",
+    );
+  },
+});
 
 const disconnectedBridge: CoreBridge = {
   getStatus: (): ClientStatus => ({ state: "disconnected", url: "ws://127.0.0.1:9200", connectedSince: undefined, reconnectAttempt: 0, lastError: undefined }),
@@ -45,5 +74,18 @@ export function createServer(dependencies: ServerDependencies): McpServer {
   registerLspTools(server, dependencies.lsp ?? disconnectedLsp);
   registerRuntimeTools(server, dependencies.runtime ?? disconnectedRuntime);
   registerDebugTools(server, dependencies.debug ?? disconnectedDebug);
+  const fsService = dependencies.fs ?? { guard: unconfiguredGuard };
+  registerFsTools(server, fsService);
+  registerBatchTools(server, dependencies.batch ?? {
+    headless: new HeadlessRunner(),
+    exporter: new ProjectExporter(),
+    guard: unconfiguredGuard,
+  });
+  registerUidTools(server, dependencies.uid ?? { guard: unconfiguredGuard });
+  registerAssetTools(server, dependencies.assets ?? {
+    guard: unconfiguredGuard,
+    provider: new DisabledAssetProvider(),
+    enabled: false,
+  });
   return server;
 }

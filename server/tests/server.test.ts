@@ -8,7 +8,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 process.env.GODOT_MCP_TOKEN ??= "0123456789abcdef0123456789abcdef";
 
 describe("createServer", () => {
-  it("exposes exactly the 51 reviewed public tools and no aliases", async () => {
+  it("exposes exactly the 58 reviewed public tools and no aliases", async () => {
     const server = createServer({});
     const client = new Client({ name: "inventory", version: "1" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -28,6 +28,9 @@ describe("createServer", () => {
         "godot_run_project", "godot_stop_project", "godot_run_output",
         "godot_runtime_scene_tree", "godot_runtime_get_node", "godot_runtime_input", "godot_runtime_screenshot",
         "godot_debug_launch", "godot_debug_set_breakpoints", "godot_debug_continue", "godot_debug_step", "godot_debug_stack", "godot_debug_inspect",
+        "godot_fs_read", "godot_fs_write", "godot_fs_list",
+        "godot_headless_run", "godot_export_project",
+        "godot_uid_list", "godot_asset_generate",
       ]);
     } finally {
       await client.close();
