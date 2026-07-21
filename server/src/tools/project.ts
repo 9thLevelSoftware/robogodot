@@ -3,7 +3,6 @@ import { z } from "zod";
 import type { CoreBridge } from "./core.js";
 import { registerTool } from "../registry.js";
 import { callCurated } from "./curated-shared.js";
-import { MutationLane } from "../mutation/lane.js";
 import { variantLiteralSchema } from "../util/type-parser.js";
 
 const forbidden = new Set(["__proto__", "prototype", "constructor"]);
@@ -16,8 +15,8 @@ const listResult = z.object({ settings: z.array(entry).max(500), truncated: z.bo
 const read = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 const mutate = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } as const;
 
-export function registerProjectTools(server: McpServer, bridge: CoreBridge, lane: MutationLane): void {
+export function registerProjectTools(server: McpServer, bridge: CoreBridge): void {
   registerTool(server, { name: "godot_project_setting_get", description: "Read one project setting and whether it exists.", inputSchema: z.object({ key }).strict(), outputSchema: getResult, annotations: read, handler: input => callCurated(bridge, "edit.project_setting_get", input, getResult) });
-  registerTool(server, { name: "godot_project_setting_set", description: "Set and persist a project setting through one exactly restorable UndoRedo action.", inputSchema: z.object({ key, value: variantLiteralSchema }).strict(), outputSchema: setResult, annotations: mutate, handler: input => lane.run(["project-settings"], () => callCurated(bridge, "edit.project_setting_set", input, setResult)) });
+  registerTool(server, { name: "godot_project_setting_set", description: "Set and persist a project setting through one exactly restorable UndoRedo action.", inputSchema: z.object({ key, value: variantLiteralSchema }).strict(), outputSchema: setResult, annotations: mutate, handler: input => callCurated(bridge, "edit.project_setting_set", input, setResult) });
   registerTool(server, { name: "godot_project_setting_list", description: "Read a stable sorted bounded page of project settings.", inputSchema: z.object({ prefix: z.string().max(512).optional(), cursor: cursor.optional(), limit: z.number().int().min(1).max(500).default(100) }).strict(), outputSchema: listResult, annotations: read, handler: input => callCurated(bridge, "edit.project_setting_list", input, listResult) });
 }

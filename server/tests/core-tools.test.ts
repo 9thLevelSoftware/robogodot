@@ -26,7 +26,12 @@ describe("core MCP tools", () => {
       const { tools } = await client.listTools();
       expect(tools.slice(0, 3).map((tool) => tool.name)).toEqual(["godot_connection_status", "godot_get_version", "godot_ping"]);
       for (const tool of tools.slice(0, 3)) {
-        expect(tool.inputSchema).toEqual({ $schema: "http://json-schema.org/draft-07/schema#", type: "object", properties: {}, additionalProperties: false });
+        expect(tool.inputSchema).toEqual({
+          $schema: "http://json-schema.org/draft-07/schema#",
+          type: "object",
+          properties: { confirmed: { type: "boolean" } },
+          additionalProperties: false,
+        });
         expect(tool.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
       }
     } finally { await close(); }

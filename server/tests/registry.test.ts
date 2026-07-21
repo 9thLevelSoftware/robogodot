@@ -22,12 +22,14 @@ describe("registerTool", () => {
     const target = recordingServer();
     const tool = definition(async ({ value }) => ({ echoed: value }));
     registerTool(target.server, tool);
-    expect(target.registrations[0]?.slice(0, 2)).toEqual(["echo", {
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-      outputSchema: tool.outputSchema,
-      annotations: tool.annotations,
-    }]);
+    const [name, meta] = target.registrations[0] as [string, { description: string; inputSchema: z.ZodObject; outputSchema: z.ZodType; annotations: unknown }];
+    expect(name).toBe("echo");
+    expect(meta.description).toBe(tool.description);
+    expect(meta.outputSchema).toBe(tool.outputSchema);
+    expect(meta.annotations).toEqual(tool.annotations);
+    expect(meta.inputSchema.safeParse({ value: "x" }).success).toBe(true);
+    expect(meta.inputSchema.safeParse({ value: "x", confirmed: true }).success).toBe(true);
+    expect(meta.inputSchema.safeParse({ value: "x", extra: 1 }).success).toBe(false);
   });
 
   it("rejects duplicate names in the same registry", () => {
