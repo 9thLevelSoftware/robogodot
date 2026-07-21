@@ -21,3 +21,52 @@ Baseline: 22 test files passed, 2 skipped; 178 tests passed, 2 skipped.
 - The Phase 4 part of `Q-002` is resolved: Phase 1 is the API prerequisite; completed Phase 2 is a coordination and regression milestone. Phase 6 dependency strength remains open.
 - Portable Node APIs cannot make mutable-path authorization and `open()` fully atomic on every platform. Phase 4 narrows the race with canonical pre/post-open validation and same-handle reads; hostile-filesystem atomicity remains deliberately deferred to Phase 6/7.
 - Phase 6 broader `FsGuard` and Phase 7 uniform safety/audit/cache hardening remain deferred and are not claimed by Phase 4.
+
+---
+
+## Phase 4 closeout (post-merge residual)
+
+**Status: complete** (2026-07-20)
+
+### Residual code
+
+- `LspHost` returns structured `editor_required` when auto-start is enabled without usable `GODOT_PATH` / `GODOT_PROJECT_PATH` / validated paths (design §10). Previously threw plain `Error`.
+
+### Docs / register
+
+- README: until Phase 7, `GODOT_MCP_MODE` only gates `godot_script_run`.
+- Q-001 marked resolved per ADR 0002.
+- Phase 4 plan banner: Implemented (historical checkboxes retained).
+
+### Verification gate (local)
+
+| Suite | Result |
+|---|---|
+| Architecture | PASS (90 pass / 1 skip) |
+| Server unit | PASS (318 pass / 4 skip) |
+| Typecheck / build / docs:check | PASS |
+| Godot smoke | PASS |
+| Live phase 1–2, 3, 4 | PASS (Godot 4.6.2 mono console) |
+
+### Explicitly deferred
+
+- System-wide mode for curated mutations → Phase 7
+- Mutation lane for lifecycle/persistence/script → Phase 7
+- DAP consumer → Phase 5 implementation
+
+---
+
+## Phase 5 design gate
+
+| Artifact | Status |
+|---|---|
+| [ADR 0003](../../docs/decisions/0003-phase-5-runtime-session.md) | Accepted — Q-010 / Q-011 / Q-012 |
+| [Phase 5 design](../../docs/superpowers/specs/2026-07-20-phase-5-runtime-debug-design.md) | Authored |
+| [Phase 5 plan](../../docs/superpowers/plans/2026-07-20-phase-5-runtime-debug.md) | Authored (Tasks 1–8) |
+| Implementation | Follow-on after this PR |
+
+### Decisions summary
+
+- ProcessRunner sole OS spawn; DAP attach-only via RuntimeSession.
+- Godot publishes `sessionId` + `ipcRootAbs`; host never invents `user://`.
+- v1 transport = sequenced file IPC only; sockets deferred.

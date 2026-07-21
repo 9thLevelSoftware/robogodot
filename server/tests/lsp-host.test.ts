@@ -93,6 +93,37 @@ describe("LspHost", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
+  it("returns editor_required when auto-start lacks GODOT_PATH", async () => {
+    const spawn = vi.fn();
+    const host = new LspHost({ lspPort: 6005, lspAutoStart: true, projectPath: "C:\\game" }, {
+      probe: vi.fn().mockResolvedValue(false), spawn, validatePaths: vi.fn(),
+    });
+    await expect(host.ensureAvailable()).rejects.toMatchObject({ code: "editor_required", message: expect.stringMatching(/GODOT_PATH/i) });
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("returns editor_required when auto-start lacks GODOT_PROJECT_PATH", async () => {
+    const spawn = vi.fn();
+    const host = new LspHost({ lspPort: 6005, lspAutoStart: true, godotPath: "C:\\Godot\\godot.exe" }, {
+      probe: vi.fn().mockResolvedValue(false), spawn, validatePaths: vi.fn(),
+    });
+    await expect(host.ensureAvailable()).rejects.toMatchObject({ code: "editor_required", message: expect.stringMatching(/GODOT_PROJECT_PATH/i) });
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("maps path-validation failures to editor_required", async () => {
+    const spawn = vi.fn();
+    const host = new LspHost({ lspPort: 6005, lspAutoStart: true, godotPath: "godot", projectPath: "game" }, {
+      probe: vi.fn().mockResolvedValue(false), spawn,
+      validatePaths: vi.fn().mockRejectedValue(new Error("GODOT_PATH is not a file: godot")),
+    });
+    await expect(host.ensureAvailable()).rejects.toMatchObject({
+      code: "editor_required",
+      hint: expect.stringContaining("GODOT_PATH is not a file: godot"),
+    });
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
   it("is idempotent across ensure and close", async () => {
     const { host, probe, terminate } = fixture();
     await host.ensureAvailable(); await host.ensureAvailable(); await host.close(); await host.close();
@@ -162,7 +193,10 @@ describe("LspHost", () => {
       await writeFile(godot, "binary"); await mkdir(project);
       const spawn = vi.fn();
       const host = new LspHost({ lspPort: 6005, lspAutoStart: true, godotPath: godot, projectPath: project }, { probe: vi.fn().mockResolvedValue(false), spawn });
-      await expect(host.ensureAvailable()).rejects.toThrow(/project\.godot/);
+      await expect(host.ensureAvailable()).rejects.toMatchObject({
+        code: "editor_required",
+        message: expect.stringMatching(/project\.godot/i),
+      });
       expect(spawn).not.toHaveBeenCalled();
     } finally { await rm(root, { recursive: true, force: true }); }
   });

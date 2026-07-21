@@ -1,5 +1,7 @@
 # Phase 4 Code Intelligence (LSP) Implementation Plan
 
+> **Status: Implemented (Phase 4 closeout).** Production code, unit/mock tests, live acceptance, architecture views, and CI gates land the design. Historical task steps below retain `- [ ]` checkboxes as the original work order; do not re-execute them as open work. Residual closeout evidence is recorded in `.superpowers/sdd/progress.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Expose Godot 4.6's project-grounded GDScript diagnostics and code intelligence through seven bounded, read-only MCP tools backed by a reusable LSP client and an opt-in owned headless host.

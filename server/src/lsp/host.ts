@@ -48,13 +48,48 @@ async function probe(host: "127.0.0.1", port: number, deadlineMs: number): Promi
   });
 }
 
+function editorRequired(message: string, hint: string): never {
+  throw new GodotMcpError("editor_required", message, hint);
+}
+
 async function validatePaths(godotPath: string, projectPath: string): Promise<void> {
   const projectFile = path.join(projectPath, "project.godot");
-  const [executable, project, marker] = await Promise.all([stat(godotPath), stat(projectPath), stat(projectFile)]);
-  if (!executable.isFile()) throw new Error(`GODOT_PATH is not a file: ${godotPath}`);
-  if (!project.isDirectory()) throw new Error(`GODOT_PROJECT_PATH is not a directory: ${projectPath}`);
-  if (!marker.isFile()) throw new Error(`GODOT_PROJECT_PATH must contain a regular project.godot: ${projectFile}`);
-  if (process.platform !== "win32") await access(godotPath, constants.X_OK);
+  let executable;
+  try { executable = await stat(godotPath); }
+  catch {
+    editorRequired("GODOT_PATH is not a usable Godot executable file.", `Set GODOT_PATH to a Godot binary file (received ${godotPath}).`);
+  }
+  if (!executable.isFile()) {
+    editorRequired("GODOT_PATH is not a usable Godot executable file.", `Set GODOT_PATH to a Godot binary file (received ${godotPath}).`);
+  }
+  let project;
+  try { project = await stat(projectPath); }
+  catch {
+    editorRequired("GODOT_PROJECT_PATH is not a directory.", `Set GODOT_PROJECT_PATH to the project root directory (received ${projectPath}).`);
+  }
+  if (!project.isDirectory()) {
+    editorRequired("GODOT_PROJECT_PATH is not a directory.", `Set GODOT_PROJECT_PATH to the project root directory (received ${projectPath}).`);
+  }
+  let marker;
+  try { marker = await stat(projectFile); }
+  catch {
+    editorRequired(
+      "GODOT_PROJECT_PATH must contain a regular project.godot.",
+      `Point GODOT_PROJECT_PATH at a Godot project root that contains project.godot (expected ${projectFile}).`,
+    );
+  }
+  if (!marker.isFile()) {
+    editorRequired(
+      "GODOT_PROJECT_PATH must contain a regular project.godot.",
+      `Point GODOT_PROJECT_PATH at a Godot project root that contains project.godot (expected ${projectFile}).`,
+    );
+  }
+  if (process.platform !== "win32") {
+    try { await access(godotPath, constants.X_OK); }
+    catch {
+      editorRequired("GODOT_PATH is not an executable file.", `Ensure the Godot binary at ${godotPath} is executable.`);
+    }
+  }
 }
 
 async function terminate(child: HostChild): Promise<void> {
@@ -125,9 +160,28 @@ export class LspHost {
     const projectPath = this.config.projectPath;
     const command = `${display(godotPath ?? "<GODOT_PATH>")} --editor --headless --lsp-port ${this.config.lspPort} --path ${display(projectPath ?? "<GODOT_PROJECT_PATH>")}`;
     if (!this.config.lspAutoStart) throw new GodotMcpError("not_connected", "Godot language server is not reachable.", `Start it with: ${command}`);
-    if (!godotPath) throw new Error("GODOT_PATH is required when GODOT_MCP_LSP_AUTO_START is enabled");
-    if (!projectPath) throw new Error("GODOT_PROJECT_PATH is required when GODOT_MCP_LSP_AUTO_START is enabled");
-    await this.deps.validatePaths(godotPath, projectPath);
+    if (!godotPath) {
+      editorRequired(
+        "Automatic LSP hosting requires GODOT_PATH.",
+        "Set GODOT_PATH to a usable Godot executable, or open the project in Godot so its language server is already listening.",
+      );
+    }
+    if (!projectPath) {
+      editorRequired(
+        "Automatic LSP hosting requires GODOT_PROJECT_PATH.",
+        "Set GODOT_PROJECT_PATH to a directory containing project.godot, or open that project in Godot so its language server is already listening.",
+      );
+    }
+    try {
+      await this.deps.validatePaths(godotPath, projectPath);
+    } catch (error) {
+      if (error instanceof GodotMcpError) throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      editorRequired(
+        "Automatic LSP hosting requires a usable Godot executable and project directory.",
+        `${detail} Set GODOT_PATH and GODOT_PROJECT_PATH, or attach to an already running editor language server.`,
+      );
+    }
     this.assertOpen();
     let child: HostChild | undefined;
     let failure: Error | undefined;
