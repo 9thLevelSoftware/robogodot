@@ -37,7 +37,7 @@ flowchart LR
       %% atlas-node: CH-CODE-INTELLIGENCE
       CH_CODE_INTELLIGENCE["CH-CODE-INTELLIGENCE<br/>implemented · seven read-only LSP tools"]
       %% atlas-node: CH-RUNTIME-DEBUG
-      CH_RUNTIME_DEBUG["CH-RUNTIME-DEBUG<br/>Runtime / debug"]
+      CH_RUNTIME_DEBUG["CH-RUNTIME-DEBUG<br/>Implemented · Runtime / debug<br/>13 public tools"]
       %% atlas-node: CH-HEADLESS-BATCH-FS
       CH_HEADLESS_BATCH_FS["CH-HEADLESS-BATCH-FS<br/>Headless / batch + filesystem"]
     end
@@ -52,7 +52,7 @@ flowchart LR
     %% atlas-node: CNT-GODOT-LSP
     CNT_GODOT_LSP["CNT-GODOT-LSP<br/>implemented · TCP 6005<br/>attach or owned headless child"]
     %% atlas-node: CNT-GODOT-DAP
-    CNT_GODOT_DAP["CNT-GODOT-DAP<br/>Godot debug adapter"]
+    CNT_GODOT_DAP["CNT-GODOT-DAP<br/>implemented · TCP 6006<br/>attach-only Godot DAP"]
   end
 
   subgraph RUNNING_GAME_BOUNDARY["Running game"]
@@ -60,7 +60,7 @@ flowchart LR
     %% atlas-node: CNT-RUNNING-GAME
     CNT_RUNNING_GAME["CNT-RUNNING-GAME<br/>Godot game process"]
     %% atlas-node: CNT-RUNTIME-AUTOLOADS
-    CNT_RUNTIME_AUTOLOADS["CNT-RUNTIME-AUTOLOADS<br/>Constrained runtime<br/>bridge autoloads"]
+    CNT_RUNTIME_AUTOLOADS["CNT-RUNTIME-AUTOLOADS<br/>implemented authenticated<br/>socket / file bridge"]
   end
 
   subgraph HEADLESS_BOUNDARY["Headless execution"]
@@ -94,11 +94,11 @@ flowchart LR
   %% atlas-flow: FLOW-CH-006
   CH_CODE_INTELLIGENCE -->|"LSP JSON-RPC over TCP 6005"| CNT_GODOT_LSP
   %% atlas-flow: FLOW-CH-007
-  CH_RUNTIME_DEBUG -->|"spawn and control the game process"| CNT_RUNNING_GAME
+  CH_RUNTIME_DEBUG -->|"ProcessRunner sole spawn + exact-child control"| CNT_RUNNING_GAME
   %% atlas-flow: FLOW-CH-008
-  CH_RUNTIME_DEBUG -->|"DAP over TCP 6006"| CNT_GODOT_DAP
+  CH_RUNTIME_DEBUG -->|"attach-only DAP over TCP 6006"| CNT_GODOT_DAP
   %% atlas-flow: FLOW-CH-009
-  CH_RUNTIME_DEBUG -->|"correlated user:// file IPC"| CNT_RUNTIME_AUTOLOADS
+  CH_RUNTIME_DEBUG -->|"authenticated pre-request locked socket or user:// file IPC"| CNT_RUNTIME_AUTOLOADS
   %% atlas-flow: FLOW-CH-010
   CH_HEADLESS_BATCH_FS -->|"spawn godot --headless --script"| CNT_HEADLESS_GODOT
   %% atlas-flow: FLOW-CH-011
@@ -116,14 +116,14 @@ flowchart LR
 | `CH-EDITOR-MUTATION` | Carries universal and curated editor-state mutation. | Server-owned channel | Phases 2–3 |
 | `CH-INTROSPECTION` | Carries live scene, project, API, and documentation queries. | Server-owned channel | Phase 2 |
 | `CH-CODE-INTELLIGENCE` | **Implemented:** carries read-only script diagnostics, document/workspace symbols, completion, hover, signature help, and native documentation; it does not apply edits. | Server-owned channel | Phase 4 |
-| `CH-RUNTIME-DEBUG` | Carries process control, output, DAP, and runtime-bridge operations. | Server-owned channel | Phase 5 |
+| `CH-RUNTIME-DEBUG` | **Implemented:** carries process control/output, authenticated runtime-bridge operations, and attach-only DAP debugging through 13 public tools. | Server-owned channel | Phase 5 |
 | `CH-HEADLESS-BATCH-FS` | Carries headless execution, batch, filesystem, UID, export, and asset work. | Server-owned channel | Phase 6 |
 | `CNT-EDITOR-PLUGIN` | Exposes the shared local editor mutation/introspection endpoint. | Godot editor process | Phase 1 |
 | `SYS-CLASSDB-DOCS` | Supplies live ClassDB metadata plus official class-reference text from the server's immutable Godot 4.6.2 offline artifact, gated to a connected 4.6.x editor. | Split editor/server knowledge surface | Phase 2 |
 | `CNT-GODOT-LSP` | **Implemented:** supplies Godot language-server protocol behavior over TCP 6005. | Godot editor service | Phase 4 |
-| `CNT-GODOT-DAP` | Implements Godot debug-adapter protocol behavior. | Godot editor service | Phase 5 |
+| `CNT-GODOT-DAP` | **Implemented:** supplies attach-only Godot debug-adapter protocol behavior over TCP 6006; it never spawns the game. | Godot editor service | Phase 5 |
 | `CNT-RUNNING-GAME` | Executes the launched project and emits process output. | Child process | Phase 5 |
-| `CNT-RUNTIME-AUTOLOADS` | Performs constrained runtime inspection, input, and capture requests. | Running-game process | Phase 5 |
+| `CNT-RUNTIME-AUTOLOADS` | **Implemented:** performs constrained runtime inspection, input, and capture over one authenticated, pre-request locked socket or file transport. | Running-game process | Phase 5 |
 | `CNT-HEADLESS-GODOT` | Executes isolated headless scripts and batch jobs. | Spawned child process | Phase 6 |
 | `CNT-PROJECT-STORAGE` | Stores canonical project-root files and UID-backed resources. | Guarded local filesystem | Phases 6–7 |
 | `CNT-ASSET-PROVIDER` | Optionally supplies generated assets when configured. | Credentialed external service | Phase 6 |
@@ -138,9 +138,9 @@ flowchart LR
 | `FLOW-CH-004` | Server → Introspection / API knowledge: route live introspection. | `00-master-architecture-and-standards.md` — “2. The five channels” | Explicit | Phase 2 | Live reads enter the same editor-aware control boundary as mutation. |
 | `FLOW-CH-005` | Plugin/server → ClassDB/docs: query live ClassDB metadata and gate the server-side pinned 4.6.2 docs artifact with `core.get_version`. | ADR 0002; `phase-02-introspection-and-universal-primitive.md` — “4. Architecture” | Explicit | Phase 2 | GDScript does not read integrated docs; a non-4.6 editor receives `feature_disabled`. |
 | `FLOW-CH-006` | Code intelligence → Godot LSP: LSP JSON-RPC over TCP `6005`. | `phase-04-code-intelligence-lsp.md` — “4. Architecture” | Explicit | Phase 4 | The server adapts Godot LSP rather than reimplementing language intelligence. |
-| `FLOW-CH-007` | Runtime / debug → game: spawn and control the game process. | `phase-05-runtime-and-debug.md` — “4. Architecture” | Explicit | Phase 5 | Process ownership provides PID, output, stop, and cleanup control. |
-| `FLOW-CH-008` | Runtime / debug → Godot DAP: DAP over TCP `6006`. | `phase-05-runtime-and-debug.md` — “4. Architecture” | Explicit | Phase 5 | Debug features depend on Godot's adapter and may degrade independently. |
-| `FLOW-CH-009` | Runtime / debug → runtime autoloads: correlated `user://` file IPC. | `phase-05-runtime-and-debug.md` — “4. Architecture” | Explicit | Phase 5 | Runtime requests and responses require correlation, bounds, and cleanup. |
+| `FLOW-CH-007` | Runtime / debug → game: ProcessRunner sole spawn and exact-child control. | Phase 5 implementation; accepted `Q-010` | Implemented | Phase 5 | One owner provides PID, output, stop, and cleanup control for normal and debug launches. |
+| `FLOW-CH-008` | Runtime / debug → Godot DAP: attach-only DAP over TCP `6006`. | Phase 5 implementation; accepted `Q-010` | Implemented | Phase 5 | DAP attaches to the ProcessRunner-owned child and may degrade independently without spawning. |
+| `FLOW-CH-009` | Runtime / debug → runtime autoloads: authenticated pre-request locked loopback socket or correlated `user://` file IPC. | Phase 5 implementation; accepted `Q-011`/`Q-012` | Implemented | Phase 5 | Godot resolves the canonical session root; transport never switches or replays after publication. |
 | `FLOW-CH-010` | Headless / batch + filesystem → headless Godot: spawn `godot --headless --script`. | `phase-06-batch-filesystem-and-assets.md` — “4. Architecture” | Explicit | Phase 6 | Batch execution remains isolated in a bounded child process. |
 | `FLOW-CH-011` | Headless / batch + filesystem → project storage: guarded project-root file and UID access. | `phase-06-batch-filesystem-and-assets.md` — “4. Architecture” | Explicit | Phases 6–7 | Canonical path checks constrain direct file operations. |
 | `FLOW-CH-012` | Headless / batch + filesystem → asset provider: provider API · protocol unspecified. | `phase-06-batch-filesystem-and-assets.md` — “4. Architecture” | Explicit optional boundary; transport unspecified | Phase 6 | Provider use stays feature- and credential-gated without inventing a wire contract. |

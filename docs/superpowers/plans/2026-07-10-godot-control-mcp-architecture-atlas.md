@@ -902,7 +902,7 @@ CNT-RUNTIME-IPC-FILES
 CMP-AUDIT
 ```
 
-Require `FLOW-RUN-001..020`, `since`, `next`, `req.json`, `resp-<id>.json`, `PNG`, `Q-010`, `Q-011`, `Q-012`, and `degrade to process + bridge`.
+Require `FLOW-RUN-001..020`, `since`, `next`, `user://.mcp/<sessionId>/req-<id>.json`, `user://.mcp/<sessionId>/resp-<id>.json`, `PNG`, `Q-010`, `Q-011`, `Q-012`, and `degrade to process + bridge`.
 
 - [ ] **Step 2: Run the behavioral tests and observe the missing-view failure**
 
@@ -920,10 +920,10 @@ FLOW-RUN-006  [UNRESOLVED] launch or attach ownership (Q-010)
 FLOW-RUN-007  inject/use bridge autoloads through Phase 2 execution
 FLOW-RUN-008  runtime inspect/input/screenshot request
 FLOW-RUN-009  allocate monotonic request ID
-FLOW-RUN-010  write user://.mcp/req.json
+FLOW-RUN-010  write user://.mcp/<sessionId>/req-<id>.json
 FLOW-RUN-011  autoload polls and reads request
 FLOW-RUN-012  execute requested operation
-FLOW-RUN-013  write user://.mcp/resp-<id>.json
+FLOW-RUN-013  write user://.mcp/<sessionId>/resp-<id>.json
 FLOW-RUN-014  server reads and deletes response
 FLOW-RUN-015  return structured result
 FLOW-RUN-016  timeout alternative with game-not-running hint

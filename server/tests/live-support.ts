@@ -2,7 +2,7 @@ import type { Readable } from "node:stream";
 import type { EventEmitter } from "node:events";
 import { once } from "node:events";
 import { createServer } from "node:net";
-import { cp, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdtemp, realpath, rm } from "node:fs/promises";
 import { relative, sep } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -24,13 +24,26 @@ export async function runCleanupSteps(primaryFailure: unknown, steps: Array<() =
 
 export async function closeAllInOrder(steps: Array<() => Promise<void>>): Promise<void> { return runCleanupSteps(undefined, steps); }
 
+export interface CleanupOwner { defer(step: () => void | Promise<void>): void; close(): Promise<void> }
+
+export async function acquireWithCleanup<T>(setup: (owner: CleanupOwner) => Promise<T>): Promise<T> {
+  const steps: Array<() => Promise<void>> = []; let closed = false;
+  const owner: CleanupOwner = {
+    defer(step) { if (closed) throw new Error("Cleanup ownership is already closed."); steps.unshift(async () => { await step(); }); },
+    async close() { if (closed) return; closed = true; await runCleanupSteps(undefined, steps); },
+  };
+  try { return await setup(owner); }
+  catch (error) { await runCleanupSteps(error, steps); closed = true; throw error; }
+}
+
 export async function createIsolatedGodotProject(sourceRoot: string): Promise<string> {
-  const destination = await mkdtemp(`${tmpdir()}${sep}robogodot-phase4-`);
+  const created = await mkdtemp(`${tmpdir()}${sep}robogodot-phase4-`);
   try {
+    const destination = await realpath(created);
     await cp(sourceRoot, destination, { recursive: true, filter: (candidate) => !relative(sourceRoot, candidate).split(/[\\/]/).includes(".godot") });
     return destination;
   } catch (error) {
-    await rm(destination, { recursive: true, force: true }); throw error;
+    await rm(created, { recursive: true, force: true }); throw error;
   }
 }
 

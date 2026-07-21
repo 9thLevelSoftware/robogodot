@@ -59,9 +59,10 @@ describe("core MCP tools", () => {
     const error = new GodotMcpError("not_connected", "Godot editor is not connected.", "Open Godot and enable the plugin.");
     const { client, close } = await harness({ getStatus: () => disconnected, call: vi.fn().mockRejectedValue(error) });
     try {
+      await client.listTools();
       const result = await client.callTool({ name, arguments: {} });
       expect(result.isError).toBe(true);
-      expect(result.structuredContent).toMatchObject({ code: "not_connected", hint: expect.stringMatching(/open Godot.*enable the plugin/i) });
+      expect(result.structuredContent).toBeUndefined(); expect(JSON.parse((result.content as any)[0].text)).toMatchObject({ code: "not_connected", hint: expect.stringMatching(/open Godot.*enable the plugin/i) });
     } finally { await close(); }
   });
 
@@ -73,7 +74,7 @@ describe("core MCP tools", () => {
     try {
       const result = await client.callTool({ name, arguments: {} });
       expect(result.isError).toBe(true);
-      expect(result.structuredContent).toEqual({
+      expect(result.structuredContent).toBeUndefined(); expect(JSON.parse((result.content as any)[0].text)).toEqual({
         code: "godot_error",
         message: "Godot returned an invalid response for the requested core command.",
         hint: "Check that the Godot plugin and MCP server versions are compatible.",

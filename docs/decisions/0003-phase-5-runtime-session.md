@@ -40,29 +40,22 @@ The host never derives `user://` from platform user-data heuristics.
 3. The TypeScript runtime driver registers **only** `ipcRootAbs` (realpath-checked) as the allowed IPC root for that session. All request/response/screenshot file operations are confined to that directory.
 4. Screenshot results may include logical `path` plus host `absPath` only when `absPath` is under the registered root.
 
-### Q-012 — File IPC is the v1 transport; socket is deferred
+### Q-012 — Negotiated socket preferred; locked file-IPC fallback
 
-For the initial Phase 5 delivery:
+Phase 5 implements a **versioned, mutually authenticated loopback** bridge endpoint with a bounded pre-request handshake (session ID, secret token, protocol version, capabilities).
 
-- **Implement sequenced file IPC only** under the Godot-published session directory:
-  - write `req.json` (or `req-<id>.json` if the design prefers non-overwrite requests)
-  - poll/read `resp-<id>.json`
-  - delete response (and request) after successful consumption
-  - monotonic request IDs, per-request timeouts, bounded payloads
-- **Do not implement local-socket transport in v1.** Preferring a socket “where feasible” without a negotiation contract is an incomplete source; shipping two transports without a handshake risks stranded peers.
-- Record socket support as an **optional future enhancement** that, if added later, must:
-  - negotiate a versioned, authenticated loopback endpoint **before any request may execute**
-  - lock both sides to one transport for the entire session
-  - never switch or replay after a request may have run
-- Until that future work lands, both sides assume file IPC for the session once bootstrap succeeds.
+- If the socket handshake completes, both peers lock to that transport for the entire session.
+- If the handshake cannot complete, both peers **lock to sequenced file IPC** under the Godot-published session directory **before any runtime request is accepted**.
+- Transport **never switches** mid-session and a published request is **never replayed** on the other transport.
+- File IPC uses monotonic request IDs, per-request timeouts, bounded payloads, write/read/delete of correlated response artifacts, and serialized outstanding requests.
 
 ## Consequences
 
 - Exactly one OS game process per RuntimeSession; tests assert a single PID across run/debug entry points.
 - Host path safety does not depend on OS-specific Godot user-data layouts.
-- Bridge and screenshot cleanup are scoped to a known absolute directory and session ID.
-- Phase 5 acceptance can prove process/bridge/debug without inventing socket negotiation.
-- Atlas sequence `FLOW-RUN-006` becomes attach-after-ProcessRunner-spawn; `Q-011`/`Q-012` markers move to resolved for the v1 file-IPC design.
+- Bridge and screenshot cleanup are scoped to a known absolute session directory and session ID.
+- Peers cannot strand on different transports after bootstrap; degradation is process+bridge when DAP fails independently.
+- Atlas sequence `FLOW-RUN-006` is attach-after-ProcessRunner-spawn; `Q-010`/`Q-011`/`Q-012` are resolved.
 - Audit of runtime outcomes remains a Phase 7 middleware concern; Phase 5 may log via the existing stderr logger only.
 
 ## Non-decisions

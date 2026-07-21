@@ -4,9 +4,27 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test, vi } from "vitest";
-import { allocateLoopbackPort, captureBoundedOutput, closeAllInOrder, createIsolatedGodotProject, launchWithPortRetry, liveTimeoutBudget, runCleanupSteps, waitForPidExit, waitForProcessConnection, waitForProcessExit } from "./live-support.js";
+import { acquireWithCleanup, allocateLoopbackPort, captureBoundedOutput, closeAllInOrder, createIsolatedGodotProject, launchWithPortRetry, liveTimeoutBudget, runCleanupSteps, waitForPidExit, waitForProcessConnection, waitForProcessExit } from "./live-support.js";
 
 describe("live Godot process support", () => {
+  test.each([undefined, "original"])("setup failure attempts every pre-owned cleanup and restores environment exactly from %s", async initial => {
+    const calls: string[] = []; const outside = process.env.GODOT_RUNTIME_PORT;
+    initial === undefined ? delete process.env.GODOT_RUNTIME_PORT : process.env.GODOT_RUNTIME_PORT = initial;
+    try {
+      await expect(acquireWithCleanup(async owner => {
+        owner.defer(async () => { calls.push("env"); initial === undefined ? delete process.env.GODOT_RUNTIME_PORT : process.env.GODOT_RUNTIME_PORT = initial; });
+        process.env.GODOT_RUNTIME_PORT = "4567";
+        owner.defer(async () => { calls.push("bridge"); throw new Error("bridge cleanup"); });
+        owner.defer(async () => { calls.push("runtime"); throw new Error("runtime cleanup"); });
+        owner.defer(async () => { calls.push("server"); });
+        owner.defer(async () => { calls.push("client"); });
+        throw new Error("setup failed");
+      })).rejects.toThrow("setup failed");
+      expect(calls).toEqual(["client", "server", "runtime", "bridge", "env"]);
+      expect(Object.hasOwn(process.env, "GODOT_RUNTIME_PORT")).toBe(initial !== undefined); expect(process.env.GODOT_RUNTIME_PORT).toBe(initial);
+    } finally { outside === undefined ? delete process.env.GODOT_RUNTIME_PORT : process.env.GODOT_RUNTIME_PORT = outside; }
+  });
+
   test("attempts every MCP close in order and preserves the first error", async () => {
     const calls: string[] = [];
     await expect(closeAllInOrder([

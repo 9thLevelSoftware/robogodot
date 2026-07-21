@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This behavioral view connects Phase 5's three independently useful runtime sub-channels: managed game-process control and output, DAP debugging, and the running-game bridge. The numbered messages are normative and appear in their required order. The colored setup, interaction, and shutdown bands keep launch ambiguity, request/response behavior, and teardown ownership visually separate without inventing the unresolved host-path or socket mechanics.
+This implemented behavioral view connects Phase 5's managed game-process control/output, attach-only DAP debugging, and authenticated running-game bridge. The numbered messages show sole process ownership, pre-request transport locking, no replay, stopped-reference invalidation, and exact-child cleanup.
 
 ## Source baseline
 
@@ -16,7 +16,7 @@ This behavioral view connects Phase 5's three independently useful runtime sub-c
 %%{init: {"sequence": {"width": 190, "actorMargin": 50}}}%%
 sequenceDiagram
   accTitle: Runtime process, DAP, and running-game bridge lifecycle
-  accDescr: Setup starts and observes the game, initializes DAP without resolving contradictory launch ownership, and makes the bridge usable. Interaction uses monotonic IDs and source-defined request and response files with timeout and screenshot alternatives. Shutdown attempts graceful then forced stop, cleans runtime artifacts and debug state, and audits the outcome.
+  accDescr: Setup uses ProcessRunner as sole process owner, authenticates and locks the runtime transport before requests, and attaches DAP without spawning. Interaction uses bounded cursors and stopped-generation references with no replay. Shutdown closes DAP, bridge, and the exact child while preserving the first failure.
 
   %% atlas-node: CNT-MCP-CLIENT
   participant MCP_CLIENT as CNT-MCP-CLIENT<br/>MCP client
@@ -51,16 +51,16 @@ sequenceDiagram
     MCP_CLIENT->>RUNTIME_TOOLS: incremental output using since/next
     Note over MCP_CLIENT,PROCESS_RUNNER: The since cursor selects unread ring-buffer lines, and next is the continuation cursor
     %% atlas-flow: FLOW-RUN-005
-    RUNTIME_TOOLS->>DAP_CLIENT: initialize DAP
+    RUNTIME_TOOLS->>DAP_CLIENT: initialize attach-only DAP
     alt Debug session proceeds
       %% atlas-flow: FLOW-RUN-006
-      DAP_CLIENT->>GODOT_DAP: [UNRESOLVED] launch or attach ownership (Q-010)
-      Note over DAP_CLIENT,GODOT_DAP: [UNRESOLVED] Q-010 — the source assigns conflicting launch and attach ownership, so this view chooses neither
+      DAP_CLIENT->>GODOT_DAP: attach to ProcessRunner-owned exact child (Q-010 accepted)
+      Note over PROCESS_RUNNER,GODOT_DAP: ProcessRunner is sole spawn, PID, and output owner, while DAP never spawns
     else DAP support is partial or unavailable
       Note over PROCESS_RUNNER,RUNTIME_DRIVER: Explicitly degrade to process + bridge — process control and the runtime bridge remain usable
     end
     %% atlas-flow: FLOW-RUN-007
-    RUNTIME_TOOLS->>RUNTIME_DRIVER: inject/use bridge autoloads through Phase 2 execution
+    RUNTIME_TOOLS->>RUNTIME_DRIVER: plugin resolves canonical user:// root and injects bridge
   end
 
   rect rgb(243, 252, 246)
@@ -68,17 +68,19 @@ sequenceDiagram
     %% atlas-flow: FLOW-RUN-008
     MCP_CLIENT->>RUNTIME_TOOLS: runtime inspect/input/screenshot request
     %% atlas-flow: FLOW-RUN-009
-    RUNTIME_TOOLS->>RUNTIME_DRIVER: allocate monotonic request ID
-    Note over RUNTIME_DRIVER,IPC_FILES: [UNRESOLVED] Q-011 — the host mapping of Godot user data is unspecified, so no absolute-path resolution mechanism is assumed
-    Note over RUNTIME_DRIVER,AUTOLOADS: [UNRESOLVED] Q-012 — socket negotiation and fallback are unspecified, so no socket endpoint or switching behavior is assumed
+    RUNTIME_TOOLS->>RUNTIME_DRIVER: allocate ID after authenticated transport lock
+    Note over RUNTIME_DRIVER,IPC_FILES: Q-011 accepted — Godot publishes the canonical session root and Node never guesses user://
+    Note over RUNTIME_DRIVER,AUTOLOADS: Q-012 accepted — pre-request mutual authentication locks socket or file, with no switch or replay after publication
     %% atlas-flow: FLOW-RUN-010
-    RUNTIME_DRIVER->>IPC_FILES: write user://.mcp/req.json
+    RUNTIME_DRIVER->>IPC_FILES: atomically publish correlated request file
+    Note over RUNTIME_DRIVER,IPC_FILES: exact user://.mcp/<sessionId>/req-<id>.json
     %% atlas-flow: FLOW-RUN-011
     AUTOLOADS->>IPC_FILES: autoload polls and reads request
     %% atlas-flow: FLOW-RUN-012
     AUTOLOADS->>RUNNING_GAME: execute requested operation
     %% atlas-flow: FLOW-RUN-013
-    AUTOLOADS->>IPC_FILES: write user://.mcp/resp-<id>.json
+    AUTOLOADS->>IPC_FILES: write correlated response file
+    Note over RUNTIME_DRIVER,IPC_FILES: exact user://.mcp/<sessionId>/resp-<id>.json
     alt Response file appears before the per-request timeout
       %% atlas-flow: FLOW-RUN-014
       RUNTIME_DRIVER->>IPC_FILES: server reads and deletes response
@@ -90,8 +92,8 @@ sequenceDiagram
     end
     opt Successful IPC response and requested operation is a screenshot
       %% atlas-flow: FLOW-RUN-017
-      RUNTIME_TOOLS-->>MCP_CLIENT: screenshot alternative returns path, dimensions, and PNG
-      Note over RUNTIME_TOOLS,MCP_CLIENT: Screenshot result includes path, absPath, w, h, and PNG — Q-011 leaves host-path production unresolved
+      RUNTIME_TOOLS-->>MCP_CLIENT: return verified path, dimensions, bytes, SHA-256, and PNG
+      Note over RUNTIME_TOOLS,MCP_CLIENT: Canonical path containment, signature, IHDR, size, and hash are verified before success
     end
   end
 
@@ -101,8 +103,8 @@ sequenceDiagram
     RUNTIME_TOOLS->>PROCESS_RUNNER: graceful stop, then force if required
     Note over PROCESS_RUNNER,RUNNING_GAME: Graceful termination is attempted first, and forced stop is the required fallback
     %% atlas-flow: FLOW-RUN-019
-    RUNTIME_TOOLS->>RUNTIME_TOOLS: remove IPC files, end DAP, clean orphan PID
-    Note over PROCESS_RUNNER,IPC_FILES: Cleanup spans the existing process, DAP, and file-bridge owners — this view adds no path or socket mechanism
+    RUNTIME_TOOLS->>RUNTIME_TOOLS: close DAP, close bridge, stop exact ProcessRunner child
+    Note over PROCESS_RUNNER,IPC_FILES: Preserve first failure and retain unconfirmed exact-child ownership for retry
     %% atlas-flow: FLOW-RUN-020
     RUNTIME_TOOLS->>AUDIT: audit outcome
   end
@@ -110,19 +112,19 @@ sequenceDiagram
 
 ## Participant outline
 
-The participants below are indexed in the [Traceability index](traceability.md#architecture-atlas-traceability). Conflicting or incomplete source contracts remain in the [Open-question register](open-questions.md#architecture-open-questions): [Q-010](open-questions.md#architecture-open-questions), [Q-011](open-questions.md#architecture-open-questions), and [Q-012](open-questions.md#architecture-open-questions).
+The participants below are indexed in the [Traceability index](traceability.md#architecture-atlas-traceability). Accepted decisions are recorded in the [Open-question register](open-questions.md#architecture-open-questions): [Q-010](open-questions.md#architecture-open-questions), [Q-011](open-questions.md#architecture-open-questions), and [Q-012](open-questions.md#architecture-open-questions).
 
 | Participant | Responsibility | Phase owner | Protocol / boundary |
 |---|---|---|---|
 | `CNT-MCP-CLIENT` | Invokes runtime, output, debug, bridge, and stop tools and receives structured results. | Consumer integration | MCP over stdio; public client boundary. |
 | `CMP-RUNTIME-TOOLS` | Maps public tool calls to process, DAP, runtime-driver, cleanup, and audit behavior. | Phase 5 | In-process TypeScript tool boundary. |
-| `CMP-PROCESS-RUNNER` | Owns OS spawn, PID tracking, ring-buffer output, graceful/forced stop, and orphan cleanup. | Phase 5 | Local child-process boundary. |
+| `CMP-PROCESS-RUNNER` | Sole owner of OS spawn, PID tracking, ring-buffer output, graceful/forced stop, and exact-child cleanup. | Phase 5 | Local child-process boundary. |
 | `CNT-RUNNING-GAME` | Executes the launched project, emits output, and supplies the live runtime state acted on by autoloads. | Phase 5 | Godot game-process boundary. |
-| `CMP-DAP-CLIENT` | Implements DAP framing, initialization, supported debug requests, and session teardown. | Phase 5 | DAP client boundary to Godot's debug adapter. |
+| `CMP-DAP-CLIENT` | Implements attach-only DAP framing, capabilities, stopped-generation invalidation, and teardown; no spawn or evaluate. | Phase 5 | DAP client boundary to Godot's debug adapter. |
 | `CNT-GODOT-DAP` | Serves supported debug state, breakpoint, stack, scope, variable, and execution requests. | Phase 5 | Godot DAP endpoint boundary. |
-| `CMP-RUNTIME-DRIVER` | Allocates request IDs, applies timeouts, and drives the source-defined host side of bridge file exchange. | Phase 5 | TypeScript runtime-driver and sequenced file-IPC boundary. |
+| `CMP-RUNTIME-DRIVER` | Authenticates through `hello`/`hello_ack`/`hello_confirm`/`hello_ready` and locks socket/file transport before requests, applies deadlines and bounds, and never replays. | Phase 5 | TypeScript runtime-bridge boundary. |
 | `CMP-RUNTIME-AUTOLOADS` | Polls requests inside the running game, performs inspect/input/capture operations, and writes responses. | Phase 5 | Injected GDScript autoload boundary. |
-| `CNT-RUNTIME-IPC-FILES` | Holds the source-defined request, response, and screenshot artifacts under Godot's logical user-data path. | Phase 5 | Sequenced `user://.mcp` file-IPC boundary; host resolution and socket fallback remain unresolved. |
+| `CNT-RUNTIME-IPC-FILES` | Holds exact request, response, bootstrap, and screenshot artifacts under the Godot-resolved canonical session root. | Phase 5 | Sequenced `user://.mcp/<sessionId>` fallback boundary. |
 | `CMP-AUDIT` | Records the bounded runtime/debug terminal outcome without using MCP stdout. | Phase 7 | Audit middleware sink boundary. |
 
 ## Relationship outline
@@ -134,20 +136,20 @@ The participants below are indexed in the [Traceability index](traceability.md#a
 | `FLOW-RUN-003` | `CNT-RUNNING-GAME` → `CMP-PROCESS-RUNNER` | Stream stdout/stderr into the ring buffer. | Explicit | Phase 5 / child stdout and stderr | Phase 5 §§4–6 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-004` | `CNT-MCP-CLIENT` → `CMP-RUNTIME-TOOLS` | Read incremental output with `since` and receive `next`. | Explicit | Phase 5 / MCP incremental-output contract | Phase 5 §§6–7 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-005` | `CMP-RUNTIME-TOOLS` → `CMP-DAP-CLIENT` | Initialize DAP. | Explicit | Phase 5 / DAP handshake | Phase 5 §§4,6 · [trace](traceability.md#architecture-atlas-traceability) |
-| `FLOW-RUN-006` | `CMP-DAP-CLIENT` → `CNT-GODOT-DAP` | Launch-or-attach ownership remains undecided. | Unresolved | Phase 5 / DAP launch or attach | Phase 5 §§2,4,6 · [Q-010](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
+| `FLOW-RUN-006` | `CMP-DAP-CLIENT` → `CNT-GODOT-DAP` | Attach to the ProcessRunner-owned exact child; DAP never spawns. | Implemented / accepted | Phase 5 / attach-only DAP | Phase 5 implementation · [Q-010](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-007` | `CMP-RUNTIME-TOOLS` → `CMP-RUNTIME-DRIVER` | Inject or use bridge autoloads through the Phase 2 execution seam. | Explicit | Phase 5 / Phase 2 execution boundary | Phase 5 §§3,6 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-008` | `CNT-MCP-CLIENT` → `CMP-RUNTIME-TOOLS` | Request live inspect, input, or screenshot work. | Explicit | Phase 5 / MCP runtime-tool dispatch | Phase 5 §2 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-009` | `CMP-RUNTIME-TOOLS` → `CMP-RUNTIME-DRIVER` | Allocate a monotonic request ID. | Explicit | Phase 5 / in-process runtime driver | Phase 5 §§5–6 · [trace](traceability.md#architecture-atlas-traceability) |
-| `FLOW-RUN-010` | `CMP-RUNTIME-DRIVER` → `CNT-RUNTIME-IPC-FILES` | Write `user://.mcp/req.json`. | Explicit | Phase 5 / source-defined file IPC | Phase 5 §§4–7 · [Q-011](open-questions.md#architecture-open-questions) · [Q-012](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
+| `FLOW-RUN-010` | `CMP-RUNTIME-DRIVER` → `CNT-RUNTIME-IPC-FILES` | File fallback atomically publishes exact `user://.mcp/<sessionId>/req-<id>.json` after transport lock. | Implemented / accepted | Phase 5 / canonical file IPC | Phase 5 implementation · [Q-011](open-questions.md#architecture-open-questions) · [Q-012](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-011` | `CMP-RUNTIME-AUTOLOADS` → `CNT-RUNTIME-IPC-FILES` | Poll and read the request. | Explicit | Phase 5 / autoload file polling | Phase 5 §§4,7 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-012` | `CMP-RUNTIME-AUTOLOADS` → `CNT-RUNNING-GAME` | Execute the requested inspect, input, or screenshot operation. | Explicit | Phase 5 / in-game GDScript operation | Phase 5 §§2,4,6–7 · [trace](traceability.md#architecture-atlas-traceability) |
-| `FLOW-RUN-013` | `CMP-RUNTIME-AUTOLOADS` → `CNT-RUNTIME-IPC-FILES` | Write `user://.mcp/resp-<id>.json`. | Explicit | Phase 5 / correlated response file | Phase 5 §§4,7 · [trace](traceability.md#architecture-atlas-traceability) |
+| `FLOW-RUN-013` | `CMP-RUNTIME-AUTOLOADS` → `CNT-RUNTIME-IPC-FILES` | Write `user://.mcp/<sessionId>/resp-<id>.json`. | Explicit | Phase 5 / correlated response file | Phase 5 §§4,7 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-014` | `CMP-RUNTIME-DRIVER` → `CNT-RUNTIME-IPC-FILES` | Read and delete the correlated response. | Explicit | Phase 5 / host-side file IPC | Phase 5 §§6–8 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-015` | `CMP-RUNTIME-TOOLS` → `CNT-MCP-CLIENT` | Return the structured runtime result. | Explicit | Phase 5 / MCP structured result | Phase 5 §§2,7 · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-016` | `CMP-RUNTIME-TOOLS` → `CNT-MCP-CLIENT` | Return `timeout` with a game-not-running hint. | Explicit | Phase 5 / MCP structured timeout error | Phase 5 §§6–7 · [trace](traceability.md#architecture-atlas-traceability) |
-| `FLOW-RUN-017` | `CMP-RUNTIME-TOOLS` → `CNT-MCP-CLIENT` | After a successful IPC response, return screenshot path fields, dimensions, and PNG format. | Explicit | Phase 5 / MCP screenshot result | Phase 5 §§5,7–9 · [Q-011](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
+| `FLOW-RUN-017` | `CMP-RUNTIME-TOOLS` → `CNT-MCP-CLIENT` | Return verified canonical path fields, dimensions, bytes, SHA-256, and PNG format. | Implemented | Phase 5 / MCP screenshot result | Phase 5 implementation · [Q-011](open-questions.md#architecture-open-questions) · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-018` | `CMP-RUNTIME-TOOLS` → `CMP-PROCESS-RUNNER` | Request graceful stop, then force only if required. | Explicit | Phase 5 / managed process termination | Phase 5 §§6,8–9 · [trace](traceability.md#architecture-atlas-traceability) |
-| `FLOW-RUN-019` | `CMP-RUNTIME-TOOLS` → `CMP-RUNTIME-TOOLS` | Coordinate IPC-file removal, DAP end, and orphan-PID cleanup through their existing owners. | Explicit | Phase 5 / runtime teardown coordination | Phase 5 §§6,8–9 · [trace](traceability.md#architecture-atlas-traceability) |
+| `FLOW-RUN-019` | `CMP-RUNTIME-TOOLS` → `CMP-RUNTIME-TOOLS` | Close DAP, close bridge, then stop the exact ProcessRunner child; preserve first failure and retain unconfirmed ownership. | Implemented | Phase 5 / runtime teardown coordination | Phase 5 implementation · [trace](traceability.md#architecture-atlas-traceability) |
 | `FLOW-RUN-020` | `CMP-RUNTIME-TOOLS` → `CMP-AUDIT` | Record the runtime/debug outcome. | Explicit | Phase 5 / runtime outcome into Phase 7 audit | Phase 7 §4 · [trace](traceability.md#architecture-atlas-traceability) |
 
 ## Failure and degradation ownership
@@ -155,16 +157,16 @@ The participants below are indexed in the [Traceability index](traceability.md#a
 | Condition | Owner | Required behavior and consequence |
 |---|---|---|
 | DAP support is partial or unavailable | Runtime tools and DAP client | Explicitly **degrade to process + bridge**: launch/output/stop and live bridge operations remain usable while unsupported DAP features do not masquerade as available. |
-| DAP launch versus attach | DAP client and process control | `FLOW-RUN-006` stays **[UNRESOLVED]** under [Q-010](open-questions.md#architecture-open-questions); this view does not choose an owner or add a second spawn. |
+| DAP attach | DAP client and process control | Accepted [Q-010](open-questions.md#architecture-open-questions): ProcessRunner is the sole process owner and DAP is attach-only with no second spawn. |
 | Runtime response times out | Runtime driver and runtime tools | Return `timeout` with a game-not-running hint; do not claim the requested operation completed. |
-| Screenshot request succeeds | Runtime autoloads and runtime tools | Return PNG path fields and dimensions only after the correlated IPC response succeeds. The source sketches `path`, `absPath`, `w`, and `h`, while [Q-011](open-questions.md#architecture-open-questions) leaves host resolution unresolved. |
-| Stop or teardown | ProcessRunner, DAP client, and runtime driver | Attempt graceful stop before forced stop, remove request artifacts, end DAP, and clean an orphan PID as required by the source lifecycle. |
-| Host IPC path or socket fallback needed | Runtime driver and runtime autoloads | [Q-011](open-questions.md#architecture-open-questions) and [Q-012](open-questions.md#architecture-open-questions) remain open; no OS path derivation, endpoint, negotiation, authentication, fallback trigger, switching, or replay behavior is asserted. |
+| Screenshot request succeeds | Runtime autoloads and runtime tools | Return canonical path, dimensions, byte count, hash, and PNG only after signature, IHDR, size, hash, and containment verification. Dummy-renderer viewport readback may remain unavailable. |
+| Stop or teardown | ProcessRunner, DAP client, and runtime driver | Attempt DAP then bridge then exact-child process cleanup, preserve the first error, and retain ownership when stop cannot be confirmed. |
+| Host IPC path or socket fallback needed | Runtime driver and runtime autoloads | Accepted [Q-011](open-questions.md#architecture-open-questions)/[Q-012](open-questions.md#architecture-open-questions): Godot resolves the canonical root; authentication locks one transport before requests; never switch or replay after publication. |
 
 ## Interpretation constraints
 
-- The setup band records the source-defined process, DAP, and bridge capabilities in normative message order. It does not resolve `Q-010` or authorize two processes.
-- The interaction band depicts only the explicit sequenced request/response file discipline. `Q-011` and `Q-012` prevent this view from inventing host path discovery or local-socket mechanics.
+- The setup band records implemented process, DAP, and bridge capabilities and resolves `Q-010` with one ProcessRunner-owned child.
+- The interaction band records accepted `Q-011`/`Q-012`: plugin-resolved canonical storage and authenticated pre-request transport locking with no replay.
 - The `since`/`next` output contract is incremental over the ProcessRunner ring buffer; it is independent of DAP availability.
-- Screenshot results include PNG path fields and `w`/`h` dimensions, but the production of a host-resolvable `absPath` remains part of `Q-011`.
-- The shutdown band preserves graceful then forced process stop, bridge-file cleanup, DAP end, orphan-PID cleanup, and audit order without assigning undocumented teardown calls.
+- Screenshot results include verified `path`, `absolutePath`, `width`, `height`, `bytes`, and `sha256`; dummy-renderer viewport readback remains environment-gated.
+- The shutdown band preserves DAP, bridge, then exact-child cleanup and first-failure semantics. Phase 7 audit remains a future downstream boundary.

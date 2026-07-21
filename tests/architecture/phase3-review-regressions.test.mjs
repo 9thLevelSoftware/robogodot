@@ -15,7 +15,8 @@ test("Q-005 is accepted and CI runs Phase 3 live acceptance", async () => {
   assert.match(questions, /Q-005` — \*\*Resolved/);
   assert.match(questions, /Accepted resolution:.*exact previous state/is);
   const ci = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
-  assert.match(ci, /npm run test:live\r?\n\s+npm run test:live:phase3/);
+  assert.match(ci, /run: npm run test:live(?:\r?\n|$)/);
+  assert.match(ci, /run: npm run test:live:phase3(?:\r?\n|$)/);
 });
 
 test("named Godot smokes enforce canonical plugin compilation from a clean fixture", async () => {
@@ -27,8 +28,9 @@ test("named Godot smokes enforce canonical plugin compilation from a clean fixtu
   }
   const runner = await readFile(new URL("../godot/run-smoke.mjs", import.meta.url), "utf8");
   const invocations = [...runner.matchAll(/await run\((\[[\s\S]*?)\);/g)];
-  assert.equal(invocations.length, 12);
-  for (const invocation of invocations) assert.match(invocation[1], /"PASS /);
+  assert.equal(invocations.length, 15);
+  assert.equal(invocations.filter((invocation) => /"PASS /.test(invocation[1])).length, 14);
+  assert.equal(invocations.filter((invocation) => /externalConfig/.test(invocation[1])).length, 1, "one intentional external-config rejection probe");
   assert.match(runner, /await rm\(resolve\(root, "tests\/fixtures\/godot_project\/addons"\)[\s\S]*?await cp\(/);
   assert.match(runner, /forbiddenOutput/);
 });

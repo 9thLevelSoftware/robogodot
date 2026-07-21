@@ -10,6 +10,7 @@ async function harness(call = vi.fn()) {
   await Promise.all([server.connect(b), client.connect(a)]);
   return { client, call, close: () => Promise.all([client.close(), server.close()]) };
 }
+const errorPayload = (result: any) => JSON.parse(result.content[0].text);
 
 describe("Phase 3 node tools", () => {
   it("registers strict node tools with accurate annotations", async () => {
@@ -40,7 +41,7 @@ describe("Phase 3 node tools", () => {
     const h = await harness();
     try {
       const unsafe = await h.client.callTool({ name: "godot_node_call_method", arguments: { path: "/root/Main", method: "queue_free", args: [] } });
-      expect(unsafe).toMatchObject({ isError: true, structuredContent: { code: "invalid_args" } });
+      expect(unsafe.isError).toBe(true); expect(errorPayload(unsafe)).toMatchObject({ code: "invalid_args" });
       const large = await h.client.callTool({ name: "godot_node_get", arguments: { path: `/${"é".repeat(512)}` } });
       expect(large.isError).toBe(true);
       expect(h.call).not.toHaveBeenCalled();
@@ -51,7 +52,7 @@ describe("Phase 3 node tools", () => {
     const h = await harness(vi.fn().mockResolvedValue({ unexpected: true }));
     try {
       const response = await h.client.callTool({ name: "godot_node_get", arguments: { path: "/root/Main" } });
-      expect(response).toMatchObject({ isError: true, structuredContent: { code: "godot_error" } });
+      expect(response.isError).toBe(true); expect(errorPayload(response)).toMatchObject({ code: "godot_error" });
     } finally { await h.close(); }
   });
 
@@ -67,7 +68,7 @@ describe("Phase 3 node tools", () => {
       const method257 = await h.client.callTool({ name: "godot_node_call_method", arguments: { path: "/root/Main", method: "m".repeat(257), args: [] } });
       expect(method257.isError).toBe(true);
       const method256 = await h.client.callTool({ name: "godot_node_call_method", arguments: { path: "/root/Main", method: "m".repeat(256), args: [] } });
-      expect(method256).toMatchObject({ isError: true, structuredContent: { code: "invalid_args" } });
+      expect(method256.isError).toBe(true); expect(errorPayload(method256)).toMatchObject({ code: "invalid_args" });
       const name256 = await h.client.callTool({ name: "godot_node_rename", arguments: { path: "/root/Main", name: "n".repeat(256) } });
       expect(name256.isError).toBe(true);
       expect(call).toHaveBeenCalledTimes(1);
@@ -102,7 +103,7 @@ describe("Phase 3 node tools", () => {
     const h = await harness(vi.fn().mockResolvedValue({ path: "/root/Main", class: "Node", name: "Main", childCount: 0, properties: { huge: "x".repeat(262144) } }));
     try {
       const result = await h.client.callTool({ name: "godot_node_get", arguments: { path: "/root/Main" } });
-      expect(result).toMatchObject({ isError: true, structuredContent: { code: "godot_error" } });
+      expect(result.isError).toBe(true); expect(errorPayload(result)).toMatchObject({ code: "godot_error" });
     } finally { await h.close(); }
   });
 
