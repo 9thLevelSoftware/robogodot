@@ -1,0 +1,9 @@
+export const MAX_OUTPUT_RECORDS = 4_096;
+export const MAX_OUTPUT_BYTES = 1024 * 1024;
+export const MAX_OUTPUT_LINE_BYTES = 16_384;
+export const MIN_OUTPUT_PAGE_RECORDS = 1;
+export const MAX_OUTPUT_PAGE_RECORDS = 500;
+export const PROCESS_START_TIMEOUT_MS = 15_000;
+export const PROCESS_GRACEFUL_STOP_MS = 5_000;
+export const PROCESS_FORCE_STOP_MS = 7_000;
+export const PROCESS_OUTPUT_DRAIN_MS = 1_000;

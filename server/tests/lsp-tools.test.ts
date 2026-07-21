@@ -19,6 +19,7 @@ async function harness(lsp?: LspToolClient) {
   const [ct, st] = InMemoryTransport.createLinkedPair(); await Promise.all([server.connect(st), client.connect(ct)]);
   return { server, client, close: async () => { await client.close(); await server.close(); } };
 }
+const errorPayload = (result: any) => JSON.parse(result.content[0].text);
 
 describe("public LSP tools", () => {
   it("registers all seven with closed-world read-only annotations and explicit exclusions", async () => {
@@ -49,7 +50,7 @@ describe("public LSP tools", () => {
   it("gates capabilities and sends the exact native-symbol payload", async () => {
     const disabled = fake([], []); const a = await harness(disabled); try {
       const value = await a.client.callTool({ name: "godot_lsp_workspace_symbols", arguments: { query: "Player" } });
-      expect(value).toMatchObject({ isError: true, structuredContent: { code: "feature_disabled" } });
+      expect(value.isError).toBe(true); expect(errorPayload(value)).toMatchObject({ code: "feature_disabled" });
       expect(disabled.request).not.toHaveBeenCalled();
     } finally { await a.close(); }
     const native = fake({ name: "Sprite2D", documentation: "docs" }); const b = await harness(native); try {
@@ -63,7 +64,7 @@ describe("public LSP tools", () => {
     const lsp = fake([], []); lsp.ensureReady = vi.fn().mockRejectedValue(new GodotMcpError("not_connected", "unavailable", "start Godot"));
     const h = await harness(lsp); try {
       const value = await h.client.callTool({ name: "godot_lsp_native_symbol", arguments: { nativeClass: "Sprite2D" } });
-      expect(value).toMatchObject({ isError: true, structuredContent: { code: "not_connected" } });
+      expect(value.isError).toBe(true); expect(errorPayload(value)).toMatchObject({ code: "not_connected" });
       expect(lsp.supports).not.toHaveBeenCalled();
     } finally { await h.close(); }
   });
@@ -73,7 +74,7 @@ describe("public LSP tools", () => {
       expect(await h.client.callTool({ name: "godot_lsp_hover", arguments: { uri: document.uri, position: { line: 0, character: 1 } } })).toMatchObject({ structuredContent: { found: false } });
     } finally { await h.close(); }
     const fallback = await harness(); try {
-      expect(await fallback.client.callTool({ name: "godot_lsp_native_symbol", arguments: { nativeClass: "Node" } })).toMatchObject({ isError: true, structuredContent: { code: "not_connected" } });
+      const result = await fallback.client.callTool({ name: "godot_lsp_native_symbol", arguments: { nativeClass: "Node" } }); expect(result.isError).toBe(true); expect(errorPayload(result)).toMatchObject({ code: "not_connected" });
     } finally { await fallback.close(); }
   });
 
@@ -130,7 +131,7 @@ describe("public LSP tools", () => {
       const h = await harness(fake(result)); try { expect((await h.client.callTool({ name, arguments: args })).isError).not.toBe(true); } finally { await h.close(); }
     }
     const native = await harness(fake(accessor)); try {
-      expect(await native.client.callTool({ name: "godot_lsp_native_symbol", arguments: { nativeClass: "Node" } })).toMatchObject({ isError: true, structuredContent: { code: "godot_error" } });
+      const result = await native.client.callTool({ name: "godot_lsp_native_symbol", arguments: { nativeClass: "Node" } }); expect(result.isError).toBe(true); expect(errorPayload(result)).toMatchObject({ code: "godot_error" });
     } finally { await native.close(); }
     expect(getterCalls).toBe(0);
   });
@@ -172,7 +173,7 @@ describe("public LSP tools", () => {
   it("charges synchronization against the diagnostics wait budget", async () => {
     const now = vi.spyOn(performance, "now").mockReturnValueOnce(1_000).mockReturnValueOnce(1_090);
     const lsp = fake(null); const h = await harness(lsp); try {
-      expect(await h.client.callTool({ name: "godot_lsp_diagnostics", arguments: { uri: document.uri, waitMs: 100 } })).toMatchObject({ isError: true, structuredContent: { code: "timeout" } });
+      const result = await h.client.callTool({ name: "godot_lsp_diagnostics", arguments: { uri: document.uri, waitMs: 100 } }); expect(result.isError).toBe(true); expect(errorPayload(result)).toMatchObject({ code: "timeout" });
       expect(lsp.diagnostics.waitFor).not.toHaveBeenCalled();
     } finally { now.mockRestore(); await h.close(); }
   });

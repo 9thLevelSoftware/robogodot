@@ -3,6 +3,7 @@ extends RefCounted
 
 var _commands: Dictionary = {}
 const MAX_REQUEST_ID_BYTES := 128
+const MAX_METHOD_BYTES := 128
 const MAX_RESPONSE_BYTES := 262144
 
 func register_command(command_name: String, command: Callable) -> bool:
@@ -28,6 +29,8 @@ func dispatch(request: Variant) -> Dictionary:
 	var method: Variant = request.get("method")
 	if not method is String or method.is_empty():
 		return _error(id, -32600, "Invalid Request", "Method must be a nonempty string.")
+	if method.to_utf8_buffer().size() > MAX_METHOD_BYTES:
+		return _error(id, -32600, "Invalid Request", "Method exceeds 128 UTF-8 bytes.")
 	var params: Variant = request.get("params", {})
 	if not params is Dictionary:
 		return _error(id, -32602, "Invalid params", "Params must be an object.")

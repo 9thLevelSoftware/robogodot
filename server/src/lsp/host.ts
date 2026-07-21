@@ -52,38 +52,35 @@ function editorRequired(message: string, hint: string): never {
   throw new GodotMcpError("editor_required", message, hint);
 }
 
+async function requirePath(
+  candidate: string,
+  kind: "file" | "directory",
+  message: string,
+  hint: string,
+): Promise<void> {
+  let info;
+  try { info = await stat(candidate); }
+  catch { editorRequired(message, hint); }
+  if (kind === "file" ? !info.isFile() : !info.isDirectory()) editorRequired(message, hint);
+}
+
 async function validatePaths(godotPath: string, projectPath: string): Promise<void> {
   const projectFile = path.join(projectPath, "project.godot");
-  let executable;
-  try { executable = await stat(godotPath); }
-  catch {
-    editorRequired("GODOT_PATH is not a usable Godot executable file.", `Set GODOT_PATH to a Godot binary file (received ${godotPath}).`);
-  }
-  if (!executable.isFile()) {
-    editorRequired("GODOT_PATH is not a usable Godot executable file.", `Set GODOT_PATH to a Godot binary file (received ${godotPath}).`);
-  }
-  let project;
-  try { project = await stat(projectPath); }
-  catch {
-    editorRequired("GODOT_PROJECT_PATH is not a directory.", `Set GODOT_PROJECT_PATH to the project root directory (received ${projectPath}).`);
-  }
-  if (!project.isDirectory()) {
-    editorRequired("GODOT_PROJECT_PATH is not a directory.", `Set GODOT_PROJECT_PATH to the project root directory (received ${projectPath}).`);
-  }
-  let marker;
-  try { marker = await stat(projectFile); }
-  catch {
-    editorRequired(
-      "GODOT_PROJECT_PATH must contain a regular project.godot.",
-      `Point GODOT_PROJECT_PATH at a Godot project root that contains project.godot (expected ${projectFile}).`,
-    );
-  }
-  if (!marker.isFile()) {
-    editorRequired(
-      "GODOT_PROJECT_PATH must contain a regular project.godot.",
-      `Point GODOT_PROJECT_PATH at a Godot project root that contains project.godot (expected ${projectFile}).`,
-    );
-  }
+  await requirePath(
+    godotPath, "file",
+    "GODOT_PATH is not a usable Godot executable file.",
+    `Set GODOT_PATH to a Godot binary file (received ${godotPath}).`,
+  );
+  await requirePath(
+    projectPath, "directory",
+    "GODOT_PROJECT_PATH is not a directory.",
+    `Set GODOT_PROJECT_PATH to the project root directory (received ${projectPath}).`,
+  );
+  await requirePath(
+    projectFile, "file",
+    "GODOT_PROJECT_PATH must contain a regular project.godot.",
+    `Point GODOT_PROJECT_PATH at a Godot project root that contains project.godot (expected ${projectFile}).`,
+  );
   if (process.platform !== "win32") {
     try { await access(godotPath, constants.X_OK); }
     catch {

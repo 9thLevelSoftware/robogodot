@@ -3,70 +3,49 @@
 - Status: Accepted
 - Date: 2026-07-20
 - Resolves: [Q-010](../architecture/open-questions.md), [Q-011](../architecture/open-questions.md), [Q-012](../architecture/open-questions.md)
+- Implements: Phase 5 design at `docs/superpowers/specs/2026-07-12-phase-5-runtime-debug-design.md` (merged via PR #5)
 
 ## Context
 
-Phase 5 must run, observe, debug, and interact with a controlled Godot game process. The architecture atlas preserves three source conflicts:
-
-1. **Q-010** — ProcessRunner and DAP both appear to own launch, risking double-spawn and split lifecycle state.
-2. **Q-011** — Host-side runtime bridge IPC is defined under Godot's logical `user://` path, which the TypeScript process cannot safely invent from OS conventions.
-3. **Q-012** — Sources prefer a local socket with file-IPC fallback but never define negotiation, authentication, or mid-session switching rules.
-
-Phase 5 also consumes the Phase 2 execution contract for runtime-bridge injection and must degrade when DAP is partial or unavailable without disabling process control or bridge operations.
+Phase 5 must run, observe, debug, and interact with a controlled Godot game process. The architecture atlas preserved three source conflicts about launch ownership, `user://` path discovery, and socket versus file IPC. Phase 5 implementation landed on `main` with a concrete coordinator; this ADR records the accepted decisions so the open-question register and future phases cite a stable decision document.
 
 ## Decision
 
 ### Q-010 — Single runtime-session coordinator; ProcessRunner owns OS spawn
 
-Introduce one in-process **RuntimeSession** coordinator that every public process, bridge, and debug tool delegates to.
+One in-process **RuntimeSession** coordinator owns the public runtime state machine. Every process, bridge, and debug tool delegates to it.
 
 - **ProcessRunner alone** owns OS spawn, PID, stdout/stderr ring buffer, graceful-then-forced stop, and orphan cleanup.
-- Default launch command shape: `godot --path <project> [optional scene]` plus any debug/port flags the coordinator applies **before** spawn.
-- **DapClient never independently spawns** a second game process. After ProcessRunner has a live process (or an explicitly attach-only mode is selected), DAP performs protocol initialize and **attach** (or the minimal launch handshake required by Godot DAP that does not create a second OS process under ProcessRunner's ownership).
-- Public tools such as `godot_run_project` and any debug-launch entry point both call RuntimeSession; they do not each own spawn policy.
-- If DAP is unavailable or a capability is unsupported, RuntimeSession **degrades to process + bridge** and returns structured `feature_disabled` for debug-only operations. Process output/stop and bridge tools remain usable.
+- `godot_run_project` and `godot_debug_launch` both start a coordinator-owned process; debug mode adds DAP attach arguments only.
+- **DapClient never independently spawns** a second game process. It performs protocol initialization and **attach** only.
+- If DAP is unavailable or a capability is unsupported, the session **degrades to process + bridge** and returns structured `feature_disabled` for debug-only operations.
 
 ### Q-011 — Godot publishes the absolute IPC root
 
 The host never derives `user://` from platform user-data heuristics.
 
-1. At runtime-session start, after the game process is running (or as part of bridge injection via the Phase 2 execution seam), **Godot resolves** the session IPC directory under `user://.mcp/<sessionId>/` (or equivalent) and returns:
-   - `sessionId` — high-entropy, unique per session
-   - `ipcRootAbs` — canonical absolute filesystem path of that directory
-   - optional logical `ipcRootUser` for display (`user://…`)
-2. Publication uses a **non-file bootstrap channel** already available to the control plane:
-   - preferred: bridge autoload ready notification written once to a path ProcessRunner can observe only after Godot has created the directory and reported the abs path through stdout marker or editor-injected bootstrap result;
-   - concrete Phase 5 design may use a single bootstrap response returned from the injection/`godot_script_run` setup call, or a one-line stdout sentinel parsed only for session setup.
-3. The TypeScript runtime driver registers **only** `ipcRootAbs` (realpath-checked) as the allowed IPC root for that session. All request/response/screenshot file operations are confined to that directory.
-4. Screenshot results may include logical `path` plus host `absPath` only when `absPath` is under the registered root.
+1. The editor plugin resolves the project's canonical `user://` absolute root through Godot APIs.
+2. Bootstrap over the authenticated editor channel publishes session credentials plus the absolute session directory under `.mcp/<sessionId>/`.
+3. The TypeScript runtime driver realpath-registers **only** that session subdirectory and confines request/response/screenshot artifacts to it.
 
-### Q-012 — File IPC is the v1 transport; socket is deferred
+### Q-012 — Negotiated socket preferred; locked file-IPC fallback
 
-For the initial Phase 5 delivery:
+Every launch receives a random session ID, secret token, protocol version, and preferred authenticated loopback endpoint.
 
-- **Implement sequenced file IPC only** under the Godot-published session directory:
-  - write `req.json` (or `req-<id>.json` if the design prefers non-overwrite requests)
-  - poll/read `resp-<id>.json`
-  - delete response (and request) after successful consumption
-  - monotonic request IDs, per-request timeouts, bounded payloads
-- **Do not implement local-socket transport in v1.** Preferring a socket “where feasible” without a negotiation contract is an incomplete source; shipping two transports without a handshake risks stranded peers.
-- Record socket support as an **optional future enhancement** that, if added later, must:
-  - negotiate a versioned, authenticated loopback endpoint **before any request may execute**
-  - lock both sides to one transport for the entire session
-  - never switch or replay after a request may have run
-- Until that future work lands, both sides assume file IPC for the session once bootstrap succeeds.
+- The injected bridge attempts a **bounded socket handshake**.
+- If that handshake cannot complete, both peers **lock to sequenced file IPC** under the published session directory **before any runtime request is accepted**.
+- Transport is **immutable** for the session: no mid-session switch and no replay of a request that may already have executed.
+- File IPC writers must publish complete payloads (write temp then rename, or equivalent) so concurrent pollers never read partial JSON or incomplete PNG bytes.
 
 ## Consequences
 
 - Exactly one OS game process per RuntimeSession; tests assert a single PID across run/debug entry points.
 - Host path safety does not depend on OS-specific Godot user-data layouts.
-- Bridge and screenshot cleanup are scoped to a known absolute directory and session ID.
-- Phase 5 acceptance can prove process/bridge/debug without inventing socket negotiation.
-- Atlas sequence `FLOW-RUN-006` becomes attach-after-ProcessRunner-spawn; `Q-011`/`Q-012` markers move to resolved for the v1 file-IPC design.
-- Audit of runtime outcomes remains a Phase 7 middleware concern; Phase 5 may log via the existing stderr logger only.
+- Peers cannot strand on different transports after bootstrap.
+- Atlas runtime/debug sequence and connection lifecycle views treat launch ownership and IPC roots as implemented.
+- Audit of runtime outcomes remains a Phase 7 middleware concern.
 
 ## Non-decisions
 
-- Exact public MCP tool names and schemas (fixed in the Phase 5 design doc).
-- Whether bridge autoloads are temporary-injected vs project-permanent (design chooses the safer temporary/session approach unless Godot requires otherwise).
+- Exact public MCP tool names and Zod schemas (fixed in the Phase 5 design and `server/src/tools/{runtime,debug}.ts`).
 - Full Phase 7 mutation-lane classification of runtime tools.

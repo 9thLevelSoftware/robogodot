@@ -30,7 +30,6 @@ export function toToolError(error: unknown) {
   if (error instanceof GodotMcpError && error.data !== undefined) payload.data = error.data;
   return {
     content: [{ type: "text" as const, text: JSON.stringify(payload) }],
-    structuredContent: payload,
     isError: true as const,
   };
 }
